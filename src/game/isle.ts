@@ -16,11 +16,12 @@ import {
   blocked,
   clearLine,
   nearestOpen,
+  nearestVendor,
   routeTo,
   screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
-import { MOBS, RACES, attrsFor, conFor, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
+import { MOBS, RACES, VENDOR_STOCK, attrsFor, conFor, itemById, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -45,7 +46,10 @@ type Intent =
   | { op: "chat"; id: string; msg: string }
   | { op: "travel"; id: string; cityId: string }
   | { op: "respawn"; id: string }
-  | { op: "setLevel"; id: string; level: number };
+  | { op: "setLevel"; id: string; level: number }
+  | { op: "buy"; id: string; itemId: string }
+  | { op: "sell"; id: string; itemId: string }
+  | { op: "use"; id: string; itemId: string };
 
 declare global {
   interface Window {
@@ -74,6 +78,9 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "travel") return world.travel(intent.id, intent.cityId);
   if (intent.op === "respawn") return world.respawn(intent.id);
   if (intent.op === "setLevel") return world.setLevel(intent.id, intent.level);
+  if (intent.op === "buy") return world.buy(intent.id, intent.itemId);
+  if (intent.op === "sell") return world.sell(intent.id, intent.itemId);
+  if (intent.op === "use") return world.useItem(intent.id, intent.itemId);
   return { ok: false };
 }
 
@@ -98,6 +105,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const deathHint = root.querySelector<HTMLElement>("#deathHint")!;
   const respawnBtn = root.querySelector<HTMLButtonElement>("#respawnBtn")!;
   const sheet = root.querySelector<HTMLElement>("#sheet")!;
+  const shop = root.querySelector<HTMLElement>("#shop")!;
+  const shopGold = root.querySelector<HTMLElement>("#shopGold")!;
+  const shopStock = root.querySelector<HTMLElement>("#shopStock")!;
+  const shopBag = root.querySelector<HTMLElement>("#shopBag")!;
+  const bag = root.querySelector<HTMLElement>("#bag")!;
+  const bagBody = root.querySelector<HTMLElement>("#bagBody")!;
   const debugRow = root.querySelector<HTMLElement>("#debugLevel");
   if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
 
@@ -175,7 +188,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const stickVec = { x: 0, z: 0 };
   let dest: { x: number; z: number } | null = null;
   let path: Array<{ x: number; z: number }> = [];
-  let talkCity: string | null = null;
+  let talkNpc: string | null = null;
+  let seenGold = -1;
   let chaseId: string | null = null;
   let repaths = 0;
   let stuckFor = 0;
@@ -192,7 +206,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let lastSend = 0;
 
   function floatText(text: string, color = "#f6e7b2", lift = 120) {
-    const xp = text.startsWith("+");
+    const xp = text.includes("XP");
     const p = me();
     floaters.push({
       x: p?.x ?? 0,
@@ -555,7 +569,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
     statsEl.innerHTML =
-      `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level} · Gold ${p.gold}` +
+      `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
+      `<div class="gold-line">Gold ${p.gold}</div>` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(p.hp)}/${p.maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(p.mana)}/${p.maxMana}</span></div>` +
       `<div class="bar sp"><i style="width:${spPct}%"></i><span>SP ${Math.round(p.stamina ?? 0)}/${p.maxStamina ?? 0}</span></div>` +
@@ -565,6 +580,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const a = attrsFor(p.race, p.baseClass);
       sheetBody.innerHTML =
         `<div class="sheet-who">${p.username} · ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}</div>` +
+        `<div class="gold-line">Gold ${p.gold}</div>` +
         `<table class="sheet-attrs"><tbody>` +
         `<tr><th>STR</th><td>${a.str}</td><th>DEX</th><td>${a.dex}</td></tr>` +
         `<tr><th>CON</th><td>${a.con}</td><th>INT</th><td>${a.int}</td></tr>` +
@@ -572,6 +588,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         `</tbody></table>` +
         `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
     }
+    if (seenGold >= 0 && p.gold > seenGold) floatText(`+${p.gold - seenGold} gold`, "#e6c56a", 132);
+    seenGold = p.gold;
+    paintShop();
+    paintBag();
     const kind = classKind(p.prestigeClass || p.baseClass);
     for (const btn of skillButtons) {
       const skill = btn.dataset.skill;
@@ -779,7 +799,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         const spot = ranged ? rangedStand(chase.x, chase.z, p.x, p.z) : adjacentStand(chase.x, chase.z, p.x, p.z);
         if (!dest || Math.hypot(dest.x - spot.x, dest.z - spot.z) > 0.75) {
           dest = { x: spot.x, z: spot.z };
-          talkCity = null;
+          talkNpc = null;
           path = routeTo(p.x, p.z, spot.x, spot.z);
           repaths = 0;
         }
@@ -865,7 +885,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (ix || iz) {
       dest = null;
       path = [];
-      talkCity = null;
+      talkNpc = null;
       chaseId = null;
       repaths = 0;
       const len = Math.hypot(ix, iz) || 1;
@@ -894,13 +914,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const d = Math.hypot(dx, dz);
       const goalD = Math.hypot(dest.x - p.x, dest.z - p.z);
       if (goalD < 0.35) {
-        const city = talkCity;
+        const npcId = talkNpc;
         dest = null;
         path = [];
-        talkCity = null;
+        talkNpc = null;
         repaths = 0;
         stuckFor = 0;
-        if (city) openTravel(city);
+        if (npcId) openNpc(npcId);
       } else if (d > 0.05) {
         vx = (dx / d) * MOVE;
         vz = (dz / d) * MOVE;
@@ -929,7 +949,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       } else if (repaths >= 3 && stuckFor > 0.35) {
         dest = null;
         path = [];
-        talkCity = null;
+        talkNpc = null;
         repaths = 0;
         stuckFor = 0;
       }
@@ -1020,13 +1040,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.scale(1, 0.42);
           ctx.beginPath();
           ctx.arc(0, 0, 22, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(240, 210, 120, .9)";
+          ctx.strokeStyle = npc.role === "vendor" ? "rgba(120, 210, 140, .95)" : "rgba(240, 210, 120, .9)";
           ctx.lineWidth = 3;
           ctx.stroke();
           ctx.restore();
           shadowAt(npc.x, npc.z, 12);
           drawHero(npc.race, npc.id, npc.x, npc.z);
-          ctx.fillStyle = "#f0e2b0";
+          ctx.fillStyle = npc.role === "vendor" ? "#b7e7a8" : "#f0e2b0";
           ctx.font = "13px Georgia";
           ctx.textAlign = "center";
           ctx.fillText(npc.name, p.x, p.y - 118);
@@ -1206,12 +1226,32 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape" && !mapOverlay.hidden) {
-      e.preventDefault();
-      mapOverlay.hidden = true;
-      return;
+    if (e.key === "Escape") {
+      if (!bag.hidden) {
+        bag.hidden = true;
+        return;
+      }
+      if (!shop.hidden) {
+        shop.hidden = true;
+        return;
+      }
+      if (!sheet.hidden) {
+        sheet.hidden = true;
+        return;
+      }
+      if (!mapOverlay.hidden) {
+        e.preventDefault();
+        mapOverlay.hidden = true;
+        return;
+      }
     }
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (e.code === "KeyI") {
+      e.preventDefault();
+      bagSig = "";
+      bag.hidden = !bag.hidden;
+      return;
+    }
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
       e.preventDefault();
     }
@@ -1265,7 +1305,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function goTo(x: number, z: number, talk: string | null, keepChase = false) {
     const p = localPlayer();
     dest = { x, z };
-    talkCity = talk;
+    talkNpc = talk;
     if (!keepChase) chaseId = null;
     repaths = 0;
     path = p ? routeTo(p.x, p.z, x, z) : [];
@@ -1305,12 +1345,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (dist < 6.2) {
         dest = null;
         path = [];
-        talkCity = null;
-        openTravel(pickedNpc.city);
+        talkNpc = null;
+        openNpc(pickedNpc.id);
       } else {
         const ang = Math.atan2(p.z - pickedNpc.z, p.x - pickedNpc.x);
         const spot = nearestOpen(pickedNpc.x + Math.cos(ang) * 2.3, pickedNpc.z + Math.sin(ang) * 2.3);
-        goTo(spot.x, spot.z, pickedNpc.city);
+        goTo(spot.x, spot.z, pickedNpc.id);
       }
       return;
     }
@@ -1348,6 +1388,64 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     goTo(tile.x, tile.z, null);
   }
 
+  function openNpc(id: string) {
+    const npc = NPCS.find((n) => n.id === id);
+    if (!npc) return;
+    if (npc.role === "vendor") openShop();
+    else openTravel(npc.city);
+  }
+
+  function openShop() {
+    const p = me();
+    if (!p || !nearestVendor(p.x, p.z, 6.5)) return;
+    shopSig = "";
+    shop.hidden = false;
+    paintShop();
+  }
+
+  let shopSig = "";
+  let bagSig = "";
+
+  function paintShop() {
+    const p = me();
+    if (!p || shop.hidden) return;
+    const sig = `${p.gold}|${JSON.stringify(p.inventory ?? {})}`;
+    shopGold.textContent = `Gold ${p.gold}`;
+    if (sig === shopSig) return;
+    shopSig = sig;
+    shopStock.innerHTML = VENDOR_STOCK.map((row) => {
+      const item = itemById(row.itemId);
+      return `<button type="button" data-buy="${row.itemId}">Buy ${item?.name ?? row.itemId} — ${row.price}g</button>`;
+    }).join("");
+    const rows = Object.entries(p.inventory ?? {}).filter(([, n]) => n > 0);
+    shopBag.innerHTML = rows.length
+      ? rows
+          .map(([id, n]) => {
+            const item = itemById(id);
+            return `<button type="button" data-sell="${id}">Sell ${item?.name ?? id} ×${n} — ${item?.sell ?? 0}g</button>`;
+          })
+          .join("")
+      : `<p class="sheet-note">Nothing to sell.</p>`;
+  }
+
+  function paintBag() {
+    const p = me();
+    if (!p || bag.hidden) return;
+    const sig = JSON.stringify(p.inventory ?? {});
+    if (sig === bagSig) return;
+    bagSig = sig;
+    const rows = Object.entries(p.inventory ?? {}).filter(([, n]) => n > 0);
+    bagBody.innerHTML = rows.length
+      ? rows
+          .map(([id, n]) => {
+            const item = itemById(id);
+            const use = item?.kind === "consumable" ? `<button type="button" data-use="${id}">Use</button>` : "";
+            return `<div class="bag-row"><span>${item?.name ?? id} ×${n}</span>${use}</div>`;
+          })
+          .join("")
+      : `<p class="sheet-note">Your bag is empty.</p>`;
+  }
+
   function openTravel(cityId: string) {
     const city = cityAt(cityId);
     const p = me();
@@ -1367,7 +1465,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!nearestWayfarer(p.x, p.z, 4.2)) return;
     dest = null;
     path = [];
-    talkCity = null;
+    talkNpc = null;
     travelPanel.hidden = true;
     if (host) world.travel(p.id, cityId);
     else {
@@ -1399,7 +1497,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     e.preventDefault();
     dest = null;
     path = [];
-    talkCity = null;
+    talkNpc = null;
     if (host) world.respawn(myId);
     else channel?.postMessage({ t: "intent", intent: { op: "respawn", id: myId } });
   }
@@ -1462,7 +1560,36 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onSheet(e: Event) {
     e.preventDefault();
-    sheet.hidden = false;
+    sheet.hidden = !sheet.hidden;
+  }
+  function onBagToggle(e: Event) {
+    e.preventDefault();
+    bagSig = "";
+    bag.hidden = !bag.hidden;
+  }
+  function onBagClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest("button[data-use]");
+    if (!btn) return;
+    e.preventDefault();
+    const itemId = (btn as HTMLElement).dataset.use;
+    if (itemId) send({ op: "use", id: myId, itemId });
+  }
+  function onShopClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest("button[data-buy], button[data-sell]");
+    if (!btn) return;
+    e.preventDefault();
+    const buyId = (btn as HTMLElement).dataset.buy;
+    const sellId = (btn as HTMLElement).dataset.sell;
+    if (buyId) send({ op: "buy", id: myId, itemId: buyId });
+    else if (sellId) send({ op: "sell", id: myId, itemId: sellId });
+  }
+  function onShopClose(e: Event) {
+    e.preventDefault();
+    shop.hidden = true;
+  }
+  function onBagClose(e: Event) {
+    e.preventDefault();
+    bag.hidden = true;
   }
   function onSheetClose(e: Event) {
     e.preventDefault();
@@ -1544,6 +1671,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   promoteBtn.addEventListener("pointerup", onPromote);
   root.querySelector("#sheetBtn")!.addEventListener("pointerup", onSheet);
   root.querySelector("#sheetClose")!.addEventListener("pointerup", onSheetClose);
+  root.querySelector("#bagBtn")!.addEventListener("pointerup", onBagToggle);
+  root.querySelector("#bagClose")!.addEventListener("pointerup", onBagClose);
+  bagBody.addEventListener("pointerup", onBagClick);
+  shopStock.addEventListener("pointerup", onShopClick);
+  shopBag.addEventListener("pointerup", onShopClick);
+  root.querySelector("#shopClose")!.addEventListener("pointerup", onShopClose);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
   root.querySelector("#mapBtn")!.addEventListener("pointerup", onMap);

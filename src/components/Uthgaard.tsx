@@ -42,6 +42,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
         enter();
       }}
     >
+      <div className="login-create">
       <h1>Uthgaard</h1>
       <p className="sub">Three cities on a wide reach</p>
       <label>
@@ -93,6 +94,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
         Click a tile to walk. W moves up the screen, S down, A left, and D right.
         <span className="touch-only"> Drag the stick to walk.</span>
       </p>
+      </div>
       {saves.length > 0 && (
         <div className="saves">
           {saves.map((s) => (
@@ -167,6 +169,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="sheetBtn" type="button">
           Sheet
         </button>
+        <button id="bagBtn" type="button">
+          Inventory
+        </button>
         <button id="promoteBtn" type="button" hidden>
           Promote
         </button>
@@ -182,6 +187,26 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <div id="mapTitle">The Reach</div>
           <canvas id="mapCanvas" width={640} height={640} />
           <button id="mapClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="bag" hidden>
+        <div id="bagPanel">
+          <div id="bagTitle">Inventory</div>
+          <div id="bagBody" />
+          <button id="bagClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="shop" hidden>
+        <div id="shopPanel">
+          <div id="shopTitle">Marta</div>
+          <p id="shopGold">Gold 0</p>
+          <div id="shopStock" />
+          <div id="shopBag" />
+          <button id="shopClose" type="button">
             Close
           </button>
         </div>

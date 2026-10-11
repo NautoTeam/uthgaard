@@ -1,5 +1,5 @@
-import { arrivalAt, blocked, cityAt, nearestOpen, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { ITEMS, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
+import { arrivalAt, blocked, cityAt, nearestOpen, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -235,9 +235,11 @@ export function createWorld() {
     p.xp += xp;
     p.gold += gold;
     if (!p.inventory) p.inventory = {};
-    for (const item of ITEMS) {
-      if (item.dropFrom !== m.type) continue;
-      if (Math.random() > item.chance) continue;
+    for (const drop of DROPS) {
+      if (drop.mob !== m.type) continue;
+      if (Math.random() > dropChance(drop)) continue;
+      const item = itemById(drop.itemId);
+      if (!item) continue;
       p.inventory[item.id] = (p.inventory[item.id] ?? 0) + 1;
       log(`${p.username} picked up ${item.name}.`);
     }
@@ -353,6 +355,49 @@ export function createWorld() {
     p.stamina = p.maxStamina;
     log(`${p.username} is now level ${next}.`);
     return { ok: true, reason: `Level ${next}.` };
+  }
+
+  function buy(id: string, itemId: string): ActionResult {
+    const p = players.get(id);
+    const offer = VENDOR_STOCK.find((row) => row.itemId === itemId);
+    const item = itemById(itemId);
+    if (!p || p.hp <= 0 || !offer || !item) return { ok: false, reason: "Nothing for sale." };
+    if (!nearestVendor(p.x, p.z, 6.5)) return { ok: false, reason: "Find the vendor." };
+    if (p.gold < offer.price) return { ok: false, reason: "Not enough gold." };
+    if (!p.inventory) p.inventory = {};
+    p.gold -= offer.price;
+    p.inventory[item.id] = (p.inventory[item.id] ?? 0) + 1;
+    log(`${p.username} bought ${item.name} for ${offer.price} gold.`);
+    return { ok: true, reason: `Bought ${item.name}.` };
+  }
+
+  function sell(id: string, itemId: string): ActionResult {
+    const p = players.get(id);
+    const item = itemById(itemId);
+    const have = p?.inventory?.[itemId] ?? 0;
+    if (!p || p.hp <= 0 || !item) return { ok: false, reason: "Nothing to sell." };
+    if (!nearestVendor(p.x, p.z, 6.5)) return { ok: false, reason: "Find the vendor." };
+    if (have < 1) return { ok: false, reason: "You do not have that." };
+    p.inventory[itemId] = have - 1;
+    if (p.inventory[itemId] <= 0) delete p.inventory[itemId];
+    p.gold += item.sell;
+    log(`${p.username} sold ${item.name} for ${item.sell} gold.`);
+    return { ok: true, reason: `Sold ${item.name} for ${item.sell} gold.` };
+  }
+
+  function useItem(id: string, itemId: string): ActionResult {
+    const p = players.get(id);
+    const item = itemById(itemId);
+    const have = p?.inventory?.[itemId] ?? 0;
+    if (!p || p.hp <= 0 || !item) return { ok: false, reason: "You cannot use that." };
+    if (item.kind !== "consumable" || item.heal <= 0) return { ok: false, reason: "You cannot use that." };
+    if (have < 1) return { ok: false, reason: "You do not have that." };
+    if (p.hp >= p.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
+    p.inventory[itemId] = have - 1;
+    if (p.inventory[itemId] <= 0) delete p.inventory[itemId];
+    const gain = Math.min(p.maxHp - p.hp, item.heal);
+    p.hp += gain;
+    return { ok: true, reason: `Used ${item.name}.` };
   }
 
   function chat(id: string, msg: string): ActionResult {
@@ -550,6 +595,9 @@ export function createWorld() {
     skill,
     promote,
     setLevel,
+    buy,
+    sell,
+    useItem,
     chat,
     travel,
     respawn,

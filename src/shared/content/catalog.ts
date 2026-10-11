@@ -207,12 +207,43 @@ export function conXp(mobLevel: number, playerLevel: number, base: number) {
 export interface ItemDef {
   id: string;
   name: string;
-  dropFrom: string;
-  /** 0–1. A new item row is enough for it to drop. */
+  kind: "junk" | "consumable";
+  /** Gold the hamlet vendor pays. */
+  sell: number;
+  /** HP restored when used. 0 for junk. */
+  heal: number;
+}
+
+export const ITEMS: ItemDef[] = [
+  { id: "spider-silk", name: "Spider Silk", kind: "junk", sell: 5, heal: 0 },
+  { id: "minor-potion", name: "Minor Potion", kind: "consumable", sell: 4, heal: 25 },
+];
+
+export interface DropDef {
+  mob: string;
+  itemId: string;
+  /** 0–1. Occasional unless TEST_GENEROUS_DROPS raises it. */
   chance: number;
 }
 
-export const ITEMS: ItemDef[] = [{ id: "spider-silk", name: "Spider Silk", dropFrom: "Spider", chance: 1 }];
+export const DROPS: DropDef[] = [{ mob: "Spider", itemId: "spider-silk", chance: 0.45 }];
+
+/**
+ * QA switch. While true, each drop row is at least an 85% chance
+ * so a short spider session puts silk in the bag. Set false to use DROPS.chance.
+ */
+export const TEST_GENEROUS_DROPS = true;
+
+export function dropChance(row: DropDef) {
+  return TEST_GENEROUS_DROPS ? Math.max(row.chance, 0.85) : row.chance;
+}
+
+/** What Marta sells. Price is the gold the player pays. */
+export const VENDOR_STOCK: Array<{ itemId: string; price: number }> = [{ itemId: "minor-potion", price: 12 }];
+
+export function itemById(id: string) {
+  return ITEMS.find((item) => item.id === id) ?? null;
+}
 
 export interface PowerDef {
   id: string;
