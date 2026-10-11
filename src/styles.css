@@ -262,7 +262,8 @@ body {
 
 #sheet,
 #bag,
-#shop {
+#shop,
+#train {
   position: absolute;
   inset: 0;
   display: grid;
@@ -273,13 +274,15 @@ body {
 
 #sheet[hidden],
 #bag[hidden],
-#shop[hidden] {
+#shop[hidden],
+#train[hidden] {
   display: none !important;
 }
 
 #sheetPanel,
 #bagPanel,
-#shopPanel {
+#shopPanel,
+#trainPanel {
   width: min(360px, 92vw);
   max-height: 80dvh;
   overflow-y: auto;
@@ -292,7 +295,8 @@ body {
 
 #sheetTitle,
 #bagTitle,
-#shopTitle {
+#shopTitle,
+#trainTitle {
   font-family: Cinzel, Georgia, serif;
   letter-spacing: 2px;
   margin-bottom: 8px;
@@ -356,9 +360,11 @@ body {
 #sheetClose,
 #bagClose,
 #shopClose,
+#trainClose,
 #debugLevelBtn,
 #shopStock button,
 #shopBag button,
+#trainList button,
 .bag-row button {
   min-height: 40px;
   padding: 8px 12px;
@@ -368,7 +374,8 @@ body {
 }
 
 #shopStock,
-#shopBag {
+#shopBag,
+#trainList {
   display: flex;
   flex-direction: column;
   gap: 8px;

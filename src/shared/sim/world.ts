@@ -1,5 +1,5 @@
-import { arrivalAt, blocked, cityAt, nearestOpen, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, meleeDamage, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
+import { arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -26,6 +26,8 @@ export interface JoinInput {
   z?: number;
   inventory?: Record<string, number>;
   equipment?: Record<string, string>;
+  trainPoints?: number;
+  skills?: Record<string, number>;
 }
 
 function applyStats(p: PlayerState) {
@@ -48,6 +50,8 @@ function applyStats(p: PlayerState) {
   if (p.stamina == null || p.stamina > p.maxStamina) p.stamina = p.maxStamina;
   if (!p.inventory) p.inventory = {};
   if (!p.equipment) p.equipment = {};
+  if (p.trainPoints == null) p.trainPoints = 0;
+  if (!p.skills) p.skills = {};
 }
 
 function levelUp(p: PlayerState) {
@@ -58,7 +62,7 @@ function levelUp(p: PlayerState) {
     p.hp = p.maxHp;
     p.mana = p.maxMana;
     p.stamina = p.maxStamina;
-    p.stamina = p.maxStamina;
+    p.trainPoints = (p.trainPoints || 0) + trainPointsFor(p.race);
   }
 }
 
@@ -146,7 +150,7 @@ export function createWorld() {
     monsters.clear();
     for (const p of state.players) {
       if (!p.inventory) p.inventory = {};
-      const row = { ...p, inventory: { ...(p.inventory ?? {}) }, equipment: { ...(p.equipment ?? {}) } };
+      const row = { ...p, inventory: { ...(p.inventory ?? {}) }, equipment: { ...(p.equipment ?? {}) }, skills: { ...(p.skills ?? {}) } };
       players.set(p.id, row);
       applyStats(row);
     }
@@ -192,6 +196,8 @@ export function createWorld() {
       nextSwing: 0,
       inventory: { ...(input.inventory ?? {}) },
       equipment: { ...(input.equipment ?? {}) },
+      trainPoints: input.trainPoints ?? 0,
+      skills: { ...(input.skills ?? {}) },
     };
     applyStats(player);
     player.hp = player.maxHp;
@@ -268,6 +274,10 @@ export function createWorld() {
     if (p.nextSwing && now < p.nextSwing) return { ok: false };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
     if (power.stamina > 0 && p.stamina < power.stamina) return { ok: false, reason: "Not enough stamina." };
+    if (power.mana === 0 && Math.random() * 100 >= hitChance(p)) {
+      p.nextSwing = now + (powerId === "attack" ? 780 : 900);
+      return { ok: true, dmg: 0, reason: "Missed." };
+    }
     p.mana -= power.mana;
     p.stamina -= power.stamina || 0;
     p.nextSwing = now + (powerId === "attack" ? 780 : 900);
@@ -276,7 +286,7 @@ export function createWorld() {
     const gear = power.mana > 0 ? 0 : gearTotals(p.equipment).damage;
     const dmg =
       powerId === "attack"
-        ? meleeDamage(p)
+        ? trainedDamage(p)
         : power.damage + p.level * power.damagePerLevel + bonus + strBonus + gear;
     m.hp = Math.max(0, m.hp - dmg);
     m.targetId = p.id;
@@ -354,12 +364,14 @@ export function createWorld() {
     const p = players.get(id);
     if (!p) return { ok: false, reason: "No such hero." };
     const next = Math.max(1, Math.min(25, Math.floor(level) || 1));
+    const gained = Math.max(0, next - p.level) * trainPointsFor(p.race);
     p.level = next;
     p.xp = 0;
     applyStats(p);
     p.hp = p.maxHp;
     p.mana = p.maxMana;
     p.stamina = p.maxStamina;
+    p.trainPoints = (p.trainPoints || 0) + gained;
     log(`${p.username} is now level ${next}.`);
     return { ok: true, reason: `Level ${next}.` };
   }
@@ -369,7 +381,7 @@ export function createWorld() {
     const offer = VENDOR_STOCK.find((row) => row.itemId === itemId);
     const item = itemById(itemId);
     if (!p || p.hp <= 0 || !offer || !item) return { ok: false, reason: "Nothing for sale." };
-    if (!nearestVendor(p.x, p.z, 6.5)) return { ok: false, reason: "Find the vendor." };
+    if (!nearestVendor(p.x, p.z, 8)) return { ok: false, reason: "Find the vendor." };
     if (p.gold < offer.price) return { ok: false, reason: "Not enough gold." };
     if (!p.inventory) p.inventory = {};
     p.gold -= offer.price;
@@ -383,7 +395,7 @@ export function createWorld() {
     const item = itemById(itemId);
     const have = p?.inventory?.[itemId] ?? 0;
     if (!p || p.hp <= 0 || !item) return { ok: false, reason: "Nothing to sell." };
-    if (!nearestVendor(p.x, p.z, 6.5)) return { ok: false, reason: "Find the vendor." };
+    if (!nearestVendor(p.x, p.z, 8)) return { ok: false, reason: "Find the vendor." };
     if (have < 1) return { ok: false, reason: "You do not have that." };
     p.inventory[itemId] = have - 1;
     if (p.inventory[itemId] <= 0) delete p.inventory[itemId];
@@ -437,6 +449,23 @@ export function createWorld() {
     delete p.equipment[slot];
     p.inventory[itemId] = (p.inventory[itemId] ?? 0) + 1;
     return { ok: true, reason: `Unequipped ${item.name}.` };
+  }
+
+  function train(id: string, skillId: string): ActionResult {
+    const p = players.get(id);
+    const skill = skillById(skillId);
+    if (!p || p.hp <= 0 || !skill) return { ok: false, reason: "Nothing to train." };
+    if (!nearestTrainer(p.x, p.z, 8)) return { ok: false, reason: "Find the trainer." };
+    if ((p.trainPoints ?? 0) < 1) return { ok: false, reason: "No training points." };
+    if (p.gold < skill.gold) return { ok: false, reason: "Not enough gold." };
+    if (!p.skills) p.skills = {};
+    const cur = p.skills[skill.id] ?? 0;
+    if (cur >= skill.max) return { ok: false, reason: "That skill is mastered." };
+    p.trainPoints -= 1;
+    p.gold -= skill.gold;
+    p.skills[skill.id] = Math.min(skill.max, cur + skill.perRank);
+    log(`${p.username} trained ${skill.name} to ${p.skills[skill.id]}%.`);
+    return { ok: true, reason: `${skill.name} is now ${p.skills[skill.id]}%.` };
   }
 
   function chat(id: string, msg: string): ActionResult {
@@ -640,6 +669,7 @@ export function createWorld() {
     useItem,
     equip,
     unequip,
+    train,
     chat,
     travel,
     respawn,

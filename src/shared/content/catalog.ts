@@ -389,3 +389,47 @@ export function meleeDamage(p: { level: number; baseClass: string; prestigeClass
   const strBonus = Math.max(0, Math.floor((p.str - 20) / 10));
   return power.damage + p.level * power.damagePerLevel + bonus + strBonus + gearTotals(p.equipment).damage;
 }
+
+/**
+ * Training. A level-up grants TRAIN_POINTS[race] points (Human 5, everyone else 4).
+ * One point plus `gold` buys one rank. A rank adds `perRank` percent.
+ * Sword adds that percent of melee damage, and at least +1 once trained.
+ * Focus adds that percent to hit chance. Base hit chance is 90, capped at 99.
+ * Edit SKILLS or TRAIN_POINTS to change the costs and the effect. Combat only reads them.
+ */
+export const TRAIN_POINTS: Record<string, number> = { Human: 5, Elf: 4, Minotaur: 4 };
+
+export function trainPointsFor(race: string) {
+  return TRAIN_POINTS[race] ?? 4;
+}
+
+export interface SkillDef {
+  id: string;
+  name: string;
+  /** What the percent improves. */
+  affects: "damage" | "hit";
+  /** Percent gained per training point. */
+  perRank: number;
+  gold: number;
+  max: number;
+}
+
+export const SKILLS: SkillDef[] = [
+  { id: "sword", name: "Sword", affects: "damage", perRank: 5, gold: 5, max: 100 },
+  { id: "focus", name: "Focus", affects: "hit", perRank: 5, gold: 5, max: 100 },
+];
+
+export function skillById(id: string) {
+  return SKILLS.find((s) => s.id === id) ?? null;
+}
+
+export function hitChance(p: { skills?: Record<string, number> }) {
+  return Math.min(99, 90 + (p.skills?.focus ?? 0));
+}
+
+export function trainedDamage(p: { level: number; baseClass: string; prestigeClass: string; str: number; equipment?: Record<string, string>; skills?: Record<string, number> }) {
+  const base = meleeDamage(p);
+  const sword = p.skills?.sword ?? 0;
+  if (sword <= 0) return base;
+  return base + Math.max(1, Math.round((base * sword) / 100));
+}

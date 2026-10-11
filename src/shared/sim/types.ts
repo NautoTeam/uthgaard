@@ -35,6 +35,8 @@ export interface PlayerState extends PlayerInit {
   nextSwing: number;
   inventory: Record<string, number>;
   equipment: Record<string, string>;
+  trainPoints: number;
+  skills: Record<string, number>;
 }
 
 export interface MonsterState {

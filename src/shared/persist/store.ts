@@ -14,6 +14,8 @@ export interface CharacterRecord {
   z?: number;
   inventory?: Record<string, number>;
   equipment?: Record<string, string>;
+  trainPoints?: number;
+  skills?: Record<string, number>;
 }
 
 export interface CharacterStore {

@@ -44,7 +44,7 @@ export interface NpcDef {
   x: number;
   z: number;
   race: "human" | "elf" | "minotaur";
-  role: "wayfarer" | "vendor";
+  role: "wayfarer" | "vendor" | "trainer";
 }
 
 export const HALLS: Hall[] = [];
@@ -148,6 +148,16 @@ for (const city of CITIES) {
       z: city.z + Math.sin(vendA) * 5.6,
       race: "human",
       role: "vendor",
+    });
+    const trainA = npcA + 2.4;
+    NPCS.push({
+      id: "trainer-uthgaard",
+      name: "Eadric",
+      city: city.id,
+      x: city.x + Math.cos(trainA) * 6.4,
+      z: city.z + Math.sin(trainA) * 6.4,
+      race: "human",
+      role: "trainer",
     });
   }
   const ring = city.race === "elf" ? 14 : 10;
@@ -361,7 +371,7 @@ export function nearestWayfarer(x: number, z: number, range = 3.8) {
   let best: NpcDef | null = null;
   let bestD = range;
   for (const npc of NPCS) {
-    if (npc.role === "vendor") continue;
+    if (npc.role !== "wayfarer") continue;
     const d = Math.hypot(npc.x - x, npc.z - z);
     if (d < bestD) {
       bestD = d;
@@ -376,6 +386,20 @@ export function nearestVendor(x: number, z: number, range = 3.8) {
   let bestD = range;
   for (const npc of NPCS) {
     if (npc.role !== "vendor") continue;
+    const d = Math.hypot(npc.x - x, npc.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = npc;
+    }
+  }
+  return best;
+}
+
+export function nearestTrainer(x: number, z: number, range = 8) {
+  let best: NpcDef | null = null;
+  let bestD = range;
+  for (const npc of NPCS) {
+    if (npc.role !== "trainer") continue;
     const d = Math.hypot(npc.x - x, npc.z - z);
     if (d < bestD) {
       bestD = d;
