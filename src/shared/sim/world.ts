@@ -1,5 +1,5 @@
 import { arrivalAt, blocked, cityAt, nearestOpen, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { ITEMS, mobByType, mobHp, powerById, PRESTIGE_BONUS, CLASS_MODS, RACE_MODS } from "../content/catalog";
+import { ITEMS, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, CLASS_MODS, RACE_MODS } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -221,7 +221,7 @@ export function createWorld() {
 
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
     const def = mobByType(m.type);
-    const xp = def.xpBase + m.level * def.xpPerLevel;
+    const xp = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
     p.xp += xp;
     p.gold += gold;
     if (!p.inventory) p.inventory = {};
@@ -424,6 +424,7 @@ export function createWorld() {
         let preyD = def.aggro;
         for (const p of players.values()) {
           if (p.hp <= 0) continue;
+          if (!conFor(m.level, p.level).aggro) continue;
           const d = Math.hypot(p.x - m.x, p.z - m.z);
           if (d < preyD) {
             preyD = d;
@@ -438,7 +439,7 @@ export function createWorld() {
       if (m.targetId) {
         const t = players.get(m.targetId);
         const d = t && t.hp > 0 ? Math.hypot(t.x - m.x, t.z - m.z) : 99;
-        if (!t || t.hp <= 0 || d > def.leash || homeD > 9) {
+        if (!t || t.hp <= 0 || d > def.leash || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
           m.targetId = null;
         } else if (screenGap(t.x, t.z, m.x, m.z) <= 130 || d <= 6.4) {
           if (now >= m.nextHit) {

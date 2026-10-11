@@ -63,18 +63,21 @@ export interface MobDef {
   damagePerLevel: number;
   attackMs: number;
   aggro: number;
+  /** Give up the chase when the player is this far from the mob. */
   leash: number;
+  /** Give up and walk home when this far from the camp center. */
+  campLeash: number;
   /** Draw scale. Edit this to change how big the mob looks. */
   scale: number;
 }
 
 export const MOBS: MobDef[] = [
-  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
-  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
-  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
-  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
-  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
-  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
 ];
 
 const FALLBACK_MOB: MobDef = {
@@ -87,6 +90,7 @@ const FALLBACK_MOB: MobDef = {
   attackMs: 1100,
   aggro: 3.05,
   leash: 6.2,
+  campLeash: 15,
   scale: 0.18,
 };
 
@@ -97,6 +101,53 @@ export function mobByType(type: string): MobDef {
 export function mobHp(type: string, level: number) {
   const def = mobByType(type);
   return def.hp > 0 ? def.hp : 36 + level * 11;
+}
+
+/**
+ * Con bands by (mob level − player level). Rows are sorted by maxDelta.
+ * The first row whose maxDelta is still ≥ the delta wins.
+ *
+ * | color  | delta | example (you are Lv10) | XP    | aggro |
+ * | grey   | ≤ −7  | mob Lv3 and below       | 0     | no    |
+ * | green  | −6..−5| mob Lv4–5               | 20%   | no    |
+ * | cyan   | −4..−2| mob Lv6–8               | 60%   | yes   |
+ * | blue   | −1..0 | mob Lv9–10              | 100%  | yes   |
+ * | yellow | +1..+2| mob Lv11–12             | 100%  | yes   |
+ * | orange | +3..+4| mob Lv13–14             | 100%  | yes   |
+ * | red    | ≥ +5  | mob Lv15+               | 100%  | yes   |
+ *
+ * A Lv1 vs a Lv2 spider is delta +1 (yellow), so the camp still pays full XP.
+ * Green and grey are 5+ levels below the player and do not aggro.
+ * Edit this table to change name-plate colors and kill XP. Combat code only reads it.
+ */
+export interface ConBand {
+  id: "grey" | "green" | "cyan" | "blue" | "yellow" | "orange" | "red";
+  maxDelta: number;
+  color: string;
+  xp: number;
+  aggro: boolean;
+}
+
+export const CON_BANDS: ConBand[] = [
+  { id: "grey", maxDelta: -7, color: "#9aa0a6", xp: 0, aggro: false },
+  { id: "green", maxDelta: -5, color: "#3ddc6a", xp: 0.2, aggro: false },
+  { id: "cyan", maxDelta: -2, color: "#3ecbff", xp: 0.6, aggro: true },
+  { id: "blue", maxDelta: 0, color: "#4c7dff", xp: 1, aggro: true },
+  { id: "yellow", maxDelta: 2, color: "#ffe14a", xp: 1, aggro: true },
+  { id: "orange", maxDelta: 4, color: "#ff9a2e", xp: 1, aggro: true },
+  { id: "red", maxDelta: 99, color: "#ff3b30", xp: 1, aggro: true },
+];
+
+export function conFor(mobLevel: number, playerLevel: number): ConBand {
+  const delta = mobLevel - playerLevel;
+  for (const band of CON_BANDS) {
+    if (delta <= band.maxDelta) return band;
+  }
+  return CON_BANDS[CON_BANDS.length - 1];
+}
+
+export function conXp(mobLevel: number, playerLevel: number, base: number) {
+  return Math.max(0, Math.floor(base * conFor(mobLevel, playerLevel).xp));
 }
 
 export interface ItemDef {

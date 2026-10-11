@@ -20,7 +20,7 @@ import {
   screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
-import { MOBS, RACES, mobByType, powerById } from "../shared/content/catalog";
+import { MOBS, RACES, conFor, mobByType, powerById } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -179,19 +179,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let viewH = 1;
   const cam = { x: 0, z: 0 };
   const notes: string[] = [];
-  const floaters: Array<{ x: number; z: number; text: string; born: number; color: string; lift: number }> = [];
+  const floaters: Array<{ x: number; z: number; text: string; born: number; color: string; lift: number; size: number; life: number }> = [];
   let dead = false;
   let raf = 0;
   let lastFrame = performance.now();
   let lastSend = 0;
 
   function floatText(text: string, color = "#f6e7b2", lift = 120) {
+    const xp = text.startsWith("+");
     const p = me();
-    floaters.push({ x: p?.x ?? 0, z: p?.z ?? 0, text, born: performance.now(), color, lift });
+    floaters.push({
+      x: p?.x ?? 0,
+      z: p?.z ?? 0,
+      text,
+      born: performance.now(),
+      color: xp ? "#7CFF4A" : color,
+      lift: xp ? 168 : lift,
+      size: xp ? 26 : 15,
+      life: xp ? 2600 : 1700,
+    });
   }
 
   function floatAt(x: number, z: number, text: string, color: string, lift = 78) {
-    floaters.push({ x, z, text, born: performance.now(), color, lift });
+    floaters.push({ x, z, text, born: performance.now(), color, lift, size: 15, life: 1700 });
   }
 
   const seenHp = new Map<string, number>();
@@ -1087,8 +1097,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
       ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
       ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
-      ctx.font = "12px Georgia";
+      ctx.font = "13px Georgia";
       ctx.textAlign = "center";
+      ctx.fillStyle = conFor(m.level, me()?.level ?? 1).color;
+      ctx.fillText(m.type, pt.x, barY - 16);
+      ctx.font = "12px Georgia";
       ctx.fillStyle = "#fff6d8";
       ctx.fillText(String(Math.ceil(m.hp)), pt.x, barY - 3);
     }
@@ -1123,21 +1136,26 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const floatNow = performance.now();
     ctx.save();
-    ctx.font = "15px Georgia";
     ctx.textAlign = "center";
     for (let i = floaters.length - 1; i >= 0; i--) {
       const f = floaters[i];
       const age = floatNow - f.born;
-      if (age > 1700) {
+      const life = f.life ?? 1700;
+      if (age > life) {
         floaters.splice(i, 1);
         continue;
       }
+      const fadeAt = life - 700;
       const pt = worldToScreen(f.x, f.z);
-      ctx.globalAlpha = age > 1100 ? Math.max(0, 1 - (age - 1100) / 600) : 1;
-      ctx.fillStyle = "#1a140c";
-      ctx.fillText(f.text, pt.x + 1, pt.y - f.lift - age * 0.03 + 1);
+      const rise = f.size >= 22 ? 0.07 : 0.03;
+      const y = pt.y - f.lift - age * rise;
+      ctx.globalAlpha = age > fadeAt ? Math.max(0, 1 - (age - fadeAt) / 700) : 1;
+      ctx.font = `${f.size >= 22 ? "bold " : ""}${f.size ?? 15}px Georgia`;
+      ctx.lineWidth = f.size >= 22 ? 4 : 3;
+      ctx.strokeStyle = "#10200c";
+      ctx.strokeText(f.text, pt.x, y);
       ctx.fillStyle = f.color;
-      ctx.fillText(f.text, pt.x, pt.y - f.lift - age * 0.03);
+      ctx.fillText(f.text, pt.x, y);
     }
     ctx.restore();
     const g = ctx.createRadialGradient(viewW / 2, viewH / 2, viewH * 0.3, viewW / 2, viewH / 2, viewH * 0.72);
