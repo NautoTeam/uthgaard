@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
 import { deleteSave, listSaves, type CharacterSave } from "@/client/localSave";
-import { BASE_CLASSES, RACES, type BaseClass, type Race } from "@/game/types";
+import { BASE_CLASSES, RACES, classAllowed, type BaseClass, type Race } from "@/game/types";
 
 export function Uthgaard() {
   const [run, setRun] = useState<IsleProfile | null>(null);
@@ -14,6 +14,8 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
   const [race, setRace] = useState<Race>("Human");
   const [path, setPath] = useState<BaseClass>("Fighter");
   const [saves, setSaves] = useState<CharacterSave[]>([]);
+  const [block, setBlock] = useState("");
+  const locked = !classAllowed(race, path);
 
   useEffect(() => {
     setSaves(listSaves());
@@ -32,6 +34,11 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       id="login"
       onSubmit={(e) => {
         e.preventDefault();
+        if (!classAllowed(race, path)) {
+          setBlock("Minotaurs cannot take Mage or Rogue.");
+          return;
+        }
+        setBlock("");
         enter();
       }}
     >
@@ -43,7 +50,15 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       </label>
       <label>
         Race
-        <select id="race" value={race} onChange={(e) => setRace(e.target.value as Race)}>
+        <select
+          id="race"
+          value={race}
+          onChange={(e) => {
+            const next = e.target.value as Race;
+            setRace(next);
+            setBlock(classAllowed(next, path) ? "" : "Minotaurs cannot take Mage or Rogue.");
+          }}
+        >
           {RACES.map((r) => (
             <option key={r}>{r}</option>
           ))}
@@ -51,13 +66,27 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       </label>
       <label>
         Path
-        <select id="baseClass" value={path} onChange={(e) => setPath(e.target.value as BaseClass)}>
-          {BASE_CLASSES.map((c) => (
-            <option key={c}>{c}</option>
-          ))}
+        <select
+          id="baseClass"
+          value={path}
+          onChange={(e) => {
+            const next = e.target.value as BaseClass;
+            setPath(next);
+            setBlock(classAllowed(race, next) ? "" : "Minotaurs cannot take Mage or Rogue.");
+          }}
+        >
+          {BASE_CLASSES.map((c) => {
+            const banned = !classAllowed(race, c);
+            return (
+              <option key={c} value={c} disabled={banned}>
+                {banned ? `${c} — not for Minotaurs` : c}
+              </option>
+            );
+          })}
         </select>
       </label>
-      <button id="joinBtn" type="submit">
+      {(locked || block) && <p className="path-block">Minotaurs cannot take Mage or Rogue.</p>}
+      <button id="joinBtn" type="submit" disabled={locked}>
         Enter the Hamlet
       </button>
       <p className="hint">
@@ -135,6 +164,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button type="button" data-skill="stab">
           Stab
         </button>
+        <button id="sheetBtn" type="button">
+          Sheet
+        </button>
         <button id="promoteBtn" type="button" hidden>
           Promote
         </button>
@@ -150,6 +182,24 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <div id="mapTitle">The Reach</div>
           <canvas id="mapCanvas" width={640} height={640} />
           <button id="mapClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="sheet" hidden>
+        <div id="sheetPanel">
+          <div id="sheetTitle">Character</div>
+          <div id="sheetBody" />
+          <div id="debugLevel" hidden>
+            <label>
+              Debug level
+              <input id="debugLevelInput" type="number" min={1} max={25} defaultValue={10} />
+            </label>
+            <button id="debugLevelBtn" type="button">
+              Set level
+            </button>
+          </div>
+          <button id="sheetClose" type="button">
             Close
           </button>
         </div>

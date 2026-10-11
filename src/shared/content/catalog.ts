@@ -15,18 +15,72 @@ export const PRESTIGE_OF: Record<BaseClass, Exclude<Prestige, "">> = {
   Rogue: "Scout",
 };
 
-export const RACE_MODS: Record<Race, { con: number; intel: number }> = {
-  Human: { con: 0, intel: 0 },
-  Elf: { con: -4, intel: 12 },
-  Minotaur: { con: 16, intel: -8 },
+/**
+ * Starting attributes. A character's five stats are
+ * BASE_ATTRS + RACE_ATTRS[race] + CLASS_ATTRS[class].
+ *
+ * |          | STR | DEX | CON | INT | SPI |
+ * | Human    | +2  | +2  |  0  |  0  | +2  |
+ * | Elf      | −4  | +6  | −4  | +12 | +4  |
+ * | Minotaur | +8  | −4  | +16 | −8  | −2  |
+ * | Fighter  | +6  | +2  | +6  |  0  |  0  |
+ * | Healer   |  0  |  0  |  0  | +6  | +8  |
+ * | Mage     | −2  |  0  |  0  | +10 | +6  |
+ * | Rogue    | +2  | +6  | +2  |  0  |  0  |
+ *
+ * Human Fighter is STR 28, Elf Fighter is STR 22, Minotaur Fighter is STR 34.
+ * CON sets max HP (70 + CON×2 + level×9). INT sets max mana.
+ * DEX sets max stamina. STR adds 1 melee damage per 10 points above 20.
+ * SPI adds a little mana regen. Edit these rows to change a race or class.
+ */
+export interface AttrBlock {
+  str: number;
+  dex: number;
+  con: number;
+  int: number;
+  spi: number;
+}
+
+export const BASE_ATTRS: AttrBlock = { str: 20, dex: 20, con: 30, int: 30, spi: 16 };
+
+export const RACE_ATTRS: Record<Race, AttrBlock> = {
+  Human: { str: 2, dex: 2, con: 0, int: 0, spi: 2 },
+  Elf: { str: -4, dex: 6, con: -4, int: 12, spi: 4 },
+  Minotaur: { str: 8, dex: -4, con: 16, int: -8, spi: -2 },
 };
 
-export const CLASS_MODS: Record<BaseClass, { con: number; intel: number }> = {
-  Fighter: { con: 6, intel: 0 },
-  Healer: { con: 0, intel: 6 },
-  Mage: { con: 0, intel: 10 },
-  Rogue: { con: 2, intel: 0 },
+export const CLASS_ATTRS: Record<BaseClass, AttrBlock> = {
+  Fighter: { str: 6, dex: 2, con: 6, int: 0, spi: 0 },
+  Healer: { str: 0, dex: 0, con: 0, int: 6, spi: 8 },
+  Mage: { str: -2, dex: 0, con: 0, int: 10, spi: 6 },
+  Rogue: { str: 2, dex: 6, con: 2, int: 0, spi: 0 },
 };
+
+/** Classes a race may not pick at creation. */
+export const RACE_BLOCKS: Record<Race, BaseClass[]> = {
+  Human: [],
+  Elf: [],
+  Minotaur: ["Mage", "Rogue"],
+};
+
+export function classAllowed(race: Race, cls: BaseClass) {
+  return !RACE_BLOCKS[race].includes(cls);
+}
+
+export function attrsFor(race: Race, cls: BaseClass): AttrBlock {
+  const r = RACE_ATTRS[race];
+  const c = CLASS_ATTRS[cls];
+  return {
+    str: BASE_ATTRS.str + r.str + c.str,
+    dex: BASE_ATTRS.dex + r.dex + c.dex,
+    con: BASE_ATTRS.con + r.con + c.con,
+    int: BASE_ATTRS.int + r.int + c.int,
+    spi: BASE_ATTRS.spi + r.spi + c.spi,
+  };
+}
+
+/** QA switch. Set false to hide the character-sheet "set level" control. */
+export const DEBUG_SET_LEVEL = true;
 
 export const PRESTIGE_BONUS: Record<Exclude<Prestige, "">, { hp: number; mana: number }> = {
   Warrior: { hp: 45, mana: 0 },
@@ -166,6 +220,12 @@ export interface PowerDef {
   /** Base classes and prestige names that may use it. Empty = everyone. */
   classes: string[];
   mana: number;
+  /**
+   * Stamina spent. Melee powers use this.
+   * Basic attack spends a little and refills between swings, so a new fighter
+   * does not stall. Stab spends more. Spells spend mana and 0 stamina.
+   */
+  stamina: number;
   range: number;
   damage: number;
   damagePerLevel: number;
@@ -182,6 +242,7 @@ export const POWERS: PowerDef[] = [
     label: "Attack",
     classes: [],
     mana: 0,
+    stamina: 8,
     range: 7.6,
     damage: 7,
     damagePerLevel: 2,
@@ -195,6 +256,7 @@ export const POWERS: PowerDef[] = [
     label: "Heal",
     classes: ["Healer", "Priest"],
     mana: 10,
+    stamina: 0,
     range: 0,
     damage: 0,
     damagePerLevel: 0,
@@ -208,6 +270,7 @@ export const POWERS: PowerDef[] = [
     label: "Fireball",
     classes: ["Mage", "Wizard"],
     mana: 10,
+    stamina: 0,
     range: 9,
     damage: 14,
     damagePerLevel: 3,
@@ -220,7 +283,8 @@ export const POWERS: PowerDef[] = [
     id: "stab",
     label: "Stab",
     classes: ["Rogue", "Scout"],
-    mana: 8,
+    mana: 0,
+    stamina: 14,
     range: 3.4,
     damage: 12,
     damagePerLevel: 2,

@@ -1,7 +1,7 @@
 import type { BaseClass, Prestige, Race } from "../content/catalog";
 
 export type { BaseClass, CampDef, Prestige, Race } from "../content/catalog";
-export { BASE_CLASSES, CAMPS, PRESTIGE_OF, RACES } from "../content/catalog";
+export { BASE_CLASSES, CAMPS, PRESTIGE_OF, RACES, attrsFor, classAllowed, DEBUG_SET_LEVEL } from "../content/catalog";
 
 export type MonsterType = string;
 export type SkillName = "attack" | "heal" | "fireball" | "stab";
@@ -22,6 +22,13 @@ export interface PlayerState extends PlayerInit {
   maxHp: number;
   mana: number;
   maxMana: number;
+  stamina: number;
+  maxStamina: number;
+  str: number;
+  dex: number;
+  con: number;
+  int: number;
+  spi: number;
   x: number;
   z: number;
   rotation: number;

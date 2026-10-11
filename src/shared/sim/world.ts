@@ -1,5 +1,5 @@
 import { arrivalAt, blocked, cityAt, nearestOpen, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { ITEMS, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, CLASS_MODS, RACE_MODS } from "../content/catalog";
+import { ITEMS, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -28,20 +28,15 @@ export interface JoinInput {
 }
 
 function applyStats(p: PlayerState) {
-  let con = 30;
-  let intel = 30;
-  const race = RACE_MODS[p.race];
-  const cls = CLASS_MODS[p.baseClass];
-  if (race) {
-    con += race.con;
-    intel += race.intel;
-  }
-  if (cls) {
-    con += cls.con;
-    intel += cls.intel;
-  }
-  p.maxHp = Math.floor(70 + con * 2 + p.level * 9);
-  p.maxMana = Math.floor(24 + intel * 2 + p.level * 4);
+  const a = attrsFor(p.race, p.baseClass);
+  p.str = a.str;
+  p.dex = a.dex;
+  p.con = a.con;
+  p.int = a.int;
+  p.spi = a.spi;
+  p.maxHp = Math.floor(70 + a.con * 2 + p.level * 9);
+  p.maxMana = Math.floor(24 + a.int * 2 + p.level * 4);
+  p.maxStamina = Math.floor(50 + a.dex * 2 + p.level * 2);
   const bonus = p.prestigeClass ? PRESTIGE_BONUS[p.prestigeClass] : undefined;
   if (bonus) {
     p.maxHp += bonus.hp;
@@ -49,6 +44,7 @@ function applyStats(p: PlayerState) {
   }
   if (p.hp == null || p.hp > p.maxHp) p.hp = p.maxHp;
   if (p.mana == null || p.mana > p.maxMana) p.mana = p.maxMana;
+  if (p.stamina == null || p.stamina > p.maxStamina) p.stamina = p.maxStamina;
   if (!p.inventory) p.inventory = {};
 }
 
@@ -59,6 +55,8 @@ function levelUp(p: PlayerState) {
     applyStats(p);
     p.hp = p.maxHp;
     p.mana = p.maxMana;
+    p.stamina = p.maxStamina;
+    p.stamina = p.maxStamina;
   }
 }
 
@@ -146,7 +144,9 @@ export function createWorld() {
     monsters.clear();
     for (const p of state.players) {
       if (!p.inventory) p.inventory = {};
-      players.set(p.id, { ...p, inventory: { ...p.inventory } });
+      const row = { ...p, inventory: { ...p.inventory } };
+      players.set(p.id, row);
+      applyStats(row);
     }
     for (const m of state.monsters) {
       const slotX = m.slotX ?? m.x;
@@ -178,14 +178,22 @@ export function createWorld() {
       rotation: 0,
       hp: 0,
       mana: 0,
+      stamina: 0,
       maxHp: 100,
       maxMana: 50,
+      maxStamina: 50,
+      str: 0,
+      dex: 0,
+      con: 0,
+      int: 0,
+      spi: 0,
       nextSwing: 0,
       inventory: { ...(input.inventory ?? {}) },
     };
     applyStats(player);
     player.hp = player.maxHp;
     player.mana = player.maxMana;
+    player.stamina = player.maxStamina;
     players.set(player.id, player);
     log(`${player.username} entered the Hamlet of Uthgaard.`);
     return player;
@@ -220,6 +228,8 @@ export function createWorld() {
   }
 
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
+    if (m.respawnAt) return 0;
+    m.respawnAt = Date.now() + 8000;
     const def = mobByType(m.type);
     const xp = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
     p.xp += xp;
@@ -233,7 +243,6 @@ export function createWorld() {
     }
     const before = p.level;
     levelUp(p);
-    m.respawnAt = Date.now() + 8000;
     m.targetId = null;
     const ding = p.level > before ? ` and reached level ${p.level}` : "";
     log(line.replace("{xp}", String(xp)).replace("{ding}", ding));
@@ -253,10 +262,13 @@ export function createWorld() {
     if (Math.hypot(p.x - m.x, p.z - m.z) > power.range) return { ok: false, reason: "Too far." };
     if (p.nextSwing && now < p.nextSwing) return { ok: false };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
+    if (power.stamina > 0 && p.stamina < power.stamina) return { ok: false, reason: "Not enough stamina." };
     p.mana -= power.mana;
+    p.stamina -= power.stamina || 0;
     p.nextSwing = now + (powerId === "attack" ? 780 : 900);
     const bonus = power.bonus[p.baseClass] ?? power.bonus[p.prestigeClass] ?? 0;
-    const dmg = power.damage + p.level * power.damagePerLevel + bonus;
+    const strBonus = power.mana > 0 ? 0 : Math.max(0, Math.floor((p.str - 20) / 10));
+    const dmg = power.damage + p.level * power.damagePerLevel + bonus + strBonus;
     m.hp = Math.max(0, m.hp - dmg);
     m.targetId = p.id;
     if (m.hp <= 0) {
@@ -329,6 +341,20 @@ export function createWorld() {
     return { ok: true };
   }
 
+  function setLevel(id: string, level: number): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    const next = Math.max(1, Math.min(25, Math.floor(level) || 1));
+    p.level = next;
+    p.xp = 0;
+    applyStats(p);
+    p.hp = p.maxHp;
+    p.mana = p.maxMana;
+    p.stamina = p.maxStamina;
+    log(`${p.username} is now level ${next}.`);
+    return { ok: true, reason: `Level ${next}.` };
+  }
+
   function chat(id: string, msg: string): ActionResult {
     const p = players.get(id);
     if (!p || !msg) return { ok: false };
@@ -354,6 +380,7 @@ export function createWorld() {
     p.z = spot.z;
     p.hp = p.maxHp;
     p.mana = p.maxMana;
+    p.stamina = p.maxStamina;
     log(`${p.username} returned to Uthgaard, leaving ${goldLost} gold and ${xpLost} XP behind.`);
     return { ok: true };
   }
@@ -510,7 +537,8 @@ export function createWorld() {
       if (p.hp <= 0) continue;
       const fighting = [...monsters.values()].some((m) => m.hp > 0 && m.targetId === p.id);
       if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + (fighting ? 0.45 : 1.35));
-      if (p.mana < p.maxMana) p.mana = Math.min(p.maxMana, p.mana + 0.6);
+      if (p.mana < p.maxMana) p.mana = Math.min(p.maxMana, p.mana + 0.45 + (p.spi || 0) * 0.01);
+      if (p.stamina < p.maxStamina) p.stamina = Math.min(p.maxStamina, p.stamina + (fighting ? 6 : 10));
     }
   }
 
@@ -521,6 +549,7 @@ export function createWorld() {
     attack,
     skill,
     promote,
+    setLevel,
     chat,
     travel,
     respawn,

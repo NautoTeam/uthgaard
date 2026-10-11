@@ -20,7 +20,7 @@ import {
   screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
-import { MOBS, RACES, conFor, mobByType, powerById } from "../shared/content/catalog";
+import { MOBS, RACES, attrsFor, conFor, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -44,7 +44,8 @@ type Intent =
   | { op: "promote"; id: string; cls: string }
   | { op: "chat"; id: string; msg: string }
   | { op: "travel"; id: string; cityId: string }
-  | { op: "respawn"; id: string };
+  | { op: "respawn"; id: string }
+  | { op: "setLevel"; id: string; level: number };
 
 declare global {
   interface Window {
@@ -57,6 +58,7 @@ declare global {
       monsters?: () => Array<{ id: string; type: string; hp: number; x: number; z: number }>;
       place?: (x: number, z: number) => void;
       swing?: () => void;
+      setLevel?: (level: number) => void;
     };
   }
 }
@@ -71,6 +73,7 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "chat") return world.chat(intent.id, intent.msg);
   if (intent.op === "travel") return world.travel(intent.id, intent.cityId);
   if (intent.op === "respawn") return world.respawn(intent.id);
+  if (intent.op === "setLevel") return world.setLevel(intent.id, intent.level);
   return { ok: false };
 }
 
@@ -94,6 +97,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const deathEl = root.querySelector<HTMLElement>("#death")!;
   const deathHint = root.querySelector<HTMLElement>("#deathHint")!;
   const respawnBtn = root.querySelector<HTMLButtonElement>("#respawnBtn")!;
+  const sheet = root.querySelector<HTMLElement>("#sheet")!;
+  const debugRow = root.querySelector<HTMLElement>("#debugLevel");
+  if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
 
   const sprites: Record<string, HTMLImageElement> = {};
   for (const name of NAMES) {
@@ -544,6 +550,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!p) return;
     const hpPct = Math.max(0, (p.hp / p.maxHp) * 100);
     const mpPct = Math.max(0, (p.mana / p.maxMana) * 100);
+    const spPct = Math.max(0, ((p.stamina ?? 0) / (p.maxStamina || 1)) * 100);
     const need = xpNeed(p.level);
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
@@ -551,7 +558,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level} · Gold ${p.gold}` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(p.hp)}/${p.maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(p.mana)}/${p.maxMana}</span></div>` +
+      `<div class="bar sp"><i style="width:${spPct}%"></i><span>SP ${Math.round(p.stamina ?? 0)}/${p.maxStamina ?? 0}</span></div>` +
       `<div class="bar xp"><i style="width:${xpPct}%"></i><span>${xpLabel}</span></div>`;
+    const sheetBody = root.querySelector<HTMLElement>("#sheetBody");
+    if (sheetBody) {
+      const a = attrsFor(p.race, p.baseClass);
+      sheetBody.innerHTML =
+        `<div class="sheet-who">${p.username} · ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}</div>` +
+        `<table class="sheet-attrs"><tbody>` +
+        `<tr><th>STR</th><td>${a.str}</td><th>DEX</th><td>${a.dex}</td></tr>` +
+        `<tr><th>CON</th><td>${a.con}</td><th>INT</th><td>${a.int}</td></tr>` +
+        `<tr><th>SPI</th><td>${a.spi}</td><th></th><td></td></tr>` +
+        `</tbody></table>` +
+        `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
+    }
     const kind = classKind(p.prestigeClass || p.baseClass);
     for (const btn of skillButtons) {
       const skill = btn.dataset.skill;
@@ -1440,6 +1460,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     act(btn);
   }
 
+  function onSheet(e: Event) {
+    e.preventDefault();
+    sheet.hidden = false;
+  }
+  function onSheetClose(e: Event) {
+    e.preventDefault();
+    sheet.hidden = true;
+  }
+  function onDebugLevel(e: Event) {
+    e.preventDefault();
+    const input = root.querySelector<HTMLInputElement>("#debugLevelInput");
+    send({ op: "setLevel", id: myId, level: Number(input?.value || 10) });
+  }
+
   function onPromote(e: Event) {
     e.preventDefault();
     const p = me();
@@ -1508,6 +1542,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const skillButtons = [...root.querySelectorAll<HTMLButtonElement>("#skills button[data-skill]")];
   skillButtons.forEach((btn) => btn.addEventListener("pointerup", onSkill));
   promoteBtn.addEventListener("pointerup", onPromote);
+  root.querySelector("#sheetBtn")!.addEventListener("pointerup", onSheet);
+  root.querySelector("#sheetClose")!.addEventListener("pointerup", onSheetClose);
+  root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
   root.querySelector("#mapBtn")!.addEventListener("pointerup", onMap);
   root.querySelector("#mapClose")!.addEventListener("pointerup", onMapClose);
@@ -1574,6 +1611,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       chaseId = null;
     },
     swing: () => act("attack"),
+    setLevel: (level: number) => send({ op: "setLevel", id: myId, level }),
   };
 
   resize();

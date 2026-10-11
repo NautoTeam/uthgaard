@@ -183,6 +183,10 @@ body {
   background: linear-gradient(#e6c56a, #8a6428);
 }
 
+.bar.sp i {
+  background: linear-gradient(#d7a441, #6d4e16);
+}
+
 .bar span {
   position: absolute;
   inset: 0;
@@ -222,6 +226,110 @@ body {
 
 #skills button[hidden] {
   display: none !important;
+}
+
+.path-block {
+  max-width: 320px;
+  text-align: center;
+  color: #e7b4a0;
+  font-size: 14px;
+  margin: 4px 0 0;
+}
+
+#login button:disabled {
+  opacity: 0.45;
+}
+
+#sheet {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 8, 8, 0.45);
+  z-index: 6;
+}
+
+#sheet[hidden] {
+  display: none !important;
+}
+
+#sheetPanel {
+  width: min(360px, 92vw);
+  padding: 16px 18px 14px;
+  background: #141812;
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+  pointer-events: auto;
+}
+
+#sheetTitle {
+  font-family: Cinzel, Georgia, serif;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.sheet-who {
+  margin-bottom: 8px;
+}
+
+.sheet-attrs {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.sheet-attrs th {
+  text-align: left;
+  color: #d7c28a;
+  font-weight: normal;
+  padding: 3px 0;
+}
+
+.sheet-attrs td {
+  text-align: right;
+  padding: 3px 12px 3px 0;
+}
+
+.sheet-note {
+  color: #c8b88a;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
+#debugLevel {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+#debugLevel[hidden] {
+  display: none !important;
+}
+
+#debugLevel label {
+  flex: 1;
+  font-size: 13px;
+  color: #a89870;
+}
+
+#debugLevel input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  background: #1a221c;
+  color: #eee;
+  border: 1px solid #6a5a38;
+}
+
+#sheetClose,
+#debugLevelBtn {
+  min-height: 40px;
+  padding: 8px 12px;
+  background: #243024;
+  color: #efe6c8;
+  border: 1px solid #6a5a38;
 }
 
 #talkBtn {
