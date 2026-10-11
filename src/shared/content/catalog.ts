@@ -64,15 +64,17 @@ export interface MobDef {
   attackMs: number;
   aggro: number;
   leash: number;
+  /** Draw scale. Edit this to change how big the mob looks. */
+  scale: number;
 }
 
 export const MOBS: MobDef[] = [
-  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
-  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
-  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
-  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
-  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
-  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2 },
+  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
+  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, scale: 0.18 },
 ];
 
 const FALLBACK_MOB: MobDef = {
@@ -85,6 +87,7 @@ const FALLBACK_MOB: MobDef = {
   attackMs: 1100,
   aggro: 3.05,
   leash: 6.2,
+  scale: 0.18,
 };
 
 export function mobByType(type: string): MobDef {
@@ -128,7 +131,7 @@ export const POWERS: PowerDef[] = [
     label: "Attack",
     classes: [],
     mana: 0,
-    range: 2.15,
+    range: 7.6,
     damage: 7,
     damagePerLevel: 2,
     bonus: { Fighter: 5, Warrior: 5 },

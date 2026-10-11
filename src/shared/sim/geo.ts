@@ -210,6 +210,13 @@ export function nearestOpen(x: number, z: number) {
   return { x: 0, z: 0 };
 }
 
+/** Pixel gap between two footprints in the isometric view (tile is 48×24). */
+export function screenGap(x1: number, z1: number, x2: number, z2: number) {
+  const dx = x1 - x2;
+  const dz = z1 - z2;
+  return Math.hypot((dx - dz) * 24, (dx + dz) * 12);
+}
+
 export function underHall(x: number, z: number) {
   for (const hall of HALLS) {
     const dx = x - hall.x;

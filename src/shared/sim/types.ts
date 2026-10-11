@@ -39,6 +39,9 @@ export interface MonsterState {
   z: number;
   homeX: number;
   homeZ: number;
+  /** Idle tile. Mobs return here instead of the camp center so a pack does not stack. */
+  slotX: number;
+  slotZ: number;
   targetId: string | null;
   respawnAt: number;
   nextHit: number;

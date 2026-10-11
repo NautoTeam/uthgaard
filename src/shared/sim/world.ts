@@ -1,4 +1,4 @@
-import { arrivalAt, cityAt, nearestOpen, nearestWayfarer, resolveMove } from "./geo";
+import { arrivalAt, blocked, cityAt, nearestOpen, nearestWayfarer, resolveMove, screenGap } from "./geo";
 import { ITEMS, mobByType, mobHp, powerById, PRESTIGE_BONUS, CLASS_MODS, RACE_MODS } from "../content/catalog";
 import {
   CAMPS,
@@ -73,33 +73,47 @@ export function createWorld() {
     if (logs.length > 40) logs.shift();
   }
 
-  function ringSpot(cx: number, cz: number, index: number, count: number) {
-    const ring = count <= 4 ? 2.6 : 3.3;
-    const ang = (index / Math.max(1, count)) * Math.PI * 2 + 0.55;
-    const x = cx + Math.cos(ang) * ring;
-    const z = cz + Math.sin(ang) * ring;
-    const spot = nearestOpen(x, z);
-    if (Math.hypot(spot.x - cx, spot.z - cz) > 7) return { x, z };
-    return spot;
+  const SLOT_GAP = 120;
+
+  function campSlots(cx: number, cz: number, count: number) {
+    const slots: { x: number; z: number }[] = [];
+    const taken = (x: number, z: number) => slots.some((s) => screenGap(x, z, s.x, s.z) < SLOT_GAP);
+    for (let r = 2.2; slots.length < count && r <= 12; r += 0.4) {
+      const steps = Math.max(10, Math.ceil((Math.PI * 2 * r) / 0.8));
+      for (let i = 0; i < steps && slots.length < count; i++) {
+        const ang = (i / steps) * Math.PI * 2 + 0.7;
+        const raw = nearestOpen(cx + Math.cos(ang) * r, cz + Math.sin(ang) * r);
+        const x = Math.round(raw.x);
+        const z = Math.round(raw.z);
+        if (blocked(x, z)) continue;
+        if (Math.hypot(x - cx, z - cz) > 11) continue;
+        if (taken(x, z)) continue;
+        slots.push({ x, z });
+      }
+    }
+    for (let n = 0; slots.length < count && n < 80; n++) {
+      const x = Math.round(cx - 6 + (n % 13));
+      const z = Math.round(cz - 6 + Math.floor(n / 13));
+      if (blocked(x, z) || taken(x, z)) continue;
+      slots.push({ x, z });
+    }
+    return slots;
   }
 
-  function campSpot(cx: number, cz: number, index: number, count: number) {
-    for (let n = 0; n < count; n++) {
-      const spot = ringSpot(cx, cz, (index + n) % count, count);
-      let taken = false;
-      for (const o of monsters.values()) {
-        if (o.hp > 0 && Math.hypot(o.x - spot.x, o.z - spot.z) < 1.25) taken = true;
-      }
-      if (!taken) return spot;
+  function clearOfMobs(x: number, z: number, exceptId?: string) {
+    for (const m of monsters.values()) {
+      if (m.hp <= 0 || m.id === exceptId) continue;
+      if (screenGap(x, z, m.x, m.z) < 100) return false;
     }
-    return ringSpot(cx, cz, index, count);
+    return true;
   }
 
   for (const camp of CAMPS) {
+    const slots = campSlots(camp.cx, camp.cz, camp.count);
     for (let i = 0; i < camp.count; i++) {
       const id = "m" + mid++;
       const hp = mobHp(camp.type, camp.level);
-      const placed = campSpot(camp.cx, camp.cz, i, camp.count);
+      const placed = slots[i] ?? { x: Math.round(camp.cx + i * 3), z: Math.round(camp.cz) };
       monsters.set(id, {
         id,
         type: camp.type,
@@ -110,6 +124,8 @@ export function createWorld() {
         z: placed.z,
         homeX: camp.cx,
         homeZ: camp.cz,
+        slotX: placed.x,
+        slotZ: placed.z,
         targetId: null,
         respawnAt: 0,
         nextHit: 0,
@@ -132,7 +148,11 @@ export function createWorld() {
       if (!p.inventory) p.inventory = {};
       players.set(p.id, { ...p, inventory: { ...p.inventory } });
     }
-    for (const m of state.monsters) monsters.set(m.id, { ...m });
+    for (const m of state.monsters) {
+      const slotX = m.slotX ?? m.x;
+      const slotZ = m.slotZ ?? m.z;
+      monsters.set(m.id, { ...m, slotX, slotZ });
+    }
     logs.splice(0, logs.length, ...state.logs.slice(-40));
   }
 
@@ -183,8 +203,18 @@ export function createWorld() {
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false };
     const next = resolveMove(p.x, p.z, x, z);
-    p.x = next.x;
-    p.z = next.z;
+    let nx = next.x;
+    let nz = next.z;
+    if (!clearOfMobs(nx, nz)) {
+      if (clearOfMobs(nx, p.z) && !blocked(nx, p.z)) nz = p.z;
+      else if (clearOfMobs(p.x, nz) && !blocked(p.x, nz)) nx = p.x;
+      else {
+        nx = p.x;
+        nz = p.z;
+      }
+    }
+    p.x = nx;
+    p.z = nz;
     p.rotation = rotation || 0;
     return { ok: true };
   }
@@ -341,9 +371,23 @@ export function createWorld() {
     return n;
   }
 
+  function freeSlot(m: MonsterState) {
+    const others = [...monsters.values()].filter((o) => o.hp > 0 && o.id !== m.id);
+    const clear = (x: number, z: number) => !blocked(x, z) && !others.some((o) => screenGap(o.x, o.z, x, z) < SLOT_GAP);
+    if (Number.isFinite(m.slotX) && clear(m.slotX, m.slotZ)) return { x: m.slotX, z: m.slotZ };
+    const camp = campOf(m);
+    if (camp) {
+      const open = campSlots(camp.cx, camp.cz, camp.count + 6).find((s) => clear(s.x, s.z));
+      if (open) return open;
+    }
+    return { x: m.slotX ?? m.homeX, z: m.slotZ ?? m.homeZ };
+  }
+
   function step(now: number) {
     for (const camp of CAMPS) {
-      const alive = [...monsters.values()].filter((o) => o.hp > 0 && o.homeX === camp.cx && o.homeZ === camp.cz);
+      const alive = [...monsters.values()]
+        .filter((o) => o.hp > 0 && o.homeX === camp.cx && o.homeZ === camp.cz)
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
       for (const extra of alive.slice(camp.count)) {
         extra.hp = 0;
         extra.respawnAt = 0;
@@ -351,6 +395,10 @@ export function createWorld() {
       }
     }
     for (const m of monsters.values()) {
+      if (!Number.isFinite(m.slotX)) {
+        m.slotX = m.x;
+        m.slotZ = m.z;
+      }
       if (m.hp <= 0) {
         const camp = campOf(m);
         if (m.respawnAt && now > m.respawnAt) {
@@ -359,10 +407,7 @@ export function createWorld() {
             continue;
           }
           m.hp = m.maxHp;
-          const slot = camp
-            ? [...monsters.values()].filter((o) => o.homeX === camp.cx && o.homeZ === camp.cz).findIndex((o) => o.id === m.id)
-            : 0;
-          const placed = camp ? campSpot(camp.cx, camp.cz, Math.max(0, slot), camp.count) : { x: m.homeX, z: m.homeZ };
+          const placed = freeSlot(m);
           m.x = placed.x;
           m.z = placed.z;
           m.targetId = null;
@@ -395,7 +440,7 @@ export function createWorld() {
         const d = t && t.hp > 0 ? Math.hypot(t.x - m.x, t.z - m.z) : 99;
         if (!t || t.hp <= 0 || d > def.leash || homeD > 9) {
           m.targetId = null;
-        } else if (d < 1.45) {
+        } else if (screenGap(t.x, t.z, m.x, m.z) <= 130 || d <= 6.4) {
           if (now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const dmg = def.damage + Math.floor(m.level * def.damagePerLevel);
@@ -406,7 +451,7 @@ export function createWorld() {
             }
           }
         } else {
-          const stepLen = Math.min(0.42, Math.max(0, d - 1.35));
+          const stepLen = Math.min(0.42, Math.max(0, d - 5.6));
           const nx = m.x + ((t.x - m.x) / d) * stepLen;
           const nz = m.z + ((t.z - m.z) / d) * stepLen;
           const stepPos = resolveMove(m.x, m.z, nx, nz);
@@ -414,12 +459,18 @@ export function createWorld() {
           m.z = stepPos.z;
         }
       }
-      if (!m.targetId && homeD > 0.8) {
-        const nx = m.x + ((m.homeX - m.x) / homeD) * 0.5;
-        const nz = m.z + ((m.homeZ - m.z) / homeD) * 0.5;
-        const stepPos = resolveMove(m.x, m.z, nx, nz);
-        m.x = stepPos.x;
-        m.z = stepPos.z;
+      if (!m.targetId) {
+        const sx = m.slotX;
+        const sz = m.slotZ;
+        const dx = sx - m.x;
+        const dz = sz - m.z;
+        const sd = Math.hypot(dx, dz);
+        if (sd > 0.2) {
+          const stepLen = Math.min(0.55, sd);
+          const stepPos = resolveMove(m.x, m.z, m.x + (dx / sd) * stepLen, m.z + (dz / sd) * stepLen);
+          m.x = stepPos.x;
+          m.z = stepPos.z;
+        }
       }
     }
     const alive = [...monsters.values()].filter((o) => o.hp > 0);
@@ -428,8 +479,8 @@ export function createWorld() {
         const a = alive[i];
         const b = alive[j];
         const d = Math.hypot(a.x - b.x, a.z - b.z);
-        if (d >= 1.2 || d < 0.001) continue;
-        const push = (1.2 - d) / 2;
+        if (screenGap(a.x, a.z, b.x, b.z) >= 116 || d < 0.001) continue;
+        const push = 0.55;
         const ux = (a.x - b.x) / d;
         const uz = (a.z - b.z) / d;
         const na = resolveMove(a.x, a.z, a.x + ux * push, a.z + uz * push);
@@ -438,6 +489,20 @@ export function createWorld() {
         a.z = na.z;
         b.x = nb.x;
         b.z = nb.z;
+      }
+    }
+    for (const m of alive) {
+      for (const p of players.values()) {
+        if (p.hp <= 0) continue;
+        for (let n = 0; n < 6 && screenGap(m.x, m.z, p.x, p.z) < 108; n++) {
+          const d = Math.hypot(m.x - p.x, m.z - p.z) || 1;
+          const ux = d < 0.001 ? 1 : (m.x - p.x) / d;
+          const uz = d < 0.001 ? 0 : (m.z - p.z) / d;
+          const pos = resolveMove(m.x, m.z, m.x + ux * 1.2, m.z + uz * 1.2);
+          if (pos.x === m.x && pos.z === m.z) break;
+          m.x = pos.x;
+          m.z = pos.z;
+        }
       }
     }
     for (const p of players.values()) {

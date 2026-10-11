@@ -17,8 +17,10 @@ import {
   clearLine,
   nearestOpen,
   routeTo,
+  screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
+import { MOBS, RACES, mobByType, powerById } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -31,7 +33,7 @@ export interface IsleProfile {
 const TW = 48;
 const TH = 24;
 const MOVE = 11;
-const NAMES = ["human", "elf", "minotaur", "spider", "snake", "lizard", "orc", "bandit", "beast", "hall", "tree", "fire"];
+const NAMES = [...new Set([...RACES.map((r) => r.toLowerCase()), ...MOBS.map((m) => m.type.toLowerCase()), "hall", "tree", "fire"])];
 
 type Intent =
   | { op: "join"; body: JoinInput }
@@ -377,6 +379,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const sy = dx + dz;
       actor.facing = Math.abs(sy) >= Math.abs(sx) ? (sy > 0 ? 0 : 3) : sx > 0 ? 2 : 1;
     }
+    if (id === myId) {
+      const foe = livingMonster(chaseId);
+      if (foe) {
+        const sx = foe.x - x - (foe.z - z);
+        const sy = foe.x - x + (foe.z - z);
+        actor.facing = Math.abs(sy) >= Math.abs(sx) ? (sy > 0 ? 0 : 3) : sx > 0 ? 2 : 1;
+      }
+    }
     actor.x = x;
     actor.z = z;
     return actor;
@@ -679,21 +689,40 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return best;
   }
 
-  const MELEE = 1.32;
+  const MELEE_GAP = 108;
 
   function livingMonster(id: string | null) {
     if (!id) return null;
     return view().monsters.find((m) => m.id === id && m.hp > 0) ?? null;
   }
 
-  function adjacentStand(mx: number, mz: number, px: number, pz: number) {
+  function adjacentStand(mx: number, mz: number, px: number, pz: number, minGap = MELEE_GAP) {
     const d = Math.hypot(px - mx, pz - mz) || 1;
-    const dist = 1.2;
-    let spot = nearestOpen(mx + ((px - mx) / d) * dist, mz + ((pz - mz) / d) * dist);
-    if (Math.hypot(spot.x - mx, spot.z - mz) < 0.85) {
-      spot = nearestOpen(mx + ((px - mx) / d) * 1.85, mz + ((pz - mz) / d) * 1.85);
+    const ux = (px - mx) / d;
+    const uz = (pz - mz) / d;
+    let best: { x: number; z: number } | null = null;
+    let bestScore = Infinity;
+    for (let dist = 1.5; dist <= 8; dist += 0.5) {
+      const x = Math.round(mx + ux * dist);
+      const z = Math.round(mz + uz * dist);
+      if (blocked(x, z)) continue;
+      const gap = screenGap(x, z, mx, mz);
+      if (gap < minGap || gap > minGap + 48) continue;
+      const score = gap + Math.hypot(x - px, z - pz);
+      if (score < bestScore) {
+        bestScore = score;
+        best = { x, z };
+      }
     }
-    return spot;
+    return best ?? nearestOpen(mx + ux * 4, mz + uz * 4);
+  }
+
+  function rangedStand(mx: number, mz: number, px: number, pz: number) {
+    const d = Math.hypot(px - mx, pz - mz) || 1;
+    const x = Math.round(mx + ((px - mx) / d) * 7.2);
+    const z = Math.round(mz + ((pz - mz) / d) * 7.2);
+    if (!blocked(x, z)) return { x, z };
+    return nearestOpen(mx + ((px - mx) / d) * 7.2, mz + ((pz - mz) / d) * 7.2);
   }
 
   function combat() {
@@ -708,13 +737,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
     }
     const chase = livingMonster(chaseId);
+    const ranged = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
     if (chase && !moving) {
-      const d = Math.hypot(chase.x - p.x, chase.z - p.z);
-      if (d <= MELEE) {
+      const gap = screenGap(chase.x, chase.z, p.x, p.z);
+      const closeEnough = ranged ? Math.hypot(chase.x - p.x, chase.z - p.z) <= 7.2 : gap >= MELEE_GAP;
+      if (closeEnough) {
         dest = null;
         path = [];
+        p.rotation = Math.atan2(chase.x - p.x, chase.z - p.z);
       } else {
-        const spot = adjacentStand(chase.x, chase.z, p.x, p.z);
+        const spot = ranged ? rangedStand(chase.x, chase.z, p.x, p.z) : adjacentStand(chase.x, chase.z, p.x, p.z);
         if (!dest || Math.hypot(dest.x - spot.x, dest.z - spot.z) > 0.75) {
           dest = { x: spot.x, z: spot.z };
           talkCity = null;
@@ -728,7 +760,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const foe = chase ?? currentTarget();
     if (!foe) return;
     const dist = Math.hypot(foe.x - p.x, foe.z - p.z);
-    if (dist <= 1.6 && Date.now() >= (p.nextSwing || 0)) {
+    if (Date.now() < (p.nextSwing || 0)) return;
+    if (ranged && dist <= 8 && p.mana >= 10) {
+      pinnedId = foe.id;
+      act("fireball");
+      return;
+    }
+    if (dist <= (powerById("attack")?.range ?? 7.6)) {
       pinnedId = foe.id;
       act("attack");
     }
@@ -842,7 +880,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     let nx = next.x;
     let nz = next.z;
     const crowded = (x: number, z: number) =>
-      view().monsters.some((m) => m.hp > 0 && Math.hypot(m.x - x, m.z - z) < 0.95);
+      view().monsters.some((m) => m.hp > 0 && screenGap(m.x, m.z, x, z) < 100);
     if (crowded(nx, nz)) {
       if (!crowded(nx, p.z) && !blocked(nx, p.z)) nz = p.z;
       else if (!crowded(p.x, nz) && !blocked(p.x, nz)) nx = p.x;
@@ -990,7 +1028,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         key: m.x + m.z,
         draw: () => {
           shadowAt(m.x, m.z, 14);
-          if (!drawSprite(m.type.toLowerCase(), m.x, m.z, 0.18)) drawFallback(m.type, m.x, m.z);
+          if (!drawSprite(m.type.toLowerCase(), m.x, m.z, mobByType(m.type).scale || 0.18)) drawFallback(m.type, m.x, m.z);
           if (aimed && aimed.id === m.id) markTarget(m.x, m.z);
         },
       });
@@ -1253,9 +1291,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       chaseId = picked;
       const m = view().monsters.find((mon) => mon.id === picked);
       if (m) {
-        const d = Math.hypot(m.x - p.x, m.z - p.z);
-        if (d > MELEE) {
-          const spot = adjacentStand(m.x, m.z, p.x, p.z);
+        const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
+        const gap = screenGap(m.x, m.z, p.x, p.z);
+        const inRange = mage ? Math.hypot(m.x - p.x, m.z - p.z) <= 7.2 : gap >= MELEE_GAP;
+        if (!inRange) {
+          const spot = mage ? rangedStand(m.x, m.z, p.x, p.z) : adjacentStand(m.x, m.z, p.x, p.z);
           goTo(spot.x, spot.z, null, true);
         } else {
           dest = null;
@@ -1332,7 +1372,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function act(skill: string) {
-    const range = skill === "fireball" ? 9 : skill === "stab" ? 3.5 : 4.6;
+    const power = powerById(skill);
+    const range = power && power.range > 0 ? power.range : skill === "stab" ? 3.5 : 3.8;
     const pinned = pinnedId ? view().monsters.find((m) => m.id === pinnedId && m.hp > 0) : null;
     const p = me();
     const pinOk = pinned && p && Math.hypot(pinned.x - p.x, pinned.z - p.z) <= range;
@@ -1366,12 +1407,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (btn === "attack") {
       const p = me();
       const t = currentTarget();
-      if (p && t && Math.hypot(t.x - p.x, t.z - p.z) > MELEE) {
-        pinnedId = t.id;
-        chaseId = t.id;
-        const spot = adjacentStand(t.x, t.z, p.x, p.z);
-        goTo(spot.x, spot.z, null, true);
-        return;
+      if (p && t) {
+        const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
+        const inRange = mage ? Math.hypot(t.x - p.x, t.z - p.z) <= 7.2 : screenGap(t.x, t.z, p.x, p.z) >= MELEE_GAP;
+        if (!inRange) {
+          pinnedId = t.id;
+          chaseId = t.id;
+          const spot = mage ? rangedStand(t.x, t.z, p.x, p.z) : adjacentStand(t.x, t.z, p.x, p.z);
+          goTo(spot.x, spot.z, null, true);
+          return;
+        }
       }
     }
     act(btn);
@@ -1464,8 +1509,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   window.addEventListener("resize", resize);
 
   const stepTimer = window.setInterval(() => {
-    const p = localPlayer();
-    if (host && mapOverlay.hidden && p && p.hp > 0) authority.step(Date.now());
+    if (host && mapOverlay.hidden) authority.step(Date.now());
   }, 400);
   const snapTimer = window.setInterval(() => {
     if (host) {
