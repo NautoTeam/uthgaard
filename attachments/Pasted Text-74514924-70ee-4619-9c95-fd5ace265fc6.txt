@@ -1,0 +1,20 @@
+QA results on the current (rolled-back) Uthgaard build. Please fix all of these:
+
+HIGH
+1. Click-to-move goes the wrong way: clicking a tile southwest of the hero makes it walk northwest. The hero should walk to the clicked tile. Show a marker there too.
+2. Collision: the hero can walk through halls and stand on their roofs (walk up-right from the Uthgaard hamlet square into a hall). Arriving in Hornwatch also puts the hero on a hall roof. Halls must block movement, and arrival points must be on open ground.
+3. Death: dying just respawns you quietly in Uthgaard with nothing lost. Add a death screen with a respawn button and a small penalty (for example, some XP or gold).
+4. Animations: none play. The sprite slides as one static frame. Add walk cycles in 4 to 8 directions plus attack and cast animations for each race, and make each class look different (the Elf Mage and Elf Rogue look identical right now).
+
+MEDIUM
+5. Skill feedback: messages like "Only mages can cast fireball." and "Nothing in reach." only go to the hidden chat log. Show them as floating text near the hero, and only show or enable the skills that belong to the hero's class.
+6. Map: Esc should close it. The game keeps running while the map is open (HP drops); pause it or block damage. The map also blocks the Map and Chat buttons, so they can't close it.
+7. Heal works at full HP and wastes about 9 MP. Block it and show "Already at full health."
+
+LOW
+8. The last line of the chat log is hidden behind the "Say something..." input.
+9. In Eldenreach, the city label overlaps the Wayfarer's sprite and name.
+10. "Enter the Hamlet" stretches the full width of the panel. Match the form's width.
+11. Saved-character buttons only show name and level. Add race and class, a clear "Continue" label, and a way to delete a save.
+12. WASD feels confusing in isometric view. Map the keys to screen directions, or explain the mapping on the title screen.
+13. The title screen says "drag the stick", but no joystick appears on desktop. Show that text only on touch devices.
