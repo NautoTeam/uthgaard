@@ -375,12 +375,22 @@ body {
   margin-bottom: 10px;
 }
 
+#dollSlots {
+  border-bottom: 1px solid #5a4630;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+}
+
 .bag-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.bag-row button + button {
+  margin-left: 6px;
 }
 
 #talkBtn {

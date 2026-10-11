@@ -21,7 +21,7 @@ import {
   screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
-import { MOBS, RACES, VENDOR_STOCK, attrsFor, conFor, itemById, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
+import { MOBS, RACES, EQUIP_SLOTS, VENDOR_STOCK, attrsFor, conFor, gearTotals, itemById, meleeDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -33,7 +33,7 @@ export interface IsleProfile {
 
 const TW = 48;
 const TH = 24;
-const MOVE = 11;
+const MOVE = 20;
 const NAMES = [...new Set([...RACES.map((r) => r.toLowerCase()), ...MOBS.map((m) => m.type.toLowerCase()), "hall", "tree", "fire"])];
 
 type Intent =
@@ -49,7 +49,9 @@ type Intent =
   | { op: "setLevel"; id: string; level: number }
   | { op: "buy"; id: string; itemId: string }
   | { op: "sell"; id: string; itemId: string }
-  | { op: "use"; id: string; itemId: string };
+  | { op: "use"; id: string; itemId: string }
+  | { op: "equip"; id: string; itemId: string }
+  | { op: "unequip"; id: string; slot: string };
 
 declare global {
   interface Window {
@@ -81,6 +83,8 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "buy") return world.buy(intent.id, intent.itemId);
   if (intent.op === "sell") return world.sell(intent.id, intent.itemId);
   if (intent.op === "use") return world.useItem(intent.id, intent.itemId);
+  if (intent.op === "equip") return world.equip(intent.id, intent.itemId);
+  if (intent.op === "unequip") return world.unequip(intent.id, intent.slot);
   return { ok: false };
 }
 
@@ -111,6 +115,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const shopBag = root.querySelector<HTMLElement>("#shopBag")!;
   const bag = root.querySelector<HTMLElement>("#bag")!;
   const bagBody = root.querySelector<HTMLElement>("#bagBody")!;
+  const dollSlots = root.querySelector<HTMLElement>("#dollSlots")!;
   const debugRow = root.querySelector<HTMLElement>("#debugLevel");
   if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
 
@@ -170,6 +175,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     x: saved?.x,
     z: saved?.z,
     inventory: saved?.inventory,
+    equipment: saved?.equipment,
   };
 
   const authority = createAuthority();
@@ -304,6 +310,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         mine.level = incoming.level;
         mine.xp = incoming.xp;
         mine.gold = incoming.gold;
+        mine.inventory = incoming.inventory;
+        mine.equipment = incoming.equipment;
         mine.prestigeClass = incoming.prestigeClass;
       }
       remote = msg.snap;
@@ -584,7 +592,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         `<table class="sheet-attrs"><tbody>` +
         `<tr><th>STR</th><td>${a.str}</td><th>DEX</th><td>${a.dex}</td></tr>` +
         `<tr><th>CON</th><td>${a.con}</td><th>INT</th><td>${a.int}</td></tr>` +
-        `<tr><th>SPI</th><td>${a.spi}</td><th></th><td></td></tr>` +
+        `<tr><th>SPI</th><td>${a.spi}</td><th>DEF</th><td>${gearTotals(p.equipment).defense}</td></tr>` +
+        `<tr><th>DMG</th><td>${meleeDamage(p)}</td><th></th><td></td></tr>` +
         `</tbody></table>` +
         `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
     }
@@ -989,8 +998,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (p) {
       const tx = (p.x - p.z) * (TW / 2);
       const tz = (p.x + p.z) * (TH / 2);
-      cam.x += (tx - cam.x) * 0.15;
-      cam.z += (tz - cam.z) * 0.15;
+      cam.x += (tx - cam.x) * Math.min(1, 0.45);
+      cam.z += (tz - cam.z) * Math.min(1, 0.45);
     }
     ctx.fillStyle = "#10241f";
     ctx.fillRect(0, 0, viewW, viewH);
@@ -1039,10 +1048,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.translate(p.x, p.y + 4);
           ctx.scale(1, 0.42);
           ctx.beginPath();
-          ctx.arc(0, 0, 22, 0, Math.PI * 2);
-          ctx.strokeStyle = npc.role === "vendor" ? "rgba(120, 210, 140, .95)" : "rgba(240, 210, 120, .9)";
-          ctx.lineWidth = 3;
+          ctx.arc(0, 0, npc.role === "vendor" ? 40 : 22, 0, Math.PI * 2);
+          ctx.strokeStyle = npc.role === "vendor" ? "#39ff6a" : "rgba(240, 210, 120, .9)";
+          ctx.lineWidth = npc.role === "vendor" ? 8 : 3;
           ctx.stroke();
+          if (npc.role === "vendor") {
+            ctx.beginPath();
+            ctx.arc(0, 0, 28, 0, Math.PI * 2);
+            ctx.strokeStyle = "#f4fff6";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          }
           ctx.restore();
           shadowAt(npc.x, npc.z, 12);
           drawHero(npc.race, npc.id, npc.x, npc.z);
@@ -1222,6 +1238,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       x: p.x,
       z: p.z,
       inventory: p.inventory,
+      equipment: p.equipment,
     });
   }
 
@@ -1431,16 +1448,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function paintBag() {
     const p = me();
     if (!p || bag.hidden) return;
-    const sig = JSON.stringify(p.inventory ?? {});
+    const sig = JSON.stringify(p.inventory ?? {}) + "|" + JSON.stringify(p.equipment ?? {});
     if (sig === bagSig) return;
     bagSig = sig;
+    dollSlots.innerHTML = EQUIP_SLOTS.map((slot) => {
+      const worn = p.equipment?.[slot.id];
+      const item = worn ? itemById(worn) : null;
+      const btn = item ? `<button type="button" data-unequip="${slot.id}">Unequip</button>` : "";
+      return `<div class="bag-row"><span>${slot.label}</span><span>${item?.name ?? "—"}</span>${btn}</div>`;
+    }).join("");
     const rows = Object.entries(p.inventory ?? {}).filter(([, n]) => n > 0);
     bagBody.innerHTML = rows.length
       ? rows
           .map(([id, n]) => {
             const item = itemById(id);
             const use = item?.kind === "consumable" ? `<button type="button" data-use="${id}">Use</button>` : "";
-            return `<div class="bag-row"><span>${item?.name ?? id} ×${n}</span>${use}</div>`;
+            const equip = item?.slot ? `<button type="button" data-equip="${id}">Equip</button>` : "";
+            return `<div class="bag-row"><span>${item?.name ?? id} ×${n}</span><span>${equip}${use}</span></div>`;
           })
           .join("")
       : `<p class="sheet-note">Your bag is empty.</p>`;
@@ -1568,11 +1592,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     bag.hidden = !bag.hidden;
   }
   function onBagClick(e: Event) {
-    const btn = (e.target as HTMLElement).closest("button[data-use]");
+    const btn = (e.target as HTMLElement).closest("button");
     if (!btn) return;
     e.preventDefault();
-    const itemId = (btn as HTMLElement).dataset.use;
+    const itemId = btn.dataset.use;
+    const equipId = btn.dataset.equip;
+    const slot = btn.dataset.unequip;
     if (itemId) send({ op: "use", id: myId, itemId });
+    else if (equipId) send({ op: "equip", id: myId, itemId: equipId });
+    else if (slot) send({ op: "unequip", id: myId, slot });
   }
   function onShopClick(e: Event) {
     const btn = (e.target as HTMLElement).closest("button[data-buy], button[data-sell]");
@@ -1673,7 +1701,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#sheetClose")!.addEventListener("pointerup", onSheetClose);
   root.querySelector("#bagBtn")!.addEventListener("pointerup", onBagToggle);
   root.querySelector("#bagClose")!.addEventListener("pointerup", onBagClose);
-  bagBody.addEventListener("pointerup", onBagClick);
+  bag.addEventListener("pointerup", onBagClick);
   shopStock.addEventListener("pointerup", onShopClick);
   shopBag.addEventListener("pointerup", onShopClick);
   root.querySelector("#shopClose")!.addEventListener("pointerup", onShopClose);

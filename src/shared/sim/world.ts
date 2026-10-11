@@ -1,5 +1,5 @@
 import { arrivalAt, blocked, cityAt, nearestOpen, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { DROPS, VENDOR_STOCK, dropChance, itemById, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, meleeDamage, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -25,6 +25,7 @@ export interface JoinInput {
   x?: number;
   z?: number;
   inventory?: Record<string, number>;
+  equipment?: Record<string, string>;
 }
 
 function applyStats(p: PlayerState) {
@@ -46,6 +47,7 @@ function applyStats(p: PlayerState) {
   if (p.mana == null || p.mana > p.maxMana) p.mana = p.maxMana;
   if (p.stamina == null || p.stamina > p.maxStamina) p.stamina = p.maxStamina;
   if (!p.inventory) p.inventory = {};
+  if (!p.equipment) p.equipment = {};
 }
 
 function levelUp(p: PlayerState) {
@@ -144,7 +146,7 @@ export function createWorld() {
     monsters.clear();
     for (const p of state.players) {
       if (!p.inventory) p.inventory = {};
-      const row = { ...p, inventory: { ...p.inventory } };
+      const row = { ...p, inventory: { ...(p.inventory ?? {}) }, equipment: { ...(p.equipment ?? {}) } };
       players.set(p.id, row);
       applyStats(row);
     }
@@ -189,6 +191,7 @@ export function createWorld() {
       spi: 0,
       nextSwing: 0,
       inventory: { ...(input.inventory ?? {}) },
+      equipment: { ...(input.equipment ?? {}) },
     };
     applyStats(player);
     player.hp = player.maxHp;
@@ -270,7 +273,11 @@ export function createWorld() {
     p.nextSwing = now + (powerId === "attack" ? 780 : 900);
     const bonus = power.bonus[p.baseClass] ?? power.bonus[p.prestigeClass] ?? 0;
     const strBonus = power.mana > 0 ? 0 : Math.max(0, Math.floor((p.str - 20) / 10));
-    const dmg = power.damage + p.level * power.damagePerLevel + bonus + strBonus;
+    const gear = power.mana > 0 ? 0 : gearTotals(p.equipment).damage;
+    const dmg =
+      powerId === "attack"
+        ? meleeDamage(p)
+        : power.damage + p.level * power.damagePerLevel + bonus + strBonus + gear;
     m.hp = Math.max(0, m.hp - dmg);
     m.targetId = p.id;
     if (m.hp <= 0) {
@@ -400,6 +407,38 @@ export function createWorld() {
     return { ok: true, reason: `Used ${item.name}.` };
   }
 
+  function equip(id: string, itemId: string): ActionResult {
+    const p = players.get(id);
+    const item = itemById(itemId);
+    if (!p || p.hp <= 0 || !item || !item.slot) return { ok: false, reason: "You cannot equip that." };
+    const denied = equipDenied(p.baseClass, p.prestigeClass, item);
+    if (denied) return { ok: false, reason: denied };
+    if (!p.inventory) p.inventory = {};
+    if (!p.equipment) p.equipment = {};
+    if ((p.inventory[itemId] ?? 0) < 1) return { ok: false, reason: "You do not have that." };
+    let slot: string = item.slot;
+    if (item.slot === "ring") slot = !p.equipment.ring ? "ring" : !p.equipment.ring2 ? "ring2" : "ring";
+    const prev = p.equipment[slot];
+    p.inventory[itemId] -= 1;
+    if (p.inventory[itemId] <= 0) delete p.inventory[itemId];
+    if (prev) p.inventory[prev] = (p.inventory[prev] ?? 0) + 1;
+    p.equipment[slot] = itemId;
+    return { ok: true, reason: `Equipped ${item.name}.` };
+  }
+
+  function unequip(id: string, slot: string): ActionResult {
+    const p = players.get(id);
+    if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
+    if (!p.equipment) p.equipment = {};
+    if (!p.inventory) p.inventory = {};
+    const itemId = p.equipment[slot];
+    const item = itemId ? itemById(itemId) : null;
+    if (!itemId || !item) return { ok: false, reason: "Nothing there." };
+    delete p.equipment[slot];
+    p.inventory[itemId] = (p.inventory[itemId] ?? 0) + 1;
+    return { ok: true, reason: `Unequipped ${item.name}.` };
+  }
+
   function chat(id: string, msg: string): ActionResult {
     const p = players.get(id);
     if (!p || !msg) return { ok: false };
@@ -516,7 +555,8 @@ export function createWorld() {
         } else if (screenGap(t.x, t.z, m.x, m.z) <= 130 || d <= 6.4) {
           if (now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
-            const dmg = def.damage + Math.floor(m.level * def.damagePerLevel);
+            const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
+            const dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
             t.hp = Math.max(0, t.hp - dmg);
             if (t.hp <= 0) {
               log(`${t.username} was slain by a ${m.type}.`);
@@ -598,6 +638,8 @@ export function createWorld() {
     buy,
     sell,
     useItem,
+    equip,
+    unequip,
     chat,
     travel,
     respawn,

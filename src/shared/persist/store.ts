@@ -13,6 +13,7 @@ export interface CharacterRecord {
   x?: number;
   z?: number;
   inventory?: Record<string, number>;
+  equipment?: Record<string, string>;
 }
 
 export interface CharacterStore {

@@ -34,6 +34,7 @@ export interface PlayerState extends PlayerInit {
   rotation: number;
   nextSwing: number;
   inventory: Record<string, number>;
+  equipment: Record<string, string>;
 }
 
 export interface MonsterState {

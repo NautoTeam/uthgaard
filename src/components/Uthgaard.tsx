@@ -194,6 +194,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       <div id="bag" hidden>
         <div id="bagPanel">
           <div id="bagTitle">Inventory</div>
+          <div id="dollSlots" />
           <div id="bagBody" />
           <button id="bagClose" type="button">
             Close

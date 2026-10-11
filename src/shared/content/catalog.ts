@@ -204,19 +204,45 @@ export function conXp(mobLevel: number, playerLevel: number, base: number) {
   return Math.max(0, Math.floor(base * conFor(mobLevel, playerLevel).xp));
 }
 
+export type EquipSlot = "weapon" | "offhand" | "head" | "chest" | "legs" | "hands" | "feet" | "ring" | "neck";
+
+/** Paper-doll rows. Rings use the item slot "ring" and fill ring, then ring2. */
+export const EQUIP_SLOTS: Array<{ id: string; label: string }> = [
+  { id: "weapon", label: "Weapon" },
+  { id: "offhand", label: "Offhand" },
+  { id: "head", label: "Head" },
+  { id: "chest", label: "Chest" },
+  { id: "legs", label: "Legs" },
+  { id: "hands", label: "Hands" },
+  { id: "feet", label: "Feet" },
+  { id: "ring", label: "Ring" },
+  { id: "ring2", label: "Ring" },
+  { id: "neck", label: "Necklace" },
+];
+
+/** Classes that cannot wear weight "heavy". Edit this list, not the equip function. */
+export const HEAVY_ARMOR_DENY = ["Mage", "Wizard"];
+
 export interface ItemDef {
   id: string;
   name: string;
-  kind: "junk" | "consumable";
+  kind: "junk" | "consumable" | "equipment";
   /** Gold the hamlet vendor pays. */
   sell: number;
-  /** HP restored when used. 0 for junk. */
+  /** HP restored when used. 0 if it is not a consumable. */
   heal: number;
+  /** Empty if the item cannot be equipped. */
+  slot: "" | EquipSlot;
+  damage: number;
+  defense: number;
+  weight: "" | "light" | "heavy";
 }
 
 export const ITEMS: ItemDef[] = [
-  { id: "spider-silk", name: "Spider Silk", kind: "junk", sell: 5, heal: 0 },
-  { id: "minor-potion", name: "Minor Potion", kind: "consumable", sell: 4, heal: 25 },
+  { id: "spider-silk", name: "Spider Silk", kind: "junk", sell: 5, heal: 0, slot: "", damage: 0, defense: 0, weight: "" },
+  { id: "minor-potion", name: "Minor Potion", kind: "consumable", sell: 4, heal: 25, slot: "", damage: 0, defense: 0, weight: "" },
+  { id: "iron-sword", name: "Iron Sword", kind: "equipment", sell: 6, heal: 0, slot: "weapon", damage: 6, defense: 0, weight: "" },
+  { id: "iron-hauberk", name: "Iron Hauberk", kind: "equipment", sell: 8, heal: 0, slot: "chest", damage: 0, defense: 8, weight: "heavy" },
 ];
 
 export interface DropDef {
@@ -239,10 +265,35 @@ export function dropChance(row: DropDef) {
 }
 
 /** What Marta sells. Price is the gold the player pays. */
-export const VENDOR_STOCK: Array<{ itemId: string; price: number }> = [{ itemId: "minor-potion", price: 12 }];
+export const VENDOR_STOCK: Array<{ itemId: string; price: number }> = [
+  { itemId: "minor-potion", price: 12 },
+  { itemId: "iron-sword", price: 16 },
+  { itemId: "iron-hauberk", price: 22 },
+];
 
 export function itemById(id: string) {
   return ITEMS.find((item) => item.id === id) ?? null;
+}
+
+export function gearTotals(equipment?: Record<string, string>) {
+  let damage = 0;
+  let defense = 0;
+  for (const id of Object.values(equipment ?? {})) {
+    const item = itemById(id);
+    if (!item) continue;
+    damage += item.damage;
+    defense += item.defense;
+  }
+  return { damage, defense };
+}
+
+/** Empty string if the character may equip it. */
+export function equipDenied(baseClass: string, prestigeClass: string, item: ItemDef) {
+  if (item.weight !== "heavy") return "";
+  if (HEAVY_ARMOR_DENY.includes(baseClass) || (prestigeClass && HEAVY_ARMOR_DENY.includes(prestigeClass))) {
+    return "Mages cannot wear heavy armor.";
+  }
+  return "";
 }
 
 export interface PowerDef {
@@ -328,4 +379,13 @@ export const POWERS: PowerDef[] = [
 
 export function powerById(id: string) {
   return POWERS.find((p) => p.id === id) ?? null;
+}
+
+/** Sheet damage: basic attack plus weapon. Unequip drops the weapon term. */
+export function meleeDamage(p: { level: number; baseClass: string; prestigeClass: string; str: number; equipment?: Record<string, string> }) {
+  const power = powerById("attack");
+  if (!power) return 0;
+  const bonus = power.bonus[p.baseClass] ?? power.bonus[p.prestigeClass] ?? 0;
+  const strBonus = Math.max(0, Math.floor((p.str - 20) / 10));
+  return power.damage + p.level * power.damagePerLevel + bonus + strBonus + gearTotals(p.equipment).damage;
 }
