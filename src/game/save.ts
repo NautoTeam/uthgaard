@@ -23,10 +23,26 @@ export function loadSave(username: string): CharacterSave | null {
   return readMap()[username] ?? null;
 }
 
-export function writeSave(save: CharacterSave) {
+export function writeSave(save: CharacterSave): number | false {
   const map = readMap();
-  map[save.username] = { ...save, version: 1 };
+  const prev = map[save.username];
+  const inputAt = save.inputAt ?? 0;
+  const rev = save.rev ?? 0;
+  if (prev) {
+    const prevAt = prev.inputAt ?? 0;
+    const prevRev = prev.rev ?? 0;
+    if (inputAt < prevAt) return false;
+    if (inputAt === prevAt && rev <= prevRev) return false;
+  }
+  const storedRev = prev ? Math.max(rev, (prev.rev ?? 0) + 1) : Math.max(1, rev);
+  map[save.username] = {
+    ...save,
+    version: 1,
+    inputAt,
+    rev: storedRev,
+  };
   localStorage.setItem(KEY, JSON.stringify(map));
+  return storedRev;
 }
 
 export function deleteSave(username: string) {

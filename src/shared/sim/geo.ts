@@ -272,15 +272,19 @@ export function resolveMove(x: number, z: number, nx: number, nz: number) {
   return { x, z };
 }
 
-export function nearestOpen(x: number, z: number): { x: number; z: number } {
+export function nearestOpen(x: number, z: number, maxR = 10): { x: number; z: number } {
   if (!blocked(x, z)) return { x, z };
-  for (let r = 0.6; r <= 10; r += 0.6) {
+  const limit = Math.max(0.6, maxR);
+  for (let r = 0.6; r <= limit + 0.001; r += 0.6) {
     for (let a = 0; a < 12; a++) {
       const nx = x + Math.cos((a / 12) * Math.PI * 2) * r;
       const nz = z + Math.sin((a / 12) * Math.PI * 2) * r;
       if (!blocked(nx, nz)) return { x: nx, z: nz };
     }
   }
+  // Click pathing passes a short radius. Never leap to a city — that
+  // plants the destination marker on the far side of the island.
+  if (limit < 9.5) return { x, z };
   if (seekingCity) return { x: CITIES[0].x, z: CITIES[0].z + 2.6 };
   seekingCity = true;
   try {

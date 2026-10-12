@@ -20,7 +20,7 @@ import {
   routeTo,
   screenGap,
 } from "./geo";
-import { BOUNDS, CIRCUITS, DEFAULT_ATTUNED, GATES, LATER_ISLANDS, LINKS, TERRAIN_PALETTE, WORLD_CITIES, gateHop, insideIsland, islandAt } from "../shared/content/world";
+import { BOUNDS, CIRCUITS, DEFAULT_ATTUNED, GATES, ISLANDS, LATER_ISLANDS, LINKS, TERRAIN_PALETTE, WORLD_CITIES, gateHop, insideIsland, islandAt } from "../shared/content/world";
 import { terrainAt, zoneAt } from "../shared/sim/mask";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
 import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
@@ -98,7 +98,21 @@ function applyIntent(world: World, intent: Intent) {
   return { ok: false };
 }
 
+type IsleSlot = { dispose?: () => void };
+
+function isleSlot(): IsleSlot {
+  const g = globalThis as typeof globalThis & { __caldrenmoorIsle?: IsleSlot };
+  if (!g.__caldrenmoorIsle) g.__caldrenmoorIsle = {};
+  return g.__caldrenmoorIsle;
+}
+
 export function mountIsle(root: HTMLElement, profile: IsleProfile) {
+  const slot = isleSlot();
+  if (slot.dispose) {
+    const prev = slot.dispose;
+    slot.dispose = undefined;
+    prev();
+  }
   const canvas = root.querySelector<HTMLCanvasElement>("#view")!;
   const ctx = canvas.getContext("2d")!;
   const statsEl = root.querySelector<HTMLElement>("#stats")!;
@@ -192,6 +206,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     trainPoints: saved?.trainPoints,
     skills: saved?.skills,
     hotbar: saved?.hotbar,
+    shroudUntil: saved?.shroudUntil,
     attunedGates: saved?.attunedGates,
   };
 
@@ -205,7 +220,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let host = true;
   let remote: PublicState | null = null;
   let lastHeard = performance.now();
-  const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("uthgaard-isle-v2") : null;
+  // Tabs do not share a world. An older tab used to win the BroadcastChannel
+  // host role and paste a stale hero over a fresh click, death, or respawn.
+  let lastInput = saved?.inputAt ?? 0;
 
   const keys = new Set<string>();
   let stickActive = false;
@@ -311,57 +328,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return result;
     }
-    channel?.postMessage({ t: "intent", intent });
     return { ok: true };
   }
-
-  function publishSnap() {
-    if (!host || !channel) return;
-    channel.postMessage({ t: "snap", id: myId, claim, snap: world.snapshot() });
-  }
-
-  channel?.addEventListener("message", (ev: MessageEvent) => {
-    const msg = ev.data as { t?: string; id?: string; claim?: number; snap?: PublicState; intent?: Intent };
-    if (!msg || typeof msg !== "object") return;
-    if ((msg.t === "claim" || msg.t === "beat" || msg.t === "snap") && typeof msg.claim === "number" && msg.id && msg.id !== myId) {
-      if (msg.claim < bestClaim) {
-        bestClaim = msg.claim;
-        host = false;
-        lastHeard = performance.now();
-      } else if (msg.claim === bestClaim) lastHeard = performance.now();
-    }
-    if (msg.t === "snap" && msg.snap && msg.id !== myId && typeof msg.claim === "number" && msg.claim <= bestClaim) {
-      bestClaim = msg.claim;
-      host = false;
-      const mine = localPlayer();
-      const incoming = msg.snap.players.find((p) => p.id === myId);
-      if (mine && incoming && Math.hypot(incoming.x - mine.x, incoming.z - mine.z) > 12) {
-        mine.x = incoming.x;
-        mine.z = incoming.z;
-        mine.rotation = incoming.rotation;
-      }
-      if (mine && incoming) {
-        mine.hp = incoming.hp;
-        mine.maxHp = incoming.maxHp;
-        mine.mana = incoming.mana;
-        mine.maxMana = incoming.maxMana;
-        mine.level = incoming.level;
-        mine.xp = incoming.xp;
-        mine.gold = incoming.gold;
-        mine.inventory = incoming.inventory;
-        mine.equipment = incoming.equipment;
-        mine.trainPoints = incoming.trainPoints;
-        mine.skills = incoming.skills;
-        mine.prestigeClass = incoming.prestigeClass;
-      }
-      remote = msg.snap;
-      lastHeard = performance.now();
-    }
-    if (msg.t === "intent" && msg.intent && host) applyIntent(world, msg.intent);
-  });
-
-  channel?.postMessage({ t: "claim", id: myId, claim });
-  if (!host) send({ op: "join", body: joinBody });
 
   function resize() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -690,11 +658,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
     deathEl.hidden = p.hp > 0;
     if (p.hp <= 0) {
+      if (!notedDeath) {
+        notedDeath = true;
+        if (!dirty) {
+          lastInput = Date.now();
+          dirty = true;
+        }
+        persist();
+      }
       const xpLost = Math.floor(p.xp * 0.1);
       const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
       deathHint.textContent = stone
         ? `A tombstone holds ${stone.gold} gold. Respawn in the Village of Caldrenmoor under Grave Chill for 60s (${xpLost} XP). Spells stay sealed; melee still works.`
         : `Respawn in the Village of Caldrenmoor under Grave Chill. Spells stay sealed; melee still works.`;
+    } else {
+      notedDeath = false;
     }
     const shroudLeft = Math.max(0, (p.shroudUntil ?? 0) - Date.now());
     if (shroudLeft > 0) {
@@ -708,7 +686,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const graveKey = JSON.stringify(state.graves ?? []);
     if (graveKey !== graveSig) {
       graveSig = graveKey;
-      writeGraves(state.graves ?? []);
+      if (mayWriteSave()) writeGraves(state.graves ?? []);
       persist();
     }
     const sig = lines.join("\n");
@@ -805,6 +783,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       g.fill();
       g.fillStyle = "#f0e2b0";
       g.fillText(city.name, pt.x, pt.y - 12);
+    }
+    g.font = "12px Georgia";
+    g.fillStyle = "rgba(214, 226, 214, 0.92)";
+    for (const isl of ISLANDS) {
+      if (isl.id === "reach") continue;
+      const pt = to(isl.cx, isl.cz);
+      const nearCity = CITIES.some((city) => Math.hypot(city.x - isl.cx, city.z - isl.cz) < 8);
+      g.fillText(isl.name, pt.x, nearCity ? pt.y + 20 : pt.y - 16);
     }
     const level = hero?.level ?? 1;
     for (const camp of CAMPS) {
@@ -921,7 +907,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (best) return best;
     const step = Math.min(4, have - 2.2);
-    return nearestOpen(px + ((mx - px) / have) * step, pz + ((mz - pz) / have) * step);
+    const tx = px + ((mx - px) / have) * step;
+    const tz = pz + ((mz - pz) / have) * step;
+    const spot = nearestOpen(tx, tz, 4);
+    if (Math.hypot(spot.x - mx, spot.z - mz) > have - 0.2) return { x: tx, z: tz };
+    return spot;
   }
 
   function rangedStand(mx: number, mz: number, px: number, pz: number) {
@@ -930,9 +920,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const step = Math.min(6, d - 6.4);
     const x = px + ((mx - px) / d) * step;
     const z = pz + ((mz - pz) / d) * step;
-    const spot = nearestOpen(x, z);
+    const spot = nearestOpen(x, z, 4);
     if (Math.hypot(spot.x - mx, spot.z - mz) < d - 0.4) return spot;
-    return { x: Math.round(x), z: Math.round(z) };
+    return { x, z };
   }
 
   function combat() {
@@ -1158,7 +1148,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (now - lastSend > 70) {
       lastSend = now;
       if (host) world.move(p.id, p.x, p.z, p.rotation);
-      else channel?.postMessage({ t: "intent", intent: { op: "move", id: p.id, x: p.x, z: p.z, rotation: p.rotation } });
     }
   }
 
@@ -1170,9 +1159,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!host && performance.now() - lastHeard > 1600) {
       host = true;
       bestClaim = claim;
-      if (remote) world.restore(remote);
-      if (!world.players.get(myId)) world.join(joinBody);
       remote = null;
+      if (!world.players.get(myId)) world.join(joinBody);
     }
     integrate(dt);
     combat();
@@ -1427,10 +1415,75 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!mapOverlay.hidden) drawWorldMap();
   }
 
-  function persist() {
-    const p = me();
+  let saveRev = saved?.rev ?? 0;
+  let appliedAt = saved?.inputAt ?? 0;
+  let dirty = false;
+  let notedDeath = false;
+
+  function saveIsNewer(disk: NonNullable<ReturnType<typeof loadSave>>) {
+    const at = disk.inputAt ?? 0;
+    const rev = disk.rev ?? 0;
+    if (at > appliedAt) return true;
+    if (at === appliedAt && rev > saveRev) return true;
+    return false;
+  }
+
+  function adoptSave(disk: NonNullable<ReturnType<typeof loadSave>>) {
+    const p = localPlayer();
     if (!p) return;
-    writeSave({
+    if (typeof disk.x === "number") p.x = disk.x;
+    if (typeof disk.z === "number") p.z = disk.z;
+    p.gold = disk.gold ?? p.gold;
+    p.level = disk.level || p.level;
+    p.xp = disk.xp ?? p.xp;
+    p.shroudUntil = disk.shroudUntil ?? 0;
+    if (disk.inventory) p.inventory = { ...disk.inventory };
+    if (disk.equipment) p.equipment = { ...disk.equipment };
+    if (disk.skills) p.skills = { ...disk.skills };
+    if (disk.hotbar) p.hotbar = [...disk.hotbar];
+    if (typeof disk.trainPoints === "number") p.trainPoints = disk.trainPoints;
+    if (disk.attunedGates) p.attunedGates = [...disk.attunedGates];
+    if ((p.shroudUntil ?? 0) > Date.now()) {
+      p.hp = p.maxHp;
+      p.mana = p.maxMana;
+      p.stamina = p.maxStamina;
+      p.graveDropped = false;
+    }
+    saveRev = disk.rev ?? 0;
+    appliedAt = disk.inputAt ?? 0;
+    lastInput = appliedAt;
+    dirty = false;
+    dest = null;
+    path = [];
+    talkNpc = null;
+    chaseId = null;
+  }
+
+  function mayWriteSave() {
+    const disk = loadSave(profile.username);
+    if (disk && saveIsNewer(disk)) return false;
+    if (disk && !dirty) return false;
+    return true;
+  }
+
+  function touchInput() {
+    const disk = loadSave(profile.username);
+    if (disk && saveIsNewer(disk)) adoptSave(disk);
+    lastInput = Date.now();
+    dirty = true;
+  }
+
+  function persist() {
+    const p = localPlayer();
+    if (!p) return;
+    const disk = loadSave(profile.username);
+    if (disk && saveIsNewer(disk)) {
+      adoptSave(disk);
+      return;
+    }
+    if (disk && !dirty) return;
+    const nextRev = saveRev + 1;
+    const wrote = writeSave({
       version: 1,
       username: p.username,
       race: p.race,
@@ -1448,10 +1501,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       hotbar: p.hotbar,
       shroudUntil: p.shroudUntil,
       attunedGates: p.attunedGates,
+      rev: nextRev,
+      inputAt: lastInput,
     });
+    if (wrote !== false) {
+      saveRev = wrote;
+      appliedAt = lastInput;
+      dirty = true;
+    }
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    touchInput();
     if (e.key === "Escape") {
       if (!bag.hidden) {
         bag.hidden = true;
@@ -1553,6 +1614,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return Math.abs(sx - p.x) < 48 && above > -18 && above < height;
   }
   function onPointer(e: PointerEvent) {
+    touchInput();
     if (e.button !== 0 || !mapOverlay.hidden) return;
     const p = me();
     if (!p || p.hp <= 0) return;
@@ -1609,12 +1671,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         const ang = Math.atan2(p.z - pickedNpc.z, p.x - pickedNpc.x);
         const rawX = pickedNpc.x + Math.cos(ang) * 2.3;
         const rawZ = pickedNpc.z + Math.sin(ang) * 2.3;
-        let spot = nearestOpen(rawX, rawZ);
+        let spot = nearestOpen(rawX, rawZ, 4);
         if (Math.hypot(spot.x - pickedNpc.x, spot.z - pickedNpc.z) > dist - 0.4) {
           const step = Math.min(4, Math.max(1.2, dist - 2.3));
           const sx = p.x + ((pickedNpc.x - p.x) / dist) * step;
           const sz = p.z + ((pickedNpc.z - p.z) / dist) * step;
-          spot = nearestOpen(sx, sz);
+          spot = nearestOpen(sx, sz, 4);
           if (Math.hypot(spot.x - pickedNpc.x, spot.z - pickedNpc.z) > dist - 0.2) spot = { x: sx, z: sz };
         }
         goTo(spot.x, spot.z, pickedNpc.id);
@@ -1818,7 +1880,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       p.z = spot.z;
       if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
       if (!p.attunedGates.includes(cityId)) p.attunedGates.push(cityId);
-      channel?.postMessage({ t: "intent", intent: { op: "travel", id: myId, cityId } });
     }
   }
 
@@ -1841,11 +1902,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onRespawn(e: Event) {
     e.preventDefault();
+    touchInput();
     dest = null;
     path = [];
     talkNpc = null;
     if (host) world.respawn(myId);
-    else channel?.postMessage({ t: "intent", intent: { op: "respawn", id: myId } });
+    persist();
   }
 
   function onTravelClose(e: Event) {
@@ -1986,7 +2048,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   function onDebugKill(e: Event) {
     e.preventDefault();
+    touchInput();
     send({ op: "setHp", id: myId, hp: 0 });
+    persist();
   }
 
   function onPromote(e: Event) {
@@ -2046,6 +2110,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     knob.style.top = "35px";
   }
   function onStickDown(e: PointerEvent) {
+    touchInput();
     stick.setPointerCapture(e.pointerId);
     stickActive = true;
     setStick(e.clientX, e.clientY);
@@ -2093,15 +2158,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const stepTimer = window.setInterval(() => {
     if (host && mapOverlay.hidden) authority.step(Date.now());
   }, 400);
-  const snapTimer = window.setInterval(() => {
-    if (host) {
-      channel?.postMessage({ t: "beat", id: myId, claim });
-      publishSnap();
-    } else {
-      channel?.postMessage({ t: "claim", id: myId, claim });
-      if (!remote?.players.some((p) => p.id === myId)) send({ op: "join", body: joinBody });
-    }
-  }, 180);
   const saveTimer = window.setInterval(persist, 2000);
 
   function onLeave() {
@@ -2146,14 +2202,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   resize();
   raf = requestAnimationFrame(frame);
 
-  return () => {
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    const slot = isleSlot();
+    if (slot.dispose === dispose) slot.dispose = undefined;
     dead = true;
     cancelAnimationFrame(raf);
     window.clearInterval(stepTimer);
-    window.clearInterval(snapTimer);
     window.clearInterval(saveTimer);
     onLeave();
-    channel?.close();
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
@@ -2181,6 +2240,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     window.removeEventListener("pagehide", onLeave);
     if (window.__controlsTest) delete window.__controlsTest;
   };
+  isleSlot().dispose = dispose;
+  return dispose;
 }
 
 function escapeHtml(s: string) {

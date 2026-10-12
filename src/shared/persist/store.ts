@@ -19,6 +19,10 @@ export interface CharacterRecord {
   hotbar?: string[];
   shroudUntil?: number;
   attunedGates?: string[];
+  /** Monotonic save generation. A write with an older inputAt is ignored. */
+  rev?: number;
+  /** Last time this tab handled player input. Newer input wins over a stale tab. */
+  inputAt?: number;
 }
 
 export interface CharacterStore {
