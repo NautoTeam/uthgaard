@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
 import { deleteSave, listSaves, type CharacterSave } from "@/client/localSave";
-import { BASE_CLASSES, RACES, classAllowed, type BaseClass, type Race } from "@/game/types";
+import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClass, type Race } from "@/game/types";
 
 export function Uthgaard() {
   const [run, setRun] = useState<IsleProfile | null>(null);
@@ -35,7 +35,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       onSubmit={(e) => {
         e.preventDefault();
         if (!classAllowed(race, path)) {
-          setBlock("Minotaurs cannot take Mage or Rogue.");
+          setBlock(classDenied(race, path));
           return;
         }
         setBlock("");
@@ -44,7 +44,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
     >
       <div className="login-create">
       <h1>Caldrenmoor</h1>
-      <p className="sub">Three cities on a wide reach</p>
+      <p className="sub">Havens of the Reach</p>
       <label>
         Name
         <input id="username" value={name} maxLength={16} onChange={(e) => setName(e.target.value)} />
@@ -57,10 +57,10 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
           onChange={(e) => {
             const next = e.target.value as Race;
             setRace(next);
-            setBlock(classAllowed(next, path) ? "" : "Minotaurs cannot take Mage or Rogue.");
+            setBlock(classAllowed(next, path) ? "" : classDenied(next, path));
           }}
         >
-          {RACES.map((r) => (
+          {CREATABLE_RACES.map((r) => (
             <option key={r}>{r}</option>
           ))}
         </select>
@@ -73,20 +73,20 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
           onChange={(e) => {
             const next = e.target.value as BaseClass;
             setPath(next);
-            setBlock(classAllowed(race, next) ? "" : "Minotaurs cannot take Mage or Rogue.");
+            setBlock(classAllowed(race, next) ? "" : classDenied(race, next));
           }}
         >
           {BASE_CLASSES.map((c) => {
-            const banned = !classAllowed(race, c);
+            const reason = classDenied(race, c);
             return (
-              <option key={c} value={c} disabled={banned}>
-                {banned ? `${c} — not for Minotaurs` : c}
+              <option key={c} value={c} disabled={!!reason}>
+                {reason ? `${c} — closed` : c}
               </option>
             );
           })}
         </select>
       </label>
-      {(locked || block) && <p className="path-block">Minotaurs cannot take Mage or Rogue.</p>}
+      {(locked || block) && <p className="path-block">{block || classDenied(race, path)}</p>}
       <button id="joinBtn" type="submit" disabled={locked}>
         Enter the Village
       </button>

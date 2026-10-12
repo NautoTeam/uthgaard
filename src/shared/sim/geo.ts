@@ -11,7 +11,7 @@ export interface CityDef {
   name: string;
   x: number;
   z: number;
-  race: "human" | "elf" | "minotaur";
+  race: "human" | "elf" | "minotaur" | "marshwarden";
   stone: string;
   stoneAlt: string;
   island?: string;
@@ -36,7 +36,7 @@ export interface NpcDef {
   city: string;
   x: number;
   z: number;
-  race: "human" | "elf" | "minotaur";
+  race: "human" | "elf" | "minotaur" | "marshwarden";
   role: "wayfarer" | "vendor" | "trainer";
 }
 
@@ -155,6 +155,28 @@ for (const city of CITIES) {
       x: city.x + Math.cos(trainA) * 6.4,
       z: city.z + Math.sin(trainA) * 6.4,
       race: "human",
+      role: "trainer",
+    });
+  }
+  if (city.id === "fenhollow") {
+    const vendA = ready ? gaps[1].mid : npcA + Math.PI;
+    NPCS.push({
+      id: "vendor-fenhollow",
+      name: "Vess",
+      city: city.id,
+      x: city.x + Math.cos(vendA) * 5.6,
+      z: city.z + Math.sin(vendA) * 5.6,
+      race: "marshwarden",
+      role: "vendor",
+    });
+    const trainA = npcA + 2.4;
+    NPCS.push({
+      id: "trainer-fenhollow",
+      name: "Hask",
+      city: city.id,
+      x: city.x + Math.cos(trainA) * 6.4,
+      z: city.z + Math.sin(trainA) * 6.4,
+      race: "marshwarden",
       role: "trainer",
     });
   }

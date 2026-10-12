@@ -2,7 +2,7 @@ import type { BaseClass, Prestige, Race } from "../content/catalog";
 import { BOUNDS } from "../content/world";
 
 export type { BaseClass, CampDef, Prestige, Race } from "../content/catalog";
-export { BASE_CLASSES, CAMPS, PRESTIGE_OF, RACES, attrsFor, classAllowed, DEBUG_SET_LEVEL } from "../content/catalog";
+export { BASE_CLASSES, CAMPS, CREATABLE_RACES, PRESTIGE_OF, RACES, attrsFor, classAllowed, classDenied, DEBUG_SET_LEVEL } from "../content/catalog";
 
 export type MonsterType = string;
 export type SkillName = "attack" | "heal" | "fireball" | "stab";
@@ -75,6 +75,8 @@ export interface GraveState {
   z: number;
   gold: number;
   items: Record<string, number>;
+  /** When the stone was raised. Missing on older saves, which are expired. */
+  born?: number;
 }
 
 export interface PublicState {

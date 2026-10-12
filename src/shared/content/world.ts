@@ -45,7 +45,7 @@ export interface WorldCity {
   name: string;
   x: number;
   z: number;
-  race: "human" | "elf" | "minotaur";
+  race: "human" | "elf" | "minotaur" | "marshwarden";
   stone: string;
   stoneAlt: string;
   island?: string;

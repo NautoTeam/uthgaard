@@ -727,6 +727,19 @@
    "phase": 1
   },
   {
+   "id": "fenhollow",
+   "name": "Fenhollow",
+   "x": 48,
+   "z": 72,
+   "race": "marshwarden",
+   "stone": "#5f6b48",
+   "stoneAlt": "#54603e",
+   "island": "reach",
+   "zone": "hearthfields",
+   "kind": "haven",
+   "phase": 1
+  },
+  {
    "id": "wardstone",
    "name": "Wardstone Ring",
    "x": 228,
@@ -1019,6 +1032,12 @@
    102
   ],
   [
+   0,
+   0,
+   48,
+   72
+  ],
+  [
    118,
    -28,
    -86,
@@ -1122,6 +1141,12 @@
    ]
   },
   {
+   "cityId": "fenhollow",
+   "circuits": [
+    "hearth"
+   ]
+  },
+  {
    "cityId": "eldenreach",
    "circuits": [
     "hearth"
@@ -1209,6 +1234,11 @@
   {
    "from": "uthgaard",
    "to": "hornwatch",
+   "circuit": "hearth"
+  },
+  {
+   "from": "uthgaard",
+   "to": "fenhollow",
    "circuit": "hearth"
   },
   {

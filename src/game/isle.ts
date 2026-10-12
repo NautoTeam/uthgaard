@@ -24,6 +24,7 @@ import { BOUNDS, CIRCUITS, DEFAULT_ATTUNED, GATES, ISLANDS, LATER_ISLANDS, LINKS
 import { terrainAt, zoneAt } from "../shared/sim/mask";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
 import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
+import { diamondDistance, pointerToView, screenToWorld as isoScreenToWorld, worldToScreen as isoWorldToScreen } from "./iso";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -36,7 +37,7 @@ export interface IsleProfile {
 const TW = 48;
 const TH = 24;
 const MOVE = 20;
-const NAMES = [...new Set([...RACES.map((r) => r.toLowerCase()), ...MOBS.map((m) => m.type.toLowerCase()), "hall", "tree", "fire"])];
+const NAMES = [...new Set([...RACES.map((r) => r.toLowerCase()), "marshwarden", ...MOBS.map((m) => m.type.toLowerCase()), "hall", "tree", "fire"])];
 
 type Intent =
   | { op: "join"; body: JoinInput }
@@ -72,6 +73,17 @@ declare global {
       place?: (x: number, z: number) => void;
       swing?: () => void;
       setLevel?: (level: number) => void;
+      project?: (x: number, z: number) => { x: number; y: number };
+      unproject?: (sx: number, sy: number) => { x: number; z: number };
+      viewSize?: () => {
+        viewW: number;
+        viewH: number;
+        camX: number;
+        camZ: number;
+        dpr: number;
+        backingW: number;
+        backingH: number;
+      };
     };
   }
 }
@@ -155,7 +167,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     };
   }
   const frames: Record<string, HTMLImageElement> = {};
-  for (const race of ["human", "elf", "minotaur"]) {
+  for (const race of ["human", "elf", "minotaur", "marshwarden"]) {
     for (let i = 0; i < 16; i++) {
       const img = new Image();
       const key = `${race}-walk-${i}`;
@@ -342,19 +354,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function worldToScreen(x: number, z: number) {
-    return {
-      x: (x - z) * (TW / 2) + viewW / 2 - cam.x,
-      y: (x + z) * (TH / 2) + viewH / 2 - 20 - cam.z,
-    };
+    return isoWorldToScreen(x, z, cam.x, cam.z, viewW, viewH);
   }
 
   function screenToWorld(sx: number, sy: number) {
-    const x = sx - viewW / 2 + cam.x;
-    const y = sy - viewH / 2 + 20 + cam.z;
-    return {
-      x: (x / (TW / 2) + y / (TH / 2)) / 2,
-      z: (y / (TH / 2) - x / (TW / 2)) / 2,
-    };
+    return isoScreenToWorld(sx, sy, cam.x, cam.z, viewW, viewH);
   }
 
   function tileColor(x: number, z: number) {
@@ -552,7 +556,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function drawHero(race: string, id: string, x: number, z: number, cls?: string) {
-    const drawn = race === "marshwarden" ? "human" : race;
+    const drawn = race;
     const actor = trackActor(id, x, z);
     const now = performance.now();
     const dt = actor.stamp ? Math.min(0.05, (now - actor.stamp) / 1000) : 0;
@@ -657,6 +661,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     promoteBtn.hidden = !ready;
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
     deathEl.hidden = p.hp > 0;
+    const homeTown = p.race === "Marshwarden" ? "Fenhollow" : "Caldrenmoor";
+    respawnBtn.textContent = `Respawn in ${homeTown}`;
     if (p.hp <= 0) {
       if (!notedDeath) {
         notedDeath = true;
@@ -669,8 +675,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const xpLost = Math.floor(p.xp * 0.1);
       const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
       deathHint.textContent = stone
-        ? `A tombstone holds ${stone.gold} gold. Respawn in the Village of Caldrenmoor under Grave Chill for 60s (${xpLost} XP). Spells stay sealed; melee still works.`
-        : `Respawn in the Village of Caldrenmoor under Grave Chill. Spells stay sealed; melee still works.`;
+        ? `A tombstone holds ${stone.gold} gold. Respawn in ${homeTown} under Grave Chill for 60s (${xpLost} XP). Spells stay sealed; melee still works.`
+        : `Respawn in ${homeTown} under Grave Chill. Spells stay sealed; melee still works.`;
     } else {
       notedDeath = false;
     }
@@ -1067,7 +1073,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       if (dest) {
       let aim = dest;
-      if (path.length) {
+      if (clearLine(p.x, p.z, dest.x, dest.z)) {
+        path = [];
+      } else if (path.length) {
         let idx = 0;
         const far = Math.min(path.length - 1, 12);
         for (let i = far; i >= 0; i--) {
@@ -1352,7 +1360,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.strokeStyle = "#d7c28a";
       ctx.strokeRect(pt.x - 11, pt.y - 30, 22, 28);
       ctx.fillStyle = "#f0e2b0";
-      ctx.fillText(`${g.owner}'s tomb`, pt.x, pt.y - 40);
+      const label = typeof g.born === "number" && Date.now() - g.born < 60_000;
+      if (label) ctx.fillText(`${g.owner}'s tomb`, pt.x, pt.y - 40);
       ctx.fillText(`${g.gold} gold`, pt.x, pt.y - 14);
     }
     ctx.font = "15px Georgia";
@@ -1570,31 +1579,85 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function canvasPoint(e: PointerEvent) {
+    const cssW = canvas.clientWidth || viewW;
+    const cssH = canvas.clientHeight || viewH;
+    if (Math.abs(cssW - viewW) > 1 || Math.abs(cssH - viewH) > 1) resize();
     const rect = canvas.getBoundingClientRect();
-    return {
-      sx: ((e.clientX - rect.left) / Math.max(1, rect.width)) * viewW,
-      sy: ((e.clientY - rect.top) / Math.max(1, rect.height)) * viewH,
-    };
+    const fromRect = pointerToView(e.clientX, e.clientY, rect, viewW, viewH);
+    if (e.target !== canvas || !Number.isFinite(e.offsetX) || !Number.isFinite(e.offsetY)) return { sx: fromRect.x, sy: fromRect.y };
+    let ox = e.offsetX;
+    let oy = e.offsetY;
+    const boxW = Math.max(1, canvas.clientWidth);
+    const boxH = Math.max(1, canvas.clientHeight);
+    // A few browsers report offsetX in backing-store pixels.
+    if ((ox > boxW + 1 || oy > boxH + 1) && canvas.width > boxW + 1) {
+      ox *= boxW / canvas.width;
+      oy *= boxH / canvas.height;
+    }
+    const fromOff = { x: (ox / boxW) * viewW, y: (oy / boxH) * viewH };
+    // Synthetic events often leave offset at 0. A real top-left click still
+    // agrees with the rect mapping, so only ignore a lone 0,0.
+    if (ox === 0 && oy === 0 && (Math.abs(fromRect.x) > 3 || Math.abs(fromRect.y) > 3)) return { sx: fromRect.x, sy: fromRect.y };
+    // When clientX and getBoundingClientRect are in different spaces (a scaled
+    // embed, or a backing-store rect), element-local offsetX still matches the
+    // pixels we draw. That mismatch is what sent every click up-left.
+    if (Math.hypot(fromRect.x - fromOff.x, fromRect.y - fromOff.y) > 6) return { sx: fromOff.x, sy: fromOff.y };
+    return { sx: fromRect.x, sy: fromRect.y };
   }
 
   function pickTile(sx: number, sy: number) {
+    const hero = localPlayer();
     const rough = screenToWorld(sx, sy);
-    const cx = Math.round(rough.x);
-    const cz = Math.round(rough.z);
-    let bestX = cx;
-    let bestZ = cz;
+    let bestX = Math.round(rough.x);
+    let bestZ = Math.round(rough.z);
     let best = Infinity;
-    for (let z = cz - 6; z <= cz + 6; z++) {
-      for (let x = cx - 6; x <= cx + 6; x++) {
-        if (blocked(x, z)) continue;
-        const p = worldToScreen(x, z);
-        const d = Math.abs(sx - p.x) / (TW / 2) + Math.abs(sy - p.y) / (TH / 2);
-        if (d < best) {
-          best = d;
-          bestX = x;
-          bestZ = z;
+    const seeds: Array<[number, number]> = [[bestX, bestZ]];
+    if (hero) seeds.push([Math.round(hero.x), Math.round(hero.z)]);
+    const seen = new Set<string>();
+    for (const [sx0, sz0] of seeds) {
+      for (let z = sz0 - 32; z <= sz0 + 32; z++) {
+        for (let x = sx0 - 32; x <= sx0 + 32; x++) {
+          const key = `${x},${z}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const d = diamondDistance(sx, sy, worldToScreen(x, z));
+          if (d < best) {
+            best = d;
+            bestX = x;
+            bestZ = z;
+          }
         }
       }
+    }
+    if (blocked(bestX, bestZ)) {
+      let openD = Infinity;
+      let openX = bestX;
+      let openZ = bestZ;
+      for (const [sx0, sz0] of seeds) {
+        for (let z = sz0 - 8; z <= sz0 + 8; z++) {
+          for (let x = sx0 - 8; x <= sx0 + 8; x++) {
+            if (blocked(x, z)) continue;
+            const d = diamondDistance(sx, sy, worldToScreen(x, z));
+            if (d < openD) {
+              openD = d;
+              openX = x;
+              openZ = z;
+            }
+          }
+        }
+      }
+      // Never walk to a far open tile. A blocked click with nothing nearby stays put.
+      if (openD <= 2.4) {
+        bestX = openX;
+        bestZ = openZ;
+        best = openD;
+      } else {
+        return { x: hero?.x ?? rough.x, z: hero?.z ?? rough.z };
+      }
+    }
+    const projected = worldToScreen(bestX, bestZ);
+    if (best > 1.35 || Math.hypot(projected.x - sx, projected.y - sy) > 52) {
+      return { x: hero?.x ?? rough.x, z: hero?.z ?? rough.z };
     }
     return { x: bestX, z: bestZ };
   }
@@ -1653,7 +1716,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       let npcBest = 2.1;
       for (const npc of NPCS) {
         const d = Math.hypot(npc.x - w.x, npc.z - w.z);
-        if (d < npcBest) {
+        const sp = worldToScreen(npc.x, npc.z);
+        if (d < npcBest && Math.hypot(sp.x - sx, sp.y - sy) < 90) {
           npcBest = d;
           pickedNpc = npc;
         }
@@ -1696,7 +1760,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       for (const m of view().monsters) {
         if (m.hp <= 0) continue;
         const d = Math.hypot(m.x - w.x, m.z - w.z);
-        if (d < best) {
+        const sp = worldToScreen(m.x, m.z);
+        if (d < best && Math.hypot(sp.x - sx, sp.y - sy) < 80) {
           best = d;
           picked = m.id;
         }
@@ -1897,7 +1962,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     e.preventDefault();
     e.stopPropagation();
     const cityId = (btn as HTMLElement).dataset.city;
-    if (cityId) goCity(cityId);
+    if (!cityId) return;
+    touchInput();
+    goCity(cityId);
+    persist();
   }
 
   function onRespawn(e: Event) {
@@ -2197,6 +2265,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     },
     swing: () => act("attack"),
     setLevel: (level: number) => send({ op: "setLevel", id: myId, level }),
+    project: (x: number, z: number) => worldToScreen(x, z),
+    unproject: (sx: number, sy: number) => screenToWorld(sx, sy),
+    viewSize: () => ({
+      viewW,
+      viewH,
+      camX: cam.x,
+      camZ: cam.z,
+      dpr: Math.min(2, window.devicePixelRatio || 1),
+      backingW: canvas.width,
+      backingH: canvas.height,
+    }),
   };
 
   resize();

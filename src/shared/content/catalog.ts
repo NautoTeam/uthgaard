@@ -49,21 +49,31 @@ export const RACE_ATTRS: Record<Race, AttrBlock> = {
   Human: { str: 2, dex: 2, con: 0, int: 0, spi: 2 },
   Elf: { str: -4, dex: 6, con: -4, int: 12, spi: 4 },
   Minotaur: { str: 8, dex: -4, con: 16, int: -8, spi: -2 },
-  /** Hidden until MARSHWARDEN_ENABLED. Home city is Fenhollow, not on the create screen. */
+  /** Home city is Fenhollow, on the create screen with the other havens. */
   Marshwarden: { str: 2, dex: 4, con: 6, int: -4, spi: 2 },
 };
 
 /** Off until the race and its city are approved for the create screen. */
-export const MARSHWARDEN_ENABLED = false;
+export const MARSHWARDEN_ENABLED = true;
 
 export const FENHOLLOW = {
   id: "fenhollow",
   name: "Fenhollow",
-  enabled: false,
+  enabled: true,
   race: "Marshwarden" as const,
   stone: "#5f6b48",
   stoneAlt: "#54603e",
 };
+
+/** Races offered on the create screen. */
+export const CREATABLE_RACES: readonly Race[] = MARSHWARDEN_ENABLED ? [...RACES, "Marshwarden"] : RACES;
+
+export function classDenied(race: Race, cls: BaseClass): string {
+  if (classAllowed(race, cls)) return "";
+  if (race === "Minotaur") return "Minotaurs cannot take Mage or Rogue.";
+  if (race === "Marshwarden") return "Marshwardens cannot take Mage.";
+  return "That path is closed.";
+}
 
 export const CLASS_ATTRS: Record<BaseClass, AttrBlock> = {
   Fighter: { str: 6, dex: 2, con: 6, int: 0, spi: 0 },

@@ -15,6 +15,15 @@ import {
   type Race,
 } from "./types";
 
+function hearthOf(race: Race): { x: number; z: number; name: string } {
+  if (race === "Marshwarden") {
+    const city = cityAt("fenhollow");
+    if (city) return { x: city.x, z: city.z, name: "Fenhollow" };
+  }
+  const city = cityAt("uthgaard");
+  return { x: city?.x ?? 0, z: city?.z ?? 0, name: "the Village of Caldrenmoor" };
+}
+
 export interface JoinInput {
   id: string;
   username: string;
@@ -200,8 +209,9 @@ export function createWorld() {
     const prestige = input.prestigeClass || "";
     const matched =
       prestige && PRESTIGE_OF[input.baseClass] === prestige ? prestige : "";
+    const home = hearthOf(input.race);
     const spot =
-      typeof input.x === "number" && typeof input.z === "number" ? nearestOpen(input.x, input.z) : arrivalAt(0, 0);
+      typeof input.x === "number" && typeof input.z === "number" ? nearestOpen(input.x, input.z) : arrivalAt(home.x, home.z);
     const player: PlayerState = {
       id: input.id,
       username: input.username.slice(0, 16),
@@ -244,7 +254,7 @@ export function createWorld() {
     player.mana = player.maxMana;
     player.stamina = player.maxStamina;
     players.set(player.id, player);
-    log(`${player.username} entered the Village of Caldrenmoor.`);
+    log(`${player.username} entered ${home.name}.`);
     return player;
   }
 
@@ -627,7 +637,8 @@ export function createWorld() {
     if (!p || p.hp > 0) return { ok: false, reason: "You are still standing." };
     const xpLost = Math.floor(p.xp * 0.1);
     p.xp = Math.max(0, p.xp - xpLost);
-    const spot = arrivalAt(0, 0);
+    const home = hearthOf(p.race);
+    const spot = arrivalAt(home.x, home.z);
     p.x = spot.x;
     p.z = spot.z;
     p.hp = p.maxHp;
@@ -635,7 +646,7 @@ export function createWorld() {
     p.stamina = p.maxStamina;
     p.graveDropped = false;
     p.shroudUntil = Date.now() + DEATH_SHROUD_MS;
-    log(`${p.username} returned to the Village of Caldrenmoor under Grave Chill, leaving ${xpLost} XP behind.`);
+    log(`${p.username} returned to ${home.name} under Grave Chill, leaving ${xpLost} XP behind.`);
     return { ok: true, reason: "Grave Chill for 60s." };
   }
 
@@ -645,7 +656,7 @@ export function createWorld() {
     const gold = Math.min(p.gold, Math.max(p.gold > 0 ? 5 : 0, Math.floor(p.gold * 0.15)));
     p.gold -= gold;
     const id = "g" + Math.floor(Math.random() * 1e9).toString(36);
-    graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {} });
+    graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {}, born: Date.now() });
     log(`${p.username} fell. A tombstone holds ${gold} gold.`);
   }
 
@@ -697,6 +708,10 @@ export function createWorld() {
   }
 
   function step(now: number) {
+    for (const [id, g] of graves) {
+      // Names should not stack forever. Stones without a timestamp are leftovers.
+      if (typeof g.born !== "number" || now - g.born > 3 * 60_000) graves.delete(id);
+    }
     for (const camp of CAMPS) {
       const alive = [...monsters.values()]
         .filter((o) => o.hp > 0 && o.homeX === camp.cx && o.homeZ === camp.cz)
