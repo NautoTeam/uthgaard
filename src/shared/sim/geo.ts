@@ -1,4 +1,5 @@
 import { CAMPS, clampCoord } from "./types";
+import { LAKES as WORLD_LAKES, LIVE_CITIES, ROADS as WORLD_ROADS } from "../content/world";
 
 export const LAND = 150;
 export const WORLD_EDGE = 168;
@@ -11,25 +12,15 @@ export interface CityDef {
   race: "human" | "elf" | "minotaur";
   stone: string;
   stoneAlt: string;
+  island?: string;
+  zone?: string | null;
+  kind?: string;
+  phase?: number;
 }
 
-export const CITIES: CityDef[] = [
-  { id: "uthgaard", name: "Caldrenmoor", x: 0, z: 0, race: "human", stone: "#7a6546", stoneAlt: "#6d5a3e" },
-  { id: "eldenreach", name: "Eldenreach", x: 118, z: -28, race: "elf", stone: "#6d8660", stoneAlt: "#5c7454" },
-  { id: "hornwatch", name: "Hornwatch", x: -86, z: 102, race: "minotaur", stone: "#6e5646", stoneAlt: "#5c4638" },
-];
-
-export const ROADS: Array<[number, number, number, number]> = [
-  [0, 0, 118, -28],
-  [0, 0, -86, 102],
-  [118, -28, -86, 102],
-];
-
-export const LAKES = [
-  { x: 74, z: 64, r: 11 },
-  { x: -62, z: -46, r: 9 },
-  { x: 28, z: -68, r: 7 },
-];
+export const CITIES: CityDef[] = LIVE_CITIES;
+export const ROADS: Array<[number, number, number, number]> = WORLD_ROADS;
+export const LAKES = WORLD_LAKES;
 
 export interface Hall {
   x: number;
@@ -92,7 +83,12 @@ for (const city of CITIES) {
     gaps.push({ mid: (a + b) / 2, span: b - a });
   }
   gaps.sort((a, b) => b.span - a.span);
-  const hallAngles = [gaps[0].mid - gaps[0].span * 0.28, gaps[0].mid + gaps[0].span * 0.28, gaps[1].mid];
+  const ready = gaps.length >= 2;
+  const hallAngles = ready
+    ? [gaps[0].mid - gaps[0].span * 0.28, gaps[0].mid + gaps[0].span * 0.28, gaps[1].mid]
+    : [0, 2.1, 4.2];
+  const fireA = ready ? gaps[0].mid : 0;
+  const fireB = ready ? gaps[1].mid : 2.1;
   const big = city.race === "minotaur" ? 0.05 : 0;
   const hallDist = 11.4;
   hallAngles.forEach((a, i) => {
@@ -125,10 +121,10 @@ for (const city of CITIES) {
     });
   });
   FIRES.push(
-    [city.x + Math.cos(gaps[0].mid + 0.85) * 8.2, city.z + Math.sin(gaps[0].mid + 0.85) * 8.2],
-    [city.x + Math.cos(gaps[1].mid - 0.85) * 8.2, city.z + Math.sin(gaps[1].mid - 0.85) * 8.2],
+    [city.x + Math.cos(fireA + 0.85) * 8.2, city.z + Math.sin(fireA + 0.85) * 8.2],
+    [city.x + Math.cos(fireB - 0.85) * 8.2, city.z + Math.sin(fireB - 0.85) * 8.2],
   );
-  const npcA = gaps[0].mid;
+  const npcA = fireA;
   NPCS.push({
     id: `wayfarer-${city.id}`,
     name: "Wayfarer",
@@ -139,7 +135,7 @@ for (const city of CITIES) {
     role: "wayfarer",
   });
   if (city.id === "uthgaard") {
-    const vendA = gaps[1]?.mid ?? npcA + Math.PI;
+    const vendA = ready ? gaps[1].mid : npcA + Math.PI;
     NPCS.push({
       id: "vendor-uthgaard",
       name: "Marta",

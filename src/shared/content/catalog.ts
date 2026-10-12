@@ -1,7 +1,9 @@
 /** Game content. Camps, mobs, items, and powers are data — add a row, don't add a branch. */
 
+import { LIVE_CAMPS } from "./world";
+
 export const RACES = ["Human", "Elf", "Minotaur"] as const;
-export type Race = (typeof RACES)[number];
+export type Race = (typeof RACES)[number] | "Marshwarden";
 
 export const BASE_CLASSES = ["Fighter", "Healer", "Mage", "Rogue"] as const;
 export type BaseClass = (typeof BASE_CLASSES)[number];
@@ -47,6 +49,20 @@ export const RACE_ATTRS: Record<Race, AttrBlock> = {
   Human: { str: 2, dex: 2, con: 0, int: 0, spi: 2 },
   Elf: { str: -4, dex: 6, con: -4, int: 12, spi: 4 },
   Minotaur: { str: 8, dex: -4, con: 16, int: -8, spi: -2 },
+  /** Hidden until MARSHWARDEN_ENABLED. Home city is Fenhollow, not on the create screen. */
+  Marshwarden: { str: 2, dex: 4, con: 6, int: -4, spi: 2 },
+};
+
+/** Off until the race and its city are approved for the create screen. */
+export const MARSHWARDEN_ENABLED = false;
+
+export const FENHOLLOW = {
+  id: "fenhollow",
+  name: "Fenhollow",
+  enabled: false,
+  race: "Marshwarden" as const,
+  stone: "#5f6b48",
+  stoneAlt: "#54603e",
 };
 
 export const CLASS_ATTRS: Record<BaseClass, AttrBlock> = {
@@ -61,6 +77,7 @@ export const RACE_BLOCKS: Record<Race, BaseClass[]> = {
   Human: [],
   Elf: [],
   Minotaur: ["Mage", "Rogue"],
+  Marshwarden: ["Mage"],
 };
 
 export function classAllowed(race: Race, cls: BaseClass) {
@@ -119,15 +136,8 @@ export interface CampDef {
   cz: number;
 }
 
-/** Spider camp starts at 3. Other camps keep their original packs. */
-export const CAMPS: CampDef[] = [
-  { type: "Spider", level: 2, count: 3, cx: 26, cz: 22 },
-  { type: "Snake", level: 4, count: 5, cx: 62, cz: 12 },
-  { type: "Lizard", level: 8, count: 4, cx: 96, cz: 22 },
-  { type: "Orc", level: 13, count: 4, cx: -42, cz: 52 },
-  { type: "Bandit", level: 18, count: 3, cx: 36, cz: -78 },
-  { type: "Beast", level: 23, count: 3, cx: -24, cz: 132 },
-];
+/** Live camps only. Phase-1 proposals stay in PROPOSED_CAMPS until the mask lands. */
+export const CAMPS: CampDef[] = LIVE_CAMPS;
 
 export interface MobDef {
   type: string;
@@ -399,7 +409,7 @@ export function meleeDamage(p: { level: number; baseClass: string; prestigeClass
  * Focus adds that percent to hit chance. Base hit chance is 90, capped at 99.
  * Edit SKILLS or TRAIN_POINTS to change the costs and the effect. Combat only reads them.
  */
-export const TRAIN_POINTS: Record<string, number> = { Human: 5, Elf: 4, Minotaur: 4 };
+export const TRAIN_POINTS: Record<string, number> = { Human: 5, Elf: 4, Minotaur: 4, Marshwarden: 4 };
 
 export function trainPointsFor(race: string) {
   return TRAIN_POINTS[race] ?? 4;

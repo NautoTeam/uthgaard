@@ -562,6 +562,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function drawHero(race: string, id: string, x: number, z: number, cls?: string) {
+    const drawn = race === "marshwarden" ? "human" : race;
     const actor = trackActor(id, x, z);
     const now = performance.now();
     const dt = actor.stamp ? Math.min(0.05, (now - actor.stamp) / 1000) : 0;
@@ -593,11 +594,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (attacking) {
       const t = 1 - (actor.attackUntil - now) / 640;
       const frame = Math.min(3, Math.floor(Math.max(0, t) * 4));
-      if (!drawFrame(`${race}-atk-${frame}`, x, z, cell, lift, filter)) drawSprite(race, x, z, race === "minotaur" ? 0.2 : 0.18);
+      if (!drawFrame(`${drawn}-atk-${frame}`, x, z, cell, lift, filter)) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     } else {
       const col = moving ? Math.floor(actor.phase) % 4 : 0;
       const row = actor.facing * 4;
-      if (!drawFrame(`${race}-walk-${row + col}`, x, z, cell, lift, filter)) drawSprite(race, x, z, race === "minotaur" ? 0.2 : 0.18);
+      if (!drawFrame(`${drawn}-walk-${row + col}`, x, z, cell, lift, filter)) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
     if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 700);

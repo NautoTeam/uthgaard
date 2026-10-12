@@ -1,0 +1,1428 @@
+{
+ "version": 1,
+ "units": "tiles (x right/east, z down/south; the live game's coordinate system, Reach centred at 0,0)",
+ "bounds": {
+  "minX": -560,
+  "maxX": 560,
+  "minZ": -440,
+  "maxZ": 440
+ },
+ "levelCapNow": 25,
+ "levelCapLater": 50,
+ "shapeFormula": "see world-design.md \u00a7Shape formula; hash01(e)=frac(sin(e*127.1)*43758.5453)",
+ "islands": [
+  {
+   "id": "reach",
+   "name": "The Reach",
+   "theme": "temperate home isle (existing)",
+   "shape": "circle",
+   "cx": 0,
+   "cz": 0,
+   "r": 150,
+   "beach": 138,
+   "footprint": {
+    "tiles": 70681,
+    "bbox": [
+     -150,
+     -150,
+     150,
+     150
+    ]
+   }
+  },
+  {
+   "id": "wardstone",
+   "name": "Wardstone Key",
+   "theme": "gate hub islet",
+   "shape": "blob",
+   "cx": 228,
+   "cz": -196,
+   "rx": 30,
+   "rz": 24,
+   "rot": 0.3,
+   "seed": 11,
+   "lobes": [
+    [
+     3,
+     0.1
+    ],
+    [
+     5,
+     0.06
+    ]
+   ],
+   "footprint": {
+    "tiles": 2280,
+    "bbox": [
+     198,
+     -218,
+     260,
+     -169
+    ]
+   }
+  },
+  {
+   "id": "frostmere",
+   "name": "Frostmere",
+   "theme": "ice and taiga",
+   "shape": "blob",
+   "cx": -30,
+   "cz": -322,
+   "rx": 180,
+   "rz": 72,
+   "rot": -0.12,
+   "seed": 23,
+   "lobes": [
+    [
+     2,
+     0.08
+    ],
+    [
+     3,
+     0.1
+    ],
+    [
+     7,
+     0.05
+    ]
+   ],
+   "footprint": {
+    "tiles": 41098,
+    "bbox": [
+     -208,
+     -394,
+     156,
+     -234
+    ]
+   }
+  },
+  {
+   "id": "pallid",
+   "name": "Pallid Barrow",
+   "theme": "undead barrow islet",
+   "shape": "blob",
+   "cx": -318,
+   "cz": -150,
+   "rx": 58,
+   "rz": 50,
+   "rot": 0.6,
+   "seed": 37,
+   "lobes": [
+    [
+     3,
+     0.12
+    ],
+    [
+     4,
+     0.07
+    ]
+   ],
+   "footprint": {
+    "tiles": 9208,
+    "bbox": [
+     -378,
+     -200,
+     -258,
+     -88
+    ]
+   }
+  },
+  {
+   "id": "saltglass",
+   "name": "Saltglass Expanse",
+   "theme": "desert and salt flats",
+   "shape": "blob",
+   "cx": 372,
+   "cz": 70,
+   "rx": 88,
+   "rz": 112,
+   "rot": 0.25,
+   "seed": 41,
+   "lobes": [
+    [
+     2,
+     0.07
+    ],
+    [
+     3,
+     0.09
+    ],
+    [
+     6,
+     0.05
+    ]
+   ],
+   "footprint": {
+    "tiles": 31212,
+    "bbox": [
+     283,
+     -53,
+     466,
+     180
+    ]
+   }
+  },
+  {
+   "id": "mirefen",
+   "name": "Mirefen Isles",
+   "theme": "swamp and fen",
+   "shape": "blob",
+   "cx": 60,
+   "cz": 292,
+   "rx": 120,
+   "rz": 64,
+   "rot": -0.08,
+   "seed": 53,
+   "lobes": [
+    [
+     3,
+     0.12
+    ],
+    [
+     5,
+     0.09
+    ],
+    [
+     9,
+     0.05
+    ]
+   ],
+   "footprint": {
+    "tiles": 24427,
+    "bbox": [
+     -81,
+     222,
+     188,
+     364
+    ]
+   }
+  },
+  {
+   "id": "cindermaw",
+   "name": "Cindermaw",
+   "theme": "volcanic endgame isle",
+   "shape": "blob",
+   "cx": -352,
+   "cz": 232,
+   "rx": 98,
+   "rz": 84,
+   "rot": -0.4,
+   "seed": 67,
+   "lobes": [
+    [
+     2,
+     0.06
+    ],
+    [
+     3,
+     0.11
+    ],
+    [
+     5,
+     0.07
+    ]
+   ],
+   "footprint": {
+    "tiles": 26133,
+    "bbox": [
+     -451,
+     135,
+     -251,
+     316
+    ]
+   }
+  }
+ ],
+ "zones": [
+  {
+   "id": "hearthfields",
+   "name": "Hearthfields",
+   "island": "reach",
+   "seed": [
+    20,
+    10
+   ],
+   "levels": [
+    1,
+    6
+   ],
+   "pvp": false,
+   "terrain": "meadow",
+   "mobs": [
+    "Spider 2 (existing)",
+    "Snake 4 (existing)",
+    "Hare/Boar 1-3 (new)"
+   ],
+   "footprint": {
+    "tiles": 14161,
+    "spanX": 167,
+    "spanZ": 137,
+    "bbox": [
+     -81,
+     -45,
+     85,
+     91
+    ]
+   }
+  },
+  {
+   "id": "thornwood",
+   "name": "Thornwood",
+   "island": "reach",
+   "seed": [
+    110,
+    -10
+   ],
+   "levels": [
+    6,
+    12
+   ],
+   "pvp": false,
+   "terrain": "forest",
+   "mobs": [
+    "Lizard 8 (existing)",
+    "Thornling 10 (new)"
+   ],
+   "footprint": {
+    "tiles": 12800,
+    "spanX": 95,
+    "spanZ": 208,
+    "bbox": [
+     56,
+     -100,
+     150,
+     107
+    ]
+   }
+  },
+  {
+   "id": "hornvale",
+   "name": "Hornvale",
+   "island": "reach",
+   "seed": [
+    -80,
+    70
+   ],
+   "levels": [
+    10,
+    16
+   ],
+   "pvp": false,
+   "terrain": "moor",
+   "mobs": [
+    "Orc 13 (existing)",
+    "Bog Hound 11 (new)"
+   ],
+   "footprint": {
+    "tiles": 16310,
+    "spanX": 137,
+    "spanZ": 205,
+    "bbox": [
+     -150,
+     -73,
+     -14,
+     131
+    ]
+   }
+  },
+  {
+   "id": "northcrag",
+   "name": "Northcrag",
+   "island": "reach",
+   "seed": [
+    20,
+    -100
+   ],
+   "levels": [
+    16,
+    21
+   ],
+   "pvp": true,
+   "terrain": "highland",
+   "mobs": [
+    "Bandit 18 (existing)",
+    "Crag Harpy 20 (new)"
+   ],
+   "footprint": {
+    "tiles": 18415,
+    "spanX": 241,
+    "spanZ": 105,
+    "bbox": [
+     -130,
+     -150,
+     110,
+     -46
+    ]
+   }
+  },
+  {
+   "id": "beastmarch",
+   "name": "Beastmarch",
+   "island": "reach",
+   "seed": [
+    -10,
+    135
+   ],
+   "levels": [
+    20,
+    25
+   ],
+   "pvp": true,
+   "terrain": "scrub",
+   "mobs": [
+    "Beast 23 (existing)",
+    "Thunder Elk 24 (new)"
+   ],
+   "footprint": {
+    "tiles": 8995,
+    "spanX": 176,
+    "spanZ": 82,
+    "bbox": [
+     -71,
+     69,
+     104,
+     150
+    ]
+   }
+  },
+  {
+   "id": "reedrot",
+   "name": "Reedrot Fen",
+   "island": "mirefen",
+   "seed": [
+    10,
+    305
+   ],
+   "levels": [
+    20,
+    26
+   ],
+   "pvp": true,
+   "terrain": "marsh",
+   "mobs": [
+    "Fen Crawler 21",
+    "Mire Witch 25 (rare named)"
+   ],
+   "footprint": {
+    "tiles": 12454,
+    "spanX": 156,
+    "spanZ": 133,
+    "bbox": [
+     -81,
+     229,
+     74,
+     361
+    ]
+   }
+  },
+  {
+   "id": "sunken_causeway",
+   "name": "Sunken Causeway",
+   "island": "mirefen",
+   "seed": [
+    125,
+    292
+   ],
+   "levels": [
+    26,
+    32
+   ],
+   "pvp": true,
+   "terrain": "bog",
+   "mobs": [
+    "Drowned Sentry 28",
+    "Leech Swarm 30"
+   ],
+   "footprint": {
+    "tiles": 11973,
+    "spanX": 129,
+    "spanZ": 143,
+    "bbox": [
+     60,
+     222,
+     188,
+     364
+    ]
+   }
+  },
+  {
+   "id": "rimefall",
+   "name": "Rimefall Shelf",
+   "island": "frostmere",
+   "seed": [
+    -140,
+    -315
+   ],
+   "levels": [
+    25,
+    31
+   ],
+   "pvp": true,
+   "terrain": "snow",
+   "mobs": [
+    "Frost Wolf 27",
+    "Ice Troll 30"
+   ],
+   "footprint": {
+    "tiles": 13434,
+    "spanX": 139,
+    "spanZ": 154,
+    "bbox": [
+     -208,
+     -392,
+     -70,
+     -239
+    ]
+   }
+  },
+  {
+   "id": "hollowpine",
+   "name": "Hollowpine Taiga",
+   "island": "frostmere",
+   "seed": [
+    -20,
+    -300
+   ],
+   "levels": [
+    29,
+    35
+   ],
+   "pvp": true,
+   "terrain": "taiga",
+   "mobs": [
+    "Snowcat 31",
+    "Woodwose 34"
+   ],
+   "footprint": {
+    "tiles": 17134,
+    "spanX": 136,
+    "spanZ": 160,
+    "bbox": [
+     -88,
+     -393,
+     47,
+     -234
+    ]
+   }
+  },
+  {
+   "id": "glacier_throne",
+   "name": "Glacier Throne",
+   "island": "frostmere",
+   "seed": [
+    95,
+    -325
+   ],
+   "levels": [
+    34,
+    40
+   ],
+   "pvp": true,
+   "terrain": "ice",
+   "mobs": [
+    "Rime Giant 37",
+    "Hoarfrost Wyrm 40 (rare named)"
+   ],
+   "footprint": {
+    "tiles": 10530,
+    "spanX": 136,
+    "spanZ": 129,
+    "bbox": [
+     21,
+     -394,
+     156,
+     -266
+    ]
+   }
+  },
+  {
+   "id": "dunewake",
+   "name": "Dunewake",
+   "island": "saltglass",
+   "seed": [
+    360,
+    10
+   ],
+   "levels": [
+    28,
+    34
+   ],
+   "pvp": true,
+   "terrain": "desert",
+   "mobs": [
+    "Sand Scorpion 29",
+    "Dune Raider 33"
+   ],
+   "footprint": {
+    "tiles": 15051,
+    "spanX": 171,
+    "spanZ": 141,
+    "bbox": [
+     289,
+     -53,
+     459,
+     87
+    ]
+   }
+  },
+  {
+   "id": "shardsalt",
+   "name": "Shardsalt Flats",
+   "island": "saltglass",
+   "seed": [
+    385,
+    130
+   ],
+   "levels": [
+    33,
+    40
+   ],
+   "pvp": true,
+   "terrain": "saltflat",
+   "mobs": [
+    "Glass Golem 36",
+    "Salt Basilisk 39"
+   ],
+   "footprint": {
+    "tiles": 16161,
+    "spanX": 184,
+    "spanZ": 129,
+    "bbox": [
+     283,
+     52,
+     466,
+     180
+    ]
+   }
+  },
+  {
+   "id": "gravewind",
+   "name": "Gravewind Barrows",
+   "island": "pallid",
+   "seed": [
+    -318,
+    -150
+   ],
+   "levels": [
+    36,
+    44
+   ],
+   "pvp": true,
+   "terrain": "barrow",
+   "mobs": [
+    "Barrow Revenant 38",
+    "Bone Lord 44 (rare named)"
+   ],
+   "footprint": {
+    "tiles": 9208,
+    "spanX": 121,
+    "spanZ": 113,
+    "bbox": [
+     -378,
+     -200,
+     -258,
+     -88
+    ]
+   }
+  },
+  {
+   "id": "ashen_verge",
+   "name": "Ashen Verge",
+   "island": "cindermaw",
+   "seed": [
+    -310,
+    180
+   ],
+   "levels": [
+    40,
+    46
+   ],
+   "pvp": true,
+   "terrain": "ash",
+   "mobs": [
+    "Cinder Imp 41",
+    "Magma Hound 45"
+   ],
+   "footprint": {
+    "tiles": 12246,
+    "spanX": 157,
+    "spanZ": 161,
+    "bbox": [
+     -407,
+     135,
+     -251,
+     295
+    ]
+   }
+  },
+  {
+   "id": "emberheart",
+   "name": "Emberheart Caldera",
+   "island": "cindermaw",
+   "seed": [
+    -395,
+    270
+   ],
+   "levels": [
+    45,
+    50
+   ],
+   "pvp": true,
+   "terrain": "lava",
+   "mobs": [
+    "Obsidian Colossus 48",
+    "Ember Tyrant 50 (world boss)"
+   ],
+   "footprint": {
+    "tiles": 13887,
+    "spanX": 173,
+    "spanZ": 144,
+    "bbox": [
+     -451,
+     173,
+     -279,
+     316
+    ]
+   }
+  }
+ ],
+ "cities": [
+  {
+   "id": "uthgaard",
+   "name": "Caldrenmoor",
+   "x": 0,
+   "z": 0,
+   "race": "human",
+   "stone": "#7a6546",
+   "stoneAlt": "#6d5a3e",
+   "island": "reach",
+   "zone": "hearthfields",
+   "kind": "haven",
+   "phase": 1
+  },
+  {
+   "id": "eldenreach",
+   "name": "Eldenreach",
+   "x": 118,
+   "z": -28,
+   "race": "elf",
+   "stone": "#6d8660",
+   "stoneAlt": "#5c7454",
+   "island": "reach",
+   "zone": "thornwood",
+   "kind": "haven",
+   "phase": 1
+  },
+  {
+   "id": "hornwatch",
+   "name": "Hornwatch",
+   "x": -86,
+   "z": 102,
+   "race": "minotaur",
+   "stone": "#6e5646",
+   "stoneAlt": "#5c4638",
+   "island": "reach",
+   "zone": "hornvale",
+   "kind": "haven",
+   "phase": 1
+  },
+  {
+   "id": "wardstone",
+   "name": "Wardstone Ring",
+   "x": 228,
+   "z": -196,
+   "race": "human",
+   "stone": "#77728a",
+   "stoneAlt": "#68637a",
+   "island": "wardstone",
+   "zone": null,
+   "kind": "haven",
+   "phase": 1
+  },
+  {
+   "id": "stiltwick",
+   "name": "Stiltwick",
+   "x": -50,
+   "z": 262,
+   "race": "human",
+   "stone": "#6a5e44",
+   "stoneAlt": "#5c5038",
+   "island": "mirefen",
+   "zone": "reedrot",
+   "kind": "haven",
+   "phase": 1
+  },
+  {
+   "id": "skerry_point",
+   "name": "Skerry Point",
+   "x": -110,
+   "z": -290,
+   "race": "human",
+   "stone": "#8a96a0",
+   "stoneAlt": "#7a8690",
+   "island": "frostmere",
+   "zone": "rimefall",
+   "kind": "borderhold",
+   "phase": 2
+  },
+  {
+   "id": "mirage_well",
+   "name": "Mirage Well",
+   "x": 330,
+   "z": 40,
+   "race": "human",
+   "stone": "#b09868",
+   "stoneAlt": "#a08858",
+   "island": "saltglass",
+   "zone": "dunewake",
+   "kind": "borderhold",
+   "phase": 2
+  },
+  {
+   "id": "gravewind_shrine",
+   "name": "Gravewind Shrine",
+   "x": -300,
+   "z": -160,
+   "race": "human",
+   "stone": "#5e5a64",
+   "stoneAlt": "#524e58",
+   "island": "pallid",
+   "zone": "gravewind",
+   "kind": "shrine",
+   "phase": 3
+  },
+  {
+   "id": "ashen_shrine",
+   "name": "Ashen Shrine",
+   "x": -300,
+   "z": 200,
+   "race": "human",
+   "stone": "#5a4c48",
+   "stoneAlt": "#4c403c",
+   "island": "cindermaw",
+   "zone": "ashen_verge",
+   "kind": "shrine",
+   "phase": 3
+  }
+ ],
+ "camps": [
+  {
+   "type": "Spider",
+   "level": 2,
+   "count": 3,
+   "cx": 26,
+   "cz": 22,
+   "zone": "hearthfields"
+  },
+  {
+   "type": "Snake",
+   "level": 4,
+   "count": 5,
+   "cx": 62,
+   "cz": 12,
+   "zone": "hearthfields"
+  },
+  {
+   "type": "Lizard",
+   "level": 8,
+   "count": 4,
+   "cx": 96,
+   "cz": 22,
+   "zone": "thornwood"
+  },
+  {
+   "type": "Orc",
+   "level": 13,
+   "count": 4,
+   "cx": -42,
+   "cz": 52,
+   "zone": "hornvale"
+  },
+  {
+   "type": "Bandit",
+   "level": 18,
+   "count": 3,
+   "cx": 36,
+   "cz": -78,
+   "zone": "northcrag"
+  },
+  {
+   "type": "Beast",
+   "level": 23,
+   "count": 3,
+   "cx": -24,
+   "cz": 132,
+   "zone": "beastmarch"
+  }
+ ],
+ "proposedCamps": [
+  {
+   "type": "Boar",
+   "level": 3,
+   "count": 4,
+   "cx": -30,
+   "cz": -24,
+   "phase": 1,
+   "zone": "hearthfields"
+  },
+  {
+   "type": "Thornling",
+   "level": 10,
+   "count": 4,
+   "cx": 120,
+   "cz": -70,
+   "phase": 1,
+   "zone": "thornwood"
+  },
+  {
+   "type": "BogHound",
+   "level": 11,
+   "count": 4,
+   "cx": -110,
+   "cz": 40,
+   "phase": 1,
+   "zone": "hornvale"
+  },
+  {
+   "type": "CragHarpy",
+   "level": 20,
+   "count": 3,
+   "cx": -30,
+   "cz": -115,
+   "phase": 1,
+   "zone": "northcrag"
+  },
+  {
+   "type": "ThunderElk",
+   "level": 24,
+   "count": 3,
+   "cx": 40,
+   "cz": 128,
+   "phase": 1,
+   "zone": "beastmarch"
+  },
+  {
+   "type": "FenCrawler",
+   "level": 21,
+   "count": 4,
+   "cx": 0,
+   "cz": 310,
+   "phase": 1,
+   "zone": "reedrot"
+  },
+  {
+   "type": "MireWitch",
+   "level": 25,
+   "count": 1,
+   "cx": -30,
+   "cz": 318,
+   "named": true,
+   "phase": 1,
+   "zone": "reedrot"
+  },
+  {
+   "type": "DrownedSentry",
+   "level": 28,
+   "count": 4,
+   "cx": 120,
+   "cz": 280,
+   "phase": 2,
+   "zone": "sunken_causeway"
+  },
+  {
+   "type": "FrostWolf",
+   "level": 27,
+   "count": 4,
+   "cx": -170,
+   "cz": -320,
+   "phase": 2,
+   "zone": "rimefall"
+  },
+  {
+   "type": "Snowcat",
+   "level": 31,
+   "count": 3,
+   "cx": -10,
+   "cz": -320,
+   "phase": 2,
+   "zone": "hollowpine"
+  },
+  {
+   "type": "RimeGiant",
+   "level": 37,
+   "count": 2,
+   "cx": 100,
+   "cz": -320,
+   "phase": 2,
+   "zone": "glacier_throne"
+  },
+  {
+   "type": "SandScorpion",
+   "level": 29,
+   "count": 4,
+   "cx": 365,
+   "cz": 0,
+   "phase": 2,
+   "zone": "dunewake"
+  },
+  {
+   "type": "GlassGolem",
+   "level": 36,
+   "count": 3,
+   "cx": 390,
+   "cz": 140,
+   "phase": 2,
+   "zone": "shardsalt"
+  },
+  {
+   "type": "BarrowRevenant",
+   "level": 38,
+   "count": 4,
+   "cx": -330,
+   "cz": -130,
+   "phase": 3,
+   "zone": "gravewind"
+  },
+  {
+   "type": "CinderImp",
+   "level": 41,
+   "count": 4,
+   "cx": -320,
+   "cz": 170,
+   "phase": 3,
+   "zone": "ashen_verge"
+  },
+  {
+   "type": "ObsidianColossus",
+   "level": 48,
+   "count": 2,
+   "cx": -395,
+   "cz": 270,
+   "phase": 3,
+   "zone": "emberheart"
+  }
+ ],
+ "worldEdge": {
+  "note": "replaces LAND=150 / WORLD_EDGE=168 / clampCoord(\u00b1168) / routeTo \u00b1166"
+ },
+ "roads": [
+  [
+   0,
+   0,
+   118,
+   -28
+  ],
+  [
+   0,
+   0,
+   -86,
+   102
+  ],
+  [
+   118,
+   -28,
+   -86,
+   102
+  ],
+  [
+   228,
+   -196,
+   239,
+   -210
+  ],
+  [
+   228,
+   -196,
+   223,
+   -181
+  ],
+  [
+   -50,
+   262,
+   -10,
+   266
+  ],
+  [
+   -50,
+   262,
+   -54,
+   292
+  ],
+  [
+   -110,
+   -290,
+   -70,
+   -290
+  ],
+  [
+   -110,
+   -290,
+   -122,
+   -317
+  ],
+  [
+   330,
+   40,
+   371,
+   58
+  ],
+  [
+   330,
+   40,
+   329,
+   5
+  ],
+  [
+   -300,
+   -160,
+   -319,
+   -149
+  ],
+  [
+   -300,
+   -160,
+   -286,
+   -177
+  ],
+  [
+   -300,
+   200,
+   -318,
+   176
+  ],
+  [
+   -300,
+   200,
+   -278,
+   212
+  ]
+ ],
+ "lakes": [
+  {
+   "x": 74,
+   "z": 64,
+   "r": 11
+  },
+  {
+   "x": -62,
+   "z": -46,
+   "r": 9
+  },
+  {
+   "x": 28,
+   "z": -68,
+   "r": 7
+  }
+ ],
+ "gates": [
+  {
+   "cityId": "uthgaard",
+   "circuits": [
+    "hearth"
+   ]
+  },
+  {
+   "cityId": "eldenreach",
+   "circuits": [
+    "hearth"
+   ]
+  },
+  {
+   "cityId": "hornwatch",
+   "circuits": [
+    "hearth"
+   ]
+  },
+  {
+   "cityId": "wardstone",
+   "circuits": [
+    "hearth",
+    "tide",
+    "ember"
+   ],
+   "hub": true
+  },
+  {
+   "cityId": "stiltwick",
+   "circuits": [
+    "tide"
+   ]
+  },
+  {
+   "cityId": "skerry_point",
+   "circuits": [
+    "tide"
+   ]
+  },
+  {
+   "cityId": "mirage_well",
+   "circuits": [
+    "tide"
+   ]
+  },
+  {
+   "cityId": "gravewind_shrine",
+   "circuits": [
+    "ember"
+   ]
+  },
+  {
+   "cityId": "ashen_shrine",
+   "circuits": [
+    "ember"
+   ]
+  }
+ ],
+ "circuits": [
+  {
+   "id": "hearth",
+   "name": "Hearth Circuit",
+   "color": "#e0b050",
+   "minLevel": 1,
+   "attune": false,
+   "note": "open; replaces today's Wayfarer city-to-city list"
+  },
+  {
+   "id": "tide",
+   "name": "Tide Circuit",
+   "color": "#50a8e0",
+   "minLevel": 20,
+   "attune": true,
+   "firstHopFrom": "wardstone",
+   "note": "destination listed once the gate was touched (attunedGates on the save)"
+  },
+  {
+   "id": "ember",
+   "name": "Ember Circuit",
+   "color": "#e05a3a",
+   "minLevel": 35,
+   "attune": true,
+   "note": "phase 3; Mastery shortcuts later (M17)"
+  }
+ ],
+ "links": [
+  {
+   "from": "uthgaard",
+   "to": "eldenreach",
+   "circuit": "hearth"
+  },
+  {
+   "from": "uthgaard",
+   "to": "hornwatch",
+   "circuit": "hearth"
+  },
+  {
+   "from": "uthgaard",
+   "to": "wardstone",
+   "circuit": "hearth"
+  },
+  {
+   "from": "eldenreach",
+   "to": "hornwatch",
+   "circuit": "hearth"
+  },
+  {
+   "from": "eldenreach",
+   "to": "wardstone",
+   "circuit": "hearth"
+  },
+  {
+   "from": "hornwatch",
+   "to": "wardstone",
+   "circuit": "hearth"
+  },
+  {
+   "from": "wardstone",
+   "to": "stiltwick",
+   "circuit": "tide"
+  },
+  {
+   "from": "wardstone",
+   "to": "skerry_point",
+   "circuit": "tide"
+  },
+  {
+   "from": "wardstone",
+   "to": "mirage_well",
+   "circuit": "tide"
+  },
+  {
+   "from": "stiltwick",
+   "to": "skerry_point",
+   "circuit": "tide"
+  },
+  {
+   "from": "stiltwick",
+   "to": "mirage_well",
+   "circuit": "tide"
+  },
+  {
+   "from": "skerry_point",
+   "to": "mirage_well",
+   "circuit": "tide"
+  },
+  {
+   "from": "wardstone",
+   "to": "gravewind_shrine",
+   "circuit": "ember"
+  },
+  {
+   "from": "wardstone",
+   "to": "ashen_shrine",
+   "circuit": "ember"
+  },
+  {
+   "from": "gravewind_shrine",
+   "to": "ashen_shrine",
+   "circuit": "ember"
+  }
+ ],
+ "terrainPalette": {
+  "meadow": [
+   "#46683c",
+   "#3e5a34"
+  ],
+  "forest": [
+   "#35522e",
+   "#2e4828"
+  ],
+  "moor": [
+   "#5a5a3a",
+   "#4e4e32"
+  ],
+  "highland": [
+   "#6a6450",
+   "#5c5644"
+  ],
+  "scrub": [
+   "#6e6a3c",
+   "#605c34"
+  ],
+  "marsh": [
+   "#3c5440",
+   "#344a38"
+  ],
+  "bog": [
+   "#3a4a34",
+   "#2f3e2c"
+  ],
+  "snow": [
+   "#d8e0e6",
+   "#c8d2da"
+  ],
+  "taiga": [
+   "#4a6656",
+   "#3e584a"
+  ],
+  "ice": [
+   "#b4d0e0",
+   "#a2c0d2"
+  ],
+  "desert": [
+   "#d4b878",
+   "#c8aa68"
+  ],
+  "saltflat": [
+   "#e4ddc8",
+   "#d6cfb8"
+  ],
+  "barrow": [
+   "#58545c",
+   "#4c4850"
+  ],
+  "ash": [
+   "#5c5452",
+   "#4e4644"
+  ],
+  "lava": [
+   "#6a3428",
+   "#5a2c22"
+  ],
+  "hub": [
+   "#7a7488",
+   "#6c667a"
+  ],
+  "beach": [
+   "#1e3830",
+   "#18322c"
+  ],
+  "water": [
+   "#123e46",
+   "#164850"
+  ],
+  "deep": [
+   "#0a2428",
+   "#0c2c32"
+  ]
+ },
+ "displayTerms": {
+  "gate": "Ley Gate",
+  "noPvpSettlement": "Haven",
+  "openTown": "Borderhold",
+  "cityAnchor": "Cornerstone",
+  "secondaryProfession": "Mastery",
+  "professionItem": "Mastery Sigil"
+ },
+ "renameMap": {
+  "note": "display names only; ids unchanged so saves stay valid",
+  "cities": [
+   {
+    "id": "uthgaard",
+    "oldName": "Uthgaard",
+    "newName": "Caldrenmoor"
+   }
+  ],
+  "kinds": [
+   {
+    "old": "safehold",
+    "new": "haven"
+   },
+   {
+    "old": "freehold",
+    "new": "borderhold"
+   }
+  ],
+  "draftOnly": [
+   {
+    "oldId": "eldenwood",
+    "newId": "thornwood",
+    "newName": "Thornwood"
+   },
+   {
+    "oldId": "hornmoor",
+    "newId": "hornvale",
+    "newName": "Hornvale"
+   },
+   {
+    "oldId": "coldharbor",
+    "newId": "skerry_point",
+    "newName": "Skerry Point"
+   },
+   {
+    "oldType": "BarrowWight",
+    "newType": "BarrowRevenant"
+   }
+  ]
+ },
+ "phases": {
+  "phase1_cap25": [
+   "reach",
+   "wardstone",
+   "mirefen"
+  ],
+  "phase2_cap35": [
+   "frostmere",
+   "saltglass"
+  ],
+  "phase3_cap50": [
+   "pallid",
+   "cindermaw"
+  ]
+ },
+ "deferred": {
+  "M14_cities": "Cornerstone plots in Northcrag, Beastmarch, Reedrot, Dunewake, Hollowpine (marked as cityPlots later)",
+  "M15_mines": "one mine per open (PvP) zone from Northcrag onward; resource type per terrain",
+  "M16_siege": "Emberheart Caldera hosts a fixed-time battleground / siege trial",
+  "M17_masteries": "Wayfinder Mastery opens direct cross-circuit gates; rare named mobs drop Mastery Sigils"
+ }
+}
