@@ -386,6 +386,7 @@ body {
 
 #debugLevel {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: end;
   margin-bottom: 10px;
@@ -401,7 +402,7 @@ body {
   color: #a89870;
 }
 
-#debugLevel input {
+#debugLevel input[type="number"] {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -409,6 +410,33 @@ body {
   background: #1a221c;
   color: #eee;
   border: 1px solid #6a5a38;
+}
+
+.click-debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #d7c28a;
+}
+
+#clickDebug {
+  position: absolute;
+  left: 8px;
+  top: 128px;
+  z-index: 4;
+  pointer-events: none;
+  max-width: calc(100vw - 16px);
+  background: rgba(8, 10, 8, 0.82);
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+  font: 12px/1.35 ui-monospace, "Source Sans 3", monospace;
+  padding: 6px 8px;
+  white-space: pre;
+}
+
+#clickDebug[hidden] {
+  display: none !important;
 }
 
 #sheetClose,
@@ -543,7 +571,8 @@ body {
 }
 
 #mapOverlay[hidden] {
-  display: none;
+  display: none !important;
+  pointer-events: none !important;
 }
 
 #mapPanel {

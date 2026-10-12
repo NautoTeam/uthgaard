@@ -24,7 +24,7 @@ import { BOUNDS, CIRCUITS, DEFAULT_ATTUNED, GATES, ISLANDS, LATER_ISLANDS, LINKS
 import { terrainAt, zoneAt } from "../shared/sim/mask";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
 import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
-import { diamondDistance, pointerToView, screenToWorld as isoScreenToWorld, worldToScreen as isoWorldToScreen } from "./iso";
+import { diamondDistance, resolveClick, screenToWorld as isoScreenToWorld, worldToScreen as isoWorldToScreen } from "./iso";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -84,6 +84,26 @@ declare global {
         backingW: number;
         backingH: number;
       };
+      resolveClick?: (input: {
+        clientX: number;
+        clientY: number;
+        offsetX?: number;
+        offsetY?: number;
+        rect?: { left: number; top: number; width: number; height: number };
+      }) => { sx: number; sy: number; x: number; z: number; camX: number; camZ: number; heroX: number; heroZ: number };
+      lastClick?: () => {
+        clientX: number;
+        clientY: number;
+        sx: number;
+        sy: number;
+        camX: number;
+        camZ: number;
+        tx: number;
+        tz: number;
+        heroX: number;
+        heroZ: number;
+      } | null;
+      dest?: () => { x: number; z: number } | null;
     };
   }
 }
@@ -157,6 +177,43 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const dollSlots = root.querySelector<HTMLElement>("#dollSlots")!;
   const debugRow = root.querySelector<HTMLElement>("#debugLevel");
   if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
+  const clickDebug = root.querySelector<HTMLElement>("#clickDebug");
+  const clickDebugToggle = root.querySelector<HTMLInputElement>("#clickDebugToggle");
+
+  const panelStack: HTMLElement[] = [];
+  function setOpen(el: HTMLElement, open: boolean) {
+    const drop = (other: HTMLElement) => {
+      other.hidden = true;
+      const j = panelStack.indexOf(other);
+      if (j >= 0) panelStack.splice(j, 1);
+    };
+    const mine = panelStack.indexOf(el);
+    if (mine >= 0) panelStack.splice(mine, 1);
+    if (!open) {
+      el.hidden = true;
+      return;
+    }
+    if (el === mapOverlay) {
+      for (const other of [sheet, bag, shop, trainPanel, travelPanel]) drop(other);
+    } else {
+      drop(mapOverlay);
+    }
+    el.hidden = false;
+    panelStack.push(el);
+  }
+  function closeTopPanel() {
+    for (let i = panelStack.length - 1; i >= 0; i--) {
+      const el = panelStack[i];
+      if (!el.hidden) {
+        setOpen(el, false);
+        return true;
+      }
+    }
+    const leftover = [travelPanel, sheet, bag, shop, trainPanel, mapOverlay].find((el) => !el.hidden);
+    if (!leftover) return false;
+    setOpen(leftover, false);
+    return true;
+  }
 
   const sprites: Record<string, HTMLImageElement> = {};
   for (const name of NAMES) {
@@ -684,9 +741,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (shroudLeft > 0) {
       statsEl.innerHTML += `<div class="shroud">Grave Chill ${Math.ceil(shroudLeft / 1000)}s · spells sealed</div>`;
     }
-    const near = nearestWayfarer(p.x, p.z);
-    talkBtn.hidden = !near;
-    if (!near) travelPanel.hidden = true;
+    const talkNear = nearestWayfarer(p.x, p.z);
+    talkBtn.hidden = !talkNear;
+    // Stay open out to the same range a click uses to start the conversation.
+    // The button itself stays short-range so it does not appear across the plaza.
+    if (!nearestWayfarer(p.x, p.z, 8) && !travelPanel.hidden) setOpen(travelPanel, false);
     const state = view();
     const lines = [...state.logs, ...notes];
     const graveKey = JSON.stringify(state.graves ?? []);
@@ -1050,7 +1109,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     } else if (dest) {
       if (talkNpc) {
         const npc = NPCS.find((n) => n.id === talkNpc);
-        if (npc && Math.hypot(npc.x - p.x, npc.z - p.z) <= 8) {
+        if (npc && Math.hypot(npc.x - p.x, npc.z - p.z) <= 3.6) {
           const npcId = talkNpc;
           dest = null;
           path = [];
@@ -1523,25 +1582,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function onKeyDown(e: KeyboardEvent) {
     touchInput();
     if (e.key === "Escape") {
-      if (!bag.hidden) {
-        bag.hidden = true;
-        return;
-      }
-      if (!shop.hidden) {
-        shop.hidden = true;
-        return;
-      }
-      if (!trainPanel.hidden) {
-        trainPanel.hidden = true;
-        return;
-      }
-      if (!sheet.hidden) {
-        sheet.hidden = true;
-        return;
-      }
-      if (!mapOverlay.hidden) {
+      if (closeTopPanel()) {
         e.preventDefault();
-        mapOverlay.hidden = true;
         return;
       }
     }
@@ -1559,8 +1601,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (e.code === "KeyI") {
       e.preventDefault();
-      bag.hidden = !bag.hidden;
-      if (!bag.hidden) {
+      const open = bag.hidden;
+      setOpen(bag, open);
+      if (open) {
         bagSig = "";
         paintBag();
       }
@@ -1578,54 +1621,95 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!window.__controlsTest) keys.clear();
   }
 
-  function canvasPoint(e: PointerEvent) {
+  type LastClick = {
+    clientX: number;
+    clientY: number;
+    sx: number;
+    sy: number;
+    camX: number;
+    camZ: number;
+    tx: number;
+    tz: number;
+    heroX: number;
+    heroZ: number;
+  };
+  let lastClick: LastClick | null = null;
+
+  function paintClickDebug() {
+    if (!clickDebug) return;
+    const on = clickDebugToggle ? clickDebugToggle.checked : true;
+    clickDebug.hidden = !on;
+    if (!on) return;
+    if (!lastClick) {
+      clickDebug.textContent = "Last click\n(waiting)";
+      return;
+    }
+    const c = lastClick;
+    clickDebug.textContent = [
+      `client ${c.clientX.toFixed(0)},${c.clientY.toFixed(0)}`,
+      `canvas ${c.sx.toFixed(0)},${c.sy.toFixed(0)}`,
+      `camera ${c.camX.toFixed(0)},${c.camZ.toFixed(0)}`,
+      `target ${c.tx.toFixed(0)},${c.tz.toFixed(0)}`,
+      `hero ${c.heroX.toFixed(0)},${c.heroZ.toFixed(0)}`,
+    ].join("\n");
+  }
+
+  function readClick(e: { clientX: number; clientY: number; offsetX?: number; offsetY?: number }) {
     const cssW = canvas.clientWidth || viewW;
     const cssH = canvas.clientHeight || viewH;
     if (Math.abs(cssW - viewW) > 1 || Math.abs(cssH - viewH) > 1) resize();
-    const rect = canvas.getBoundingClientRect();
-    const fromRect = pointerToView(e.clientX, e.clientY, rect, viewW, viewH);
-    if (e.target !== canvas || !Number.isFinite(e.offsetX) || !Number.isFinite(e.offsetY)) return { sx: fromRect.x, sy: fromRect.y };
-    let ox = e.offsetX;
-    let oy = e.offsetY;
-    const boxW = Math.max(1, canvas.clientWidth);
-    const boxH = Math.max(1, canvas.clientHeight);
-    // A few browsers report offsetX in backing-store pixels.
-    if ((ox > boxW + 1 || oy > boxH + 1) && canvas.width > boxW + 1) {
-      ox *= boxW / canvas.width;
-      oy *= boxH / canvas.height;
-    }
-    const fromOff = { x: (ox / boxW) * viewW, y: (oy / boxH) * viewH };
-    // Synthetic events often leave offset at 0. A real top-left click still
-    // agrees with the rect mapping, so only ignore a lone 0,0.
-    if (ox === 0 && oy === 0 && (Math.abs(fromRect.x) > 3 || Math.abs(fromRect.y) > 3)) return { sx: fromRect.x, sy: fromRect.y };
-    // When clientX and getBoundingClientRect are in different spaces (a scaled
-    // embed, or a backing-store rect), element-local offsetX still matches the
-    // pixels we draw. That mismatch is what sent every click up-left.
-    if (Math.hypot(fromRect.x - fromOff.x, fromRect.y - fromOff.y) > 6) return { sx: fromOff.x, sy: fromOff.y };
-    return { sx: fromRect.x, sy: fromRect.y };
+    const hero = localPlayer();
+    return resolveClick({
+      clientX: e.clientX,
+      clientY: e.clientY,
+      offsetX: e.offsetX,
+      offsetY: e.offsetY,
+      rect: canvas.getBoundingClientRect(),
+      viewW,
+      viewH,
+      clientW: cssW,
+      clientH: cssH,
+      camX: cam.x,
+      camZ: cam.z,
+      heroX: hero?.x,
+      heroZ: hero?.z,
+    });
   }
 
-  function pickTile(sx: number, sy: number) {
+  function rememberClick(
+    e: { clientX: number; clientY: number },
+    hit: { sx: number; sy: number; camX: number; camZ: number; heroX: number; heroZ: number },
+    tile: { x: number; z: number },
+  ) {
+    lastClick = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      sx: hit.sx,
+      sy: hit.sy,
+      camX: hit.camX,
+      camZ: hit.camZ,
+      tx: tile.x,
+      tz: tile.z,
+      heroX: hit.heroX,
+      heroZ: hit.heroZ,
+    };
+    paintClickDebug();
+  }
+
+  function pickTile(sx: number, sy: number, roughX: number, roughZ: number) {
     const hero = localPlayer();
-    const rough = screenToWorld(sx, sy);
-    let bestX = Math.round(rough.x);
-    let bestZ = Math.round(rough.z);
+    const cx = Math.round(roughX);
+    const cz = Math.round(roughZ);
+    let bestX = cx;
+    let bestZ = cz;
     let best = Infinity;
-    const seeds: Array<[number, number]> = [[bestX, bestZ]];
-    if (hero) seeds.push([Math.round(hero.x), Math.round(hero.z)]);
-    const seen = new Set<string>();
-    for (const [sx0, sz0] of seeds) {
-      for (let z = sz0 - 32; z <= sz0 + 32; z++) {
-        for (let x = sx0 - 32; x <= sx0 + 32; x++) {
-          const key = `${x},${z}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const d = diamondDistance(sx, sy, worldToScreen(x, z));
-          if (d < best) {
-            best = d;
-            bestX = x;
-            bestZ = z;
-          }
+    for (let z = cz - 3; z <= cz + 3; z++) {
+      for (let x = cx - 3; x <= cx + 3; x++) {
+        const d = diamondDistance(sx, sy, worldToScreen(x, z));
+        if (d < best) {
+          best = d;
+          bestX = x;
+          bestZ = z;
         }
       }
     }
@@ -1633,31 +1717,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       let openD = Infinity;
       let openX = bestX;
       let openZ = bestZ;
-      for (const [sx0, sz0] of seeds) {
-        for (let z = sz0 - 8; z <= sz0 + 8; z++) {
-          for (let x = sx0 - 8; x <= sx0 + 8; x++) {
-            if (blocked(x, z)) continue;
-            const d = diamondDistance(sx, sy, worldToScreen(x, z));
-            if (d < openD) {
-              openD = d;
-              openX = x;
-              openZ = z;
-            }
+      for (let z = cz - 4; z <= cz + 4; z++) {
+        for (let x = cx - 4; x <= cx + 4; x++) {
+          if (blocked(x, z)) continue;
+          const d = diamondDistance(sx, sy, worldToScreen(x, z));
+          if (d < openD) {
+            openD = d;
+            openX = x;
+            openZ = z;
           }
         }
       }
-      // Never walk to a far open tile. A blocked click with nothing nearby stays put.
       if (openD <= 2.4) {
         bestX = openX;
         bestZ = openZ;
         best = openD;
       } else {
-        return { x: hero?.x ?? rough.x, z: hero?.z ?? rough.z };
+        return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
       }
     }
     const projected = worldToScreen(bestX, bestZ);
     if (best > 1.35 || Math.hypot(projected.x - sx, projected.y - sy) > 52) {
-      return { x: hero?.x ?? rough.x, z: hero?.z ?? rough.z };
+      return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
     }
     return { x: bestX, z: bestZ };
   }
@@ -1681,8 +1762,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (e.button !== 0 || !mapOverlay.hidden) return;
     const p = me();
     if (!p || p.hp <= 0) return;
-    const { sx, sy } = canvasPoint(e);
-    const w = screenToWorld(sx, sy);
+    const hit = readClick(e);
+    const sx = hit.sx;
+    const sy = hit.sy;
+    const w = { x: hit.x, z: hit.z };
     let pickedGrave: { id: string; x: number; z: number } | null = null;
     for (const g of view().graves ?? []) {
       if (spriteHit(sx, sy, g.x, g.z, 48) || Math.hypot(g.x - w.x, g.z - w.z) < 1.4) {
@@ -1692,6 +1775,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (pickedGrave) {
       chaseId = null;
+      rememberClick(e, hit, pickedGrave);
       const dist = Math.hypot(pickedGrave.x - p.x, pickedGrave.z - p.z);
       if (dist <= 4) {
         dest = null;
@@ -1707,7 +1791,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     let pickedNpc: (typeof NPCS)[number] | null = null;
     for (const npc of NPCS) {
-      if (spriteHit(sx, sy, npc.x, npc.z, 124)) {
+      if (spriteHit(sx, sy, npc.x, npc.z, 160)) {
         pickedNpc = npc;
         break;
       }
@@ -1726,7 +1810,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (pickedNpc) {
       const dist = Math.hypot(pickedNpc.x - p.x, pickedNpc.z - p.z);
       chaseId = null;
-      if (dist < 6.2) {
+      rememberClick(e, hit, pickedNpc);
+      if (dist <= 3.6) {
         dest = null;
         path = [];
         talkNpc = null;
@@ -1777,8 +1862,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         const inRange = mage ? dist <= 7.2 : dist <= 2.65;
         if (!inRange) {
           const spot = mage ? rangedStand(m.x, m.z, p.x, p.z) : adjacentStand(m.x, m.z, p.x, p.z);
+          rememberClick(e, hit, spot);
           goTo(spot.x, spot.z, null, true);
         } else {
+          rememberClick(e, hit, m);
           dest = null;
           path = [];
         }
@@ -1788,7 +1875,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     pinnedId = null;
     chaseId = null;
     lootGrave = null;
-    const tile = pickTile(sx, sy);
+    const tile = pickTile(sx, sy, w.x, w.z);
+    rememberClick(e, hit, tile);
     goTo(tile.x, tile.z, null);
   }
 
@@ -1806,7 +1894,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = me();
     if (!p || !nearestTrainer(p.x, p.z, 8)) return;
     trainSig = "";
-    trainPanel.hidden = false;
+    setOpen(trainPanel, true);
     paintTrain();
   }
 
@@ -1834,7 +1922,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = me();
     if (!p || !nearestVendor(p.x, p.z, 8)) return;
     shopSig = "";
-    shop.hidden = false;
+    setOpen(shop, true);
     paintShop();
   }
 
@@ -1917,7 +2005,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return `<div class="circuit" style="color:${circuit.color}">${circuit.name}</div>${buttons}`;
     }).join("");
     travelButtons.innerHTML = groups;
-    travelPanel.hidden = false;
+    setOpen(travelPanel, true);
   }
 
   function goCity(cityId: string) {
@@ -1935,7 +2023,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     dest = null;
     path = [];
     talkNpc = null;
-    travelPanel.hidden = true;
+    setOpen(travelPanel, false);
     if (host) {
       const result = world.travel(p.id, cityId);
       if (!result.ok && result.reason) floatText(result.reason, "#f0dca0", 130);
@@ -1980,7 +2068,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onTravelClose(e: Event) {
     e.preventDefault();
-    travelPanel.hidden = true;
+    setOpen(travelPanel, false);
   }
 
   function act(skill: string) {
@@ -2048,12 +2136,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onSheet(e: Event) {
     e.preventDefault();
-    sheet.hidden = !sheet.hidden;
+    setOpen(sheet, sheet.hidden);
   }
   function onBagToggle(e: Event) {
     e.preventDefault();
-    bag.hidden = !bag.hidden;
-    if (!bag.hidden) {
+    const open = bag.hidden;
+    setOpen(bag, open);
+    if (open) {
       bagSig = "";
       paintBag();
     }
@@ -2087,19 +2176,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   function onTrainClose(e: Event) {
     e.preventDefault();
-    trainPanel.hidden = true;
+    setOpen(trainPanel, false);
   }
   function onShopClose(e: Event) {
     e.preventDefault();
-    shop.hidden = true;
+    setOpen(shop, false);
   }
   function onBagClose(e: Event) {
     e.preventDefault();
-    bag.hidden = true;
+    setOpen(bag, false);
   }
   function onSheetClose(e: Event) {
     e.preventDefault();
-    sheet.hidden = true;
+    setOpen(sheet, false);
   }
   function onDebugLevel(e: Event) {
     e.preventDefault();
@@ -2138,13 +2227,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function onMap(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    mapOverlay.hidden = !mapOverlay.hidden;
-    if (!mapOverlay.hidden) drawWorldMap();
+    const open = mapOverlay.hidden;
+    setOpen(mapOverlay, open);
+    if (open) drawWorldMap();
   }
 
   function onMapClose(e: Event) {
     e.preventDefault();
-    mapOverlay.hidden = true;
+    setOpen(mapOverlay, false);
   }
 
   function onChatKey(e: KeyboardEvent) {
@@ -2187,30 +2277,41 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (stickActive) setStick(e.clientX, e.clientY);
   }
 
+  const sheetBtn = root.querySelector<HTMLButtonElement>("#sheetBtn")!;
+  const sheetClose = root.querySelector<HTMLButtonElement>("#sheetClose")!;
+  const bagBtn = root.querySelector<HTMLButtonElement>("#bagBtn")!;
+  const bagClose = root.querySelector<HTMLButtonElement>("#bagClose")!;
+  const shopClose = root.querySelector<HTMLButtonElement>("#shopClose")!;
+  const trainClose = root.querySelector<HTMLButtonElement>("#trainClose")!;
+  const mapBtn = root.querySelector<HTMLButtonElement>("#mapBtn")!;
+  const mapClose = root.querySelector<HTMLButtonElement>("#mapClose")!;
+  const travelClose = root.querySelector<HTMLButtonElement>("#travelClose")!;
   const hotbarButtons = [...root.querySelectorAll<HTMLButtonElement>("#hotbar button")];
   hotbarButtons.forEach((btn) => btn.addEventListener("pointerup", onHotbar));
   promoteBtn.addEventListener("pointerup", onPromote);
-  root.querySelector("#sheetBtn")!.addEventListener("pointerup", onSheet);
-  root.querySelector("#sheetClose")!.addEventListener("pointerup", onSheetClose);
-  root.querySelector("#bagBtn")!.addEventListener("pointerup", onBagToggle);
-  root.querySelector("#bagClose")!.addEventListener("pointerup", onBagClose);
+  sheetBtn.addEventListener("pointerup", onSheet);
+  sheetClose.addEventListener("pointerup", onSheetClose);
+  bagBtn.addEventListener("pointerup", onBagToggle);
+  bagClose.addEventListener("pointerup", onBagClose);
   bag.addEventListener("pointerup", onBagClick);
   shopStock.addEventListener("pointerup", onShopClick);
   shopBag.addEventListener("pointerup", onShopClick);
-  root.querySelector("#shopClose")!.addEventListener("pointerup", onShopClose);
+  shopClose.addEventListener("pointerup", onShopClose);
   trainList.addEventListener("pointerup", onTrainClick);
-  root.querySelector("#trainClose")!.addEventListener("pointerup", onTrainClose);
+  trainClose.addEventListener("pointerup", onTrainClose);
   root.querySelector("#trainPromote")?.addEventListener("pointerup", onPromote);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
   root.querySelector("#debugPlusBtn")?.addEventListener("pointerup", onDebugPlus);
   root.querySelector("#debugHpBtn")?.addEventListener("pointerup", onDebugHp);
   root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
+  clickDebugToggle?.addEventListener("change", paintClickDebug);
+  paintClickDebug();
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
-  root.querySelector("#mapBtn")!.addEventListener("pointerup", onMap);
-  root.querySelector("#mapClose")!.addEventListener("pointerup", onMapClose);
+  mapBtn.addEventListener("pointerup", onMap);
+  mapClose.addEventListener("pointerup", onMapClose);
   talkBtn.addEventListener("pointerup", onTalk);
   travelButtons.addEventListener("pointerup", onTravelClick);
-  root.querySelector("#travelClose")!.addEventListener("pointerup", onTravelClose);
+  travelClose.addEventListener("pointerup", onTravelClose);
   respawnBtn.addEventListener("pointerup", onRespawn);
   chatInput.addEventListener("keydown", onChatKey);
   canvas.addEventListener("pointerdown", onPointer);
@@ -2276,6 +2377,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       backingW: canvas.width,
       backingH: canvas.height,
     }),
+    resolveClick: (input) =>
+      readClick({
+        clientX: input.clientX,
+        clientY: input.clientY,
+        offsetX: input.offsetX,
+        offsetY: input.offsetY,
+      }),
+    lastClick: () => lastClick,
+    dest: () => (dest ? { x: dest.x, z: dest.z } : null),
   };
 
   resize();
@@ -2300,11 +2410,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     root.querySelector("#debugPlusBtn")?.removeEventListener("pointerup", onDebugPlus);
     root.querySelector("#debugHpBtn")?.removeEventListener("pointerup", onDebugHp);
     root.querySelector("#debugKillBtn")?.removeEventListener("pointerup", onDebugKill);
-    root.querySelector("#mapBtn")?.removeEventListener("pointerup", onMap);
-    root.querySelector("#mapClose")?.removeEventListener("pointerup", onMapClose);
+    clickDebugToggle?.removeEventListener("change", paintClickDebug);
+    mapBtn.removeEventListener("pointerup", onMap);
+    mapClose.removeEventListener("pointerup", onMapClose);
+    sheetBtn.removeEventListener("pointerup", onSheet);
+    sheetClose.removeEventListener("pointerup", onSheetClose);
+    bagBtn.removeEventListener("pointerup", onBagToggle);
+    bagClose.removeEventListener("pointerup", onBagClose);
+    bag.removeEventListener("pointerup", onBagClick);
+    shopStock.removeEventListener("pointerup", onShopClick);
+    shopBag.removeEventListener("pointerup", onShopClick);
+    shopClose.removeEventListener("pointerup", onShopClose);
+    trainList.removeEventListener("pointerup", onTrainClick);
+    trainClose.removeEventListener("pointerup", onTrainClose);
     talkBtn.removeEventListener("pointerup", onTalk);
     travelButtons.removeEventListener("pointerup", onTravelClick);
-    root.querySelector("#travelClose")?.removeEventListener("pointerup", onTravelClose);
+    travelClose.removeEventListener("pointerup", onTravelClose);
     respawnBtn.removeEventListener("pointerup", onRespawn);
     chatInput.removeEventListener("keydown", onChatKey);
     canvas.removeEventListener("pointerdown", onPointer);

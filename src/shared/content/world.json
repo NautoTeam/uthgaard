@@ -1242,6 +1242,21 @@
    "circuit": "hearth"
   },
   {
+   "from": "fenhollow",
+   "to": "eldenreach",
+   "circuit": "hearth"
+  },
+  {
+   "from": "fenhollow",
+   "to": "hornwatch",
+   "circuit": "hearth"
+  },
+  {
+   "from": "fenhollow",
+   "to": "wardstone",
+   "circuit": "hearth"
+  },
+  {
    "from": "uthgaard",
    "to": "wardstone",
    "circuit": "hearth"

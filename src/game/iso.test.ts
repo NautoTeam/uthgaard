@@ -1,75 +1,143 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pointerToView, screenToWorld, worldToScreen } from "./iso.ts";
+import { pointerToView, resolveClick, screenToWorld, worldToScreen } from "./iso.ts";
 
 const viewW = 1280;
 const viewH = 720;
-/** Non-zero camera, in isometric pixels, not world tiles. */
-const camX = 312.4;
-const camZ = -148.75;
+/** Fenhollow camera. Clicks near the origin used to hide a missing offset. */
+const hero = { x: 48, z: 72 };
+const camX = (hero.x - hero.z) * 24;
+const camZ = (hero.x + hero.z) * 12;
 
 const quadrants = [
-  { name: "up-right", fx: 0.78, fy: 0.22 },
-  { name: "up-left", fx: 0.18, fy: 0.2 },
-  { name: "down-right", fx: 0.82, fy: 0.78 },
-  { name: "down-left", fx: 0.16, fy: 0.74 },
+  { name: "up-right", dx: 220, dy: -130 },
+  { name: "up-left", dx: -210, dy: -120 },
+  { name: "down-right", dx: 200, dy: 150 },
+  { name: "down-left", dx: -190, dy: 140 },
 ];
 
-for (const dpr of [1, 2]) {
-  test(`worldToScreen → screenToWorld round-trips four quadrants at DPR ${dpr}`, () => {
-    // The backing store is view × dpr. Pointers stay in CSS pixels, so the
-    // rect is the CSS box — never the backing-store size.
-    const rect = { left: 24, top: 16, width: viewW, height: viewH };
-    const backingW = Math.floor(viewW * dpr);
-    const backingH = Math.floor(viewH * dpr);
-    if (dpr !== 1) assert.notEqual(backingW, rect.width);
-    assert.ok(backingH >= viewH);
-    assert.equal(backingW / dpr, viewW);
-
-    const heroScreen = { x: viewW / 2, y: viewH / 2 - 20 };
-    const hero = screenToWorld(heroScreen.x, heroScreen.y, camX, camZ, viewW, viewH);
-
-    for (const q of quadrants) {
-      const clientX = rect.left + viewW * q.fx;
-      const clientY = rect.top + viewH * q.fy;
-      const screen = pointerToView(clientX, clientY, rect, viewW, viewH);
-      const world = screenToWorld(screen.x, screen.y, camX, camZ, viewW, viewH);
-      const back = worldToScreen(world.x, world.z, camX, camZ, viewW, viewH);
-      assert.ok(Math.abs(back.x - screen.x) < 1e-6, `${q.name} sx`);
-      assert.ok(Math.abs(back.y - screen.y) < 1e-6, `${q.name} sy`);
-
-      const dx = screen.x - heroScreen.x;
-      const dy = screen.y - heroScreen.y;
-      const moved = worldToScreen(world.x, world.z, camX, camZ, viewW, viewH);
-      const heroBack = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
-      const sdx = moved.x - heroBack.x;
-      const sdy = moved.y - heroBack.y;
-      // A click must not collapse into the up-left of the hero.
-      if (dx > 40) assert.ok(sdx > 20, `${q.name} should be right of the hero, got ${sdx}`);
-      if (dx < -40) assert.ok(sdx < -20, `${q.name} should be left of the hero, got ${sdx}`);
-      if (dy > 40) assert.ok(sdy > 20, `${q.name} should be below the hero, got ${sdy}`);
-      if (dy < -40) assert.ok(sdy < -20, `${q.name} should be above the hero, got ${sdy}`);
-    }
+function fenClick(partial: {
+  clientX: number;
+  clientY: number;
+  rect: { left: number; top: number; width: number; height: number };
+  clientW?: number;
+  clientH?: number;
+  offsetX?: number;
+  offsetY?: number;
+  camX?: number;
+  camZ?: number;
+  viewW?: number;
+  viewH?: number;
+}) {
+  return resolveClick({
+    clientX: partial.clientX,
+    clientY: partial.clientY,
+    offsetX: partial.offsetX,
+    offsetY: partial.offsetY,
+    rect: partial.rect,
+    viewW: partial.viewW ?? viewW,
+    viewH: partial.viewH ?? viewH,
+    clientW: partial.clientW ?? viewW,
+    clientH: partial.clientH ?? viewH,
+    camX: partial.camX ?? camX,
+    camZ: partial.camZ ?? camZ,
+    heroX: hero.x,
+    heroZ: hero.z,
   });
 }
 
-test("a backing-store-sized rect would shove every click up-left", () => {
-  const dpr = 2;
-  const css = { left: 0, top: 0, width: viewW, height: viewH };
-  const wrong = { left: 0, top: 0, width: viewW * dpr, height: viewH * dpr };
-  const heroScreen = { x: viewW / 2, y: viewH / 2 - 20 };
-  let wrongUpLeft = 0;
+for (const dpr of [1, 2]) {
+  test(`resolveClick round-trips four quadrants at Fenhollow, DPR ${dpr}`, () => {
+    const rect = { left: 12, top: 8, width: viewW, height: viewH };
+    const heroScreen = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
+    for (const q of quadrants) {
+      const clientX = rect.left + heroScreen.x + q.dx;
+      const clientY = rect.top + heroScreen.y + q.dy;
+      const lying = fenClick({
+        clientX,
+        clientY,
+        rect,
+        clientW: viewW,
+        clientH: viewH,
+        offsetX: 3,
+        offsetY: 4,
+      });
+      const honest = fenClick({ clientX, clientY, rect });
+      assert.equal(lying.x, honest.x);
+      assert.equal(lying.z, honest.z);
+      const back = worldToScreen(honest.x, honest.z, camX, camZ, viewW, viewH);
+      assert.ok(Math.abs(back.x - honest.sx) < 1e-6, `${q.name} sx`);
+      assert.ok(Math.abs(back.y - honest.sy) < 1e-6, `${q.name} sy`);
+      const sdx = back.x - heroScreen.x;
+      const sdy = back.y - heroScreen.y;
+      if (q.dx > 40) assert.ok(sdx > 40, `${q.name} right ${sdx}`);
+      if (q.dx < -40) assert.ok(sdx < -40, `${q.name} left ${sdx}`);
+      if (q.dy > 40) assert.ok(sdy > 40, `${q.name} down ${sdy}`);
+      if (q.dy < -40) assert.ok(sdy < -40, `${q.name} up ${sdy}`);
+      const dist = Math.hypot(honest.x - hero.x, honest.z - hero.z);
+      assert.ok(dist < 30, `${q.name} stayed near the hero (${dist.toFixed(1)})`);
+      assert.ok(honest.z < 110, `${q.name} did not leap into the deep fen`);
+    }
+    assert.equal(Math.floor(viewW * dpr) > viewW || dpr === 1, true);
+  });
+}
+
+test("a backing-store rect does not shove Fenhollow clicks up-left", () => {
+  const rect = { left: 0, top: 0, width: viewW * 2, height: viewH * 2 };
+  const heroScreen = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
   for (const q of quadrants) {
-    const clientX = viewW * q.fx;
-    const clientY = viewH * q.fy;
-    const good = pointerToView(clientX, clientY, css, viewW, viewH);
-    const bad = pointerToView(clientX, clientY, wrong, viewW, viewH);
-    const goodW = screenToWorld(good.x, good.y, camX, camZ, viewW, viewH);
-    const badW = screenToWorld(bad.x, bad.y, camX, camZ, viewW, viewH);
-    const goodS = worldToScreen(goodW.x, goodW.z, camX, camZ, viewW, viewH);
-    const badS = worldToScreen(badW.x, badW.z, camX, camZ, viewW, viewH);
-    assert.ok(Math.abs(goodS.x - clientX) < 1e-6);
-    if (badS.x < heroScreen.x - 30 && badS.y < heroScreen.y - 30) wrongUpLeft++;
+    const hit = fenClick({
+      clientX: heroScreen.x + q.dx,
+      clientY: heroScreen.y + q.dy,
+      rect,
+      clientW: viewW,
+      clientH: viewH,
+      offsetX: (heroScreen.x + q.dx) * 2,
+      offsetY: (heroScreen.y + q.dy) * 2,
+    });
+    const back = worldToScreen(hit.x, hit.z, camX, camZ, viewW, viewH);
+    const sdx = back.x - heroScreen.x;
+    const sdy = back.y - heroScreen.y;
+    if (q.dx > 40) assert.ok(sdx > 40, `backing ${q.name} right ${sdx}`);
+    if (q.dx < -40) assert.ok(sdx < -40, `backing ${q.name} left ${sdx}`);
+    if (q.dy > 40) assert.ok(sdy > 40, `backing ${q.name} down ${sdy}`);
+    if (q.dy < -40) assert.ok(sdy < -40, `backing ${q.name} up ${sdy}`);
   }
-  assert.equal(wrongUpLeft, 4);
+});
+
+test("a scaled embed still hits the quadrant that was clicked", () => {
+  const scale = 0.62;
+  const rect = { left: 40, top: 20, width: viewW * scale, height: viewH * scale };
+  const heroScreen = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
+  for (const q of quadrants) {
+    const hit = fenClick({
+      clientX: rect.left + (heroScreen.x + q.dx) * scale,
+      clientY: rect.top + (heroScreen.y + q.dy) * scale,
+      rect,
+      clientW: viewW,
+      clientH: viewH,
+      offsetX: 8,
+      offsetY: 8,
+    });
+    const back = worldToScreen(hit.x, hit.z, camX, camZ, viewW, viewH);
+    assert.ok(Math.abs(back.x - (heroScreen.x + q.dx)) < 1e-4, q.name);
+    assert.ok(Math.abs(back.y - (heroScreen.y + q.dy)) < 1e-4, q.name);
+  }
+});
+
+test("screen pixels are not treated as world tiles when the camera is far from the origin", () => {
+  const rect = { left: 0, top: 0, width: viewW, height: viewH };
+  const heroScreen = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
+  const hit = fenClick({ clientX: heroScreen.x, clientY: heroScreen.y, rect });
+  assert.ok(Math.hypot(hit.x - hero.x, hit.z - hero.z) < 0.01);
+  const forgotten = screenToWorld(heroScreen.x, heroScreen.y, 0, 0, viewW, viewH);
+  assert.ok(Math.hypot(forgotten.x, forgotten.z) < 3, "cam 0 would land near the origin");
+  assert.ok(Math.hypot(hit.x - forgotten.x, hit.z - forgotten.z) > 40);
+});
+
+test("pointerToView still maps CSS pixels, not the bitmap", () => {
+  const rect = { left: 0, top: 0, width: viewW, height: viewH };
+  const p = pointerToView(viewW / 2, viewH / 2, rect, viewW, viewH);
+  assert.equal(p.x, viewW / 2);
+  assert.equal(p.y, viewH / 2);
 });

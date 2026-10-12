@@ -133,6 +133,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
   return (
     <div id="game">
       <canvas id="view" />
+      <div id="clickDebug" />
       <div id="stats" />
       <div id="legend">
         W up the screen, S down, A left, D right. Click a tile to walk. Click a creature, then Space or Attack. Halls, trees, and water block you.
@@ -243,6 +244,10 @@ function Isle({ profile }: { profile: IsleProfile }) {
             <button id="debugKillBtn" type="button">
               Debug: Kill me
             </button>
+            <label className="click-debug-toggle">
+              <input id="clickDebugToggle" type="checkbox" defaultChecked />
+              Show last click
+            </label>
           </div>
           <button id="sheetClose" type="button">
             Close
