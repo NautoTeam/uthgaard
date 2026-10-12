@@ -203,6 +203,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <div id="trainTitle">Eadric</div>
           <p id="trainPoints">Training points 0</p>
           <div id="trainList" />
+          <button id="trainPromote" type="button" hidden>
+            Promote
+          </button>
           <button id="trainClose" type="button">
             Close
           </button>

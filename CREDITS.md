@@ -1,0 +1,1 @@
+Human walk frames v4 (public/sprites/anim/human-walk-0..15.png): original AI-generated source strips (Grok Bot image generation, 2026-10-11), chroma-keyed and assembled by the Caldrenmoor Sprites agent. No third-party art. W/E rows updated in v4 (two-arm fix).

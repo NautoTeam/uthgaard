@@ -145,7 +145,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       img.onload = () => {
         frames[key] = img;
       };
-      img.src = `/sprites/anim/${key}.png?v=6`;
+      img.src = `/sprites/anim/${key}.png?v=7`;
     }
     for (let i = 0; i < 4; i++) {
       const img = new Image();
@@ -289,11 +289,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (host) {
       const result = applyIntent(world, intent);
       if (result && "ok" in result && result.reason) {
-        if (result.ok === false) note(result.reason);
+        if (result.ok === false && result.reason === "Nothing in reach.") {
+          const live = localPlayer();
+          if (live) live.nextSwing = Date.now() + 900;
+          note(result.reason);
+        } else if (result.ok === false) note(result.reason);
         else if (result.reason.startsWith("+")) floatText(result.reason, "#b6e38a");
         else if (!result.reason.includes("hits for") && result.reason !== "Missed.") floatText(result.reason);
       }
-      if (intent.op === "buy" || intent.op === "sell" || intent.op === "use" || intent.op === "equip" || intent.op === "unequip" || intent.op === "train") {
+      if (intent.op === "buy" || intent.op === "sell" || intent.op === "use" || intent.op === "equip" || intent.op === "unequip" || intent.op === "train" || intent.op === "promote") {
         bagSig = "";
         shopSig = "";
         trainSig = "";
@@ -652,7 +656,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (seenGold >= 0 && p.gold > seenGold) floatText(`+${p.gold - seenGold} gold`, "#e6c56a", 132);
     seenGold = p.gold;
     paintShop();
-    const ready = p.level >= 10 && !p.prestigeClass;
+    const ready = p.level >= 10 && !p.prestigeClass && !!nearestTrainer(p.x, p.z, 8);
     promoteBtn.hidden = !ready;
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
     deathEl.hidden = p.hp > 0;
@@ -1220,9 +1224,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           shadowAt(pl.x, pl.z, 14);
           drawHero(race, pl.id, pl.x, pl.z, pl.prestigeClass || pl.baseClass);
           const pt = worldToScreen(pl.x, pl.z);
+          ctx.fillStyle = "#e6c56a";
+          ctx.font = "12px Georgia";
+          ctx.textAlign = "center";
+          ctx.fillText(pl.prestigeClass || pl.baseClass, pt.x, pt.y - (race === "minotaur" ? 152 : 136));
           ctx.fillStyle = pl.id === myId ? "#f0e2b0" : "#ddd";
           ctx.font = "13px Georgia";
-          ctx.textAlign = "center";
           ctx.fillText(pl.username, pt.x, pt.y - (race === "minotaur" ? 136 : 120));
         },
       });
@@ -1564,8 +1571,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function paintTrain() {
     const p = me();
     if (!p || trainPanel.hidden) return;
-    const sig = `${p.gold}|${p.trainPoints}|${JSON.stringify(p.skills ?? {})}`;
+    const sig = `${p.gold}|${p.trainPoints}|${p.level}|${p.prestigeClass}|${JSON.stringify(p.skills ?? {})}`;
     trainPointsEl.textContent = `Training points ${p.trainPoints ?? 0} · Gold ${p.gold}`;
+    const promo = root.querySelector<HTMLButtonElement>("#trainPromote");
+    if (promo) {
+      const open = p.level >= 10 && !p.prestigeClass;
+      promo.hidden = !open;
+      promo.textContent = open ? `Promote to ${PRESTIGE_OF[p.baseClass]}` : "Promote";
+    }
     if (sig === trainSig) return;
     trainSig = sig;
     trainList.innerHTML = SKILLS.map((skill) => {
@@ -1749,6 +1762,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const mage = power.mana > 0;
       const spot = mage ? rangedStand(t.x, t.z, p.x, p.z) : adjacentStand(t.x, t.z, p.x, p.z);
       goTo(spot.x, spot.z, null, true);
+      return;
     }
     act(id);
   }
@@ -1906,6 +1920,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#shopClose")!.addEventListener("pointerup", onShopClose);
   trainList.addEventListener("pointerup", onTrainClick);
   root.querySelector("#trainClose")!.addEventListener("pointerup", onTrainClose);
+  root.querySelector("#trainPromote")?.addEventListener("pointerup", onPromote);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
   root.querySelector("#debugHpBtn")?.addEventListener("pointerup", onDebugHp);
   root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
@@ -1991,6 +2006,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     channel?.close();
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
+    root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
     root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
     root.querySelector("#debugHpBtn")?.removeEventListener("pointerup", onDebugHp);

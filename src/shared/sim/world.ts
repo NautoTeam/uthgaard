@@ -417,14 +417,14 @@ export function createWorld() {
     }
     if (power.kind === "buff" || power.kind === "stealth") {
       payPower(p, name, now);
-      if (power.id === "shield" || power.id === "ward") p.guardUntil = now + 8000;
       if (power.id === "wall") p.wallUntil = now + 6000;
-      if (power.id === "stealth") p.stealthUntil = now + 10000;
-      if (power.id === "ward") p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
-      if (power.id === "stealth") return { ok: true, reason: "You slip into stealth." };
-      if (power.id === "wall") return { ok: true, reason: "Bulwark Stance raised." };
-      if (power.id === "ward") return { ok: true, reason: "Ward raised." };
-      return { ok: true, reason: "Shield Block raised." };
+      else if (power.kind === "stealth") p.stealthUntil = now + 10000;
+      else {
+        p.guardUntil = now + 8000;
+        if (power.heal > 0) p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
+      }
+      if (power.kind === "stealth") return { ok: true, reason: "You slip into stealth." };
+      return { ok: true, reason: `${power.label} raised.` };
     }
     const m = targetId ? monsters.get(targetId) : undefined;
     if (!m || m.hp <= 0) return { ok: false, reason: "Nothing in reach." };
@@ -435,7 +435,8 @@ export function createWorld() {
     const p = players.get(id);
     const allowed = PRESTIGE_OF[p?.baseClass || "Fighter"];
     if (!p || p.level < 10 || p.prestigeClass) return { ok: false, reason: "Not ready to promote." };
-    if (cls !== allowed) return { ok: false };
+    if (!nearestTrainer(p.x, p.z, 8)) return { ok: false, reason: "Find the trainer." };
+    if (cls !== allowed) return { ok: false, reason: "That path is closed." };
     p.prestigeClass = allowed;
     applyStats(p);
     log(`${p.username} promoted to ${allowed}.`);

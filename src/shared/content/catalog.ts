@@ -356,6 +356,14 @@ export const POWERS: PowerDef[] = [
   { id: "stealth", label: "Stealth", classes: ["Rogue", "Scout"], level: 1, slot: 2, mana: 0, stamina: 10, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "stealth" },
   { id: "backstab", label: "Backstab", classes: ["Rogue", "Scout"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.2, cooldown: 5000, damage: 18, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "stab", label: "Stab", classes: ["Rogue", "Scout"], level: 1, slot: 4, mana: 0, stamina: 14, range: 3.4, cooldown: 2000, damage: 12, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "rally", label: "Rallying Blow", classes: ["Warrior"], level: 10, slot: 5, mana: 0, stamina: 18, range: 3.6, cooldown: 5000, damage: 16, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "ironveil", label: "Iron Veil", classes: ["Warrior"], level: 10, slot: 6, mana: 0, stamina: 16, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
+  { id: "hymn", label: "Hymn of Ease", classes: ["Priest"], level: 10, slot: 5, mana: 16, stamina: 0, range: 0, cooldown: 4000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 40, healPerLevel: 3, kind: "heal" },
+  { id: "aegis", label: "Soft Aegis", classes: ["Priest"], level: 10, slot: 6, mana: 18, stamina: 0, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 10, healPerLevel: 1, kind: "buff" },
+  { id: "cinder", label: "Cinder Lance", classes: ["Wizard"], level: 10, slot: 5, mana: 16, stamina: 0, range: 9, cooldown: 2500, damage: 20, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "glass", label: "Glass Snare", classes: ["Wizard"], level: 10, slot: 6, mana: 14, stamina: 0, range: 8, cooldown: 7000, damage: 8, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "snare" },
+  { id: "venom", label: "Venom Nick", classes: ["Scout"], level: 10, slot: 5, mana: 0, stamina: 14, range: 3.2, cooldown: 3000, damage: 14, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "fade", label: "Fade Step", classes: ["Scout"], level: 10, slot: 6, mana: 0, stamina: 12, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "stealth" },
 ];
 
 export function powerById(id: string) {
