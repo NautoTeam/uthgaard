@@ -49,6 +49,7 @@ type Intent =
   | { op: "respawn"; id: string }
   | { op: "loot"; id: string; graveId: string }
   | { op: "setLevel"; id: string; level: number }
+  | { op: "setHp"; id: string; hp: number }
   | { op: "buy"; id: string; itemId: string }
   | { op: "sell"; id: string; itemId: string }
   | { op: "use"; id: string; itemId: string }
@@ -84,6 +85,7 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "respawn") return world.respawn(intent.id);
   if (intent.op === "loot") return world.loot(intent.id, intent.graveId);
   if (intent.op === "setLevel") return world.setLevel(intent.id, intent.level);
+  if (intent.op === "setHp") return world.setHp(intent.id, intent.hp);
   if (intent.op === "buy") return world.buy(intent.id, intent.itemId);
   if (intent.op === "sell") return world.sell(intent.id, intent.itemId);
   if (intent.op === "use") return world.useItem(intent.id, intent.itemId);
@@ -633,7 +635,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         `<tr><th>DMG</th><td>${trainedDamage(p)}</td><th>Hit</th><td>${hitChance(p)}%</td></tr>` +
         `</tbody></table>` +
         `<p class="sheet-note">Training points ${p.trainPoints ?? 0}. Sword ${p.skills?.sword ?? 0}% adds damage. Focus ${p.skills?.focus ?? 0}% adds hit chance.</p>` +
-        `${(p.shroudUntil ?? 0) > Date.now() ? `<p class="shroud">Death shroud ${Math.ceil(((p.shroudUntil ?? 0) - Date.now()) / 1000)}s. Spells are sealed. Melee still works.</p>` : ""}` +
+        `${(p.shroudUntil ?? 0) > Date.now() ? `<p class="shroud">Grave Chill ${Math.ceil(((p.shroudUntil ?? 0) - Date.now()) / 1000)}s. Spells are sealed. Melee still works.</p>` : ""}` +
         `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
     }
     const bar = p.hotbar?.length === 8 ? p.hotbar : defaultHotbar(p.baseClass, p.prestigeClass, p.level);
@@ -658,12 +660,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const xpLost = Math.floor(p.xp * 0.1);
       const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
       deathHint.textContent = stone
-        ? `A tombstone holds ${stone.gold} gold. Respawn in Uthgaard under a 60s shroud (${xpLost} XP). Spells stay sealed; melee still works.`
-        : `Respawn in Uthgaard under a 60s shroud. Spells stay sealed; melee still works.`;
+        ? `A tombstone holds ${stone.gold} gold. Respawn in the Village of Caldrenmoor under Grave Chill for 60s (${xpLost} XP). Spells stay sealed; melee still works.`
+        : `Respawn in the Village of Caldrenmoor under Grave Chill. Spells stay sealed; melee still works.`;
     }
     const shroudLeft = Math.max(0, (p.shroudUntil ?? 0) - Date.now());
     if (shroudLeft > 0) {
-      statsEl.innerHTML += `<div class="shroud">Shroud ${Math.ceil(shroudLeft / 1000)}s · spells sealed</div>`;
+      statsEl.innerHTML += `<div class="shroud">Grave Chill ${Math.ceil(shroudLeft / 1000)}s · spells sealed</div>`;
     }
     const near = nearestWayfarer(p.x, p.z);
     talkBtn.hidden = !near;
@@ -1817,6 +1819,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const input = root.querySelector<HTMLInputElement>("#debugLevelInput");
     send({ op: "setLevel", id: myId, level: Number(input?.value || 10) });
   }
+  function onDebugHp(e: Event) {
+    e.preventDefault();
+    send({ op: "setHp", id: myId, hp: 1 });
+  }
+  function onDebugKill(e: Event) {
+    e.preventDefault();
+    send({ op: "setHp", id: myId, hp: 0 });
+  }
 
   function onPromote(e: Event) {
     e.preventDefault();
@@ -1897,6 +1907,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   trainList.addEventListener("pointerup", onTrainClick);
   root.querySelector("#trainClose")!.addEventListener("pointerup", onTrainClose);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
+  root.querySelector("#debugHpBtn")?.addEventListener("pointerup", onDebugHp);
+  root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
   root.querySelector("#mapBtn")!.addEventListener("pointerup", onMap);
   root.querySelector("#mapClose")!.addEventListener("pointerup", onMapClose);
@@ -1980,6 +1992,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
+    root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
+    root.querySelector("#debugHpBtn")?.removeEventListener("pointerup", onDebugHp);
+    root.querySelector("#debugKillBtn")?.removeEventListener("pointerup", onDebugKill);
     root.querySelector("#mapBtn")?.removeEventListener("pointerup", onMap);
     root.querySelector("#mapClose")?.removeEventListener("pointerup", onMapClose);
     talkBtn.removeEventListener("pointerup", onTalk);

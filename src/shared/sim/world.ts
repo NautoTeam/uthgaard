@@ -232,7 +232,7 @@ export function createWorld() {
     player.mana = player.maxMana;
     player.stamina = player.maxStamina;
     players.set(player.id, player);
-    log(`${player.username} entered the Hamlet of Uthgaard.`);
+    log(`${player.username} entered the Village of Caldrenmoor.`);
     return player;
   }
 
@@ -357,7 +357,7 @@ export function createWorld() {
     if (!power) return { ok: false, reason: "That path cannot use this." };
     if (p.level < power.level) return { ok: false, reason: `Requires level ${power.level}.` };
     if (!canUse(p, power.classes)) return { ok: false, reason: "That path cannot use this." };
-    if (power.mana > 0 && p.shroudUntil > now) return { ok: false, reason: "The shroud prevents casting." };
+    if (power.mana > 0 && p.shroudUntil > now) return { ok: false, reason: "Grave Chill prevents casting." };
     if (!p.cooldowns) p.cooldowns = {};
     if (now < (p.cooldowns[power.id] ?? 0)) return { ok: false, reason: "Not ready yet." };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
@@ -404,7 +404,7 @@ export function createWorld() {
       ally.hp += gain;
       if (shrouded) {
         ally.shroudUntil = 0;
-        return { ok: true, reason: `Succor lifts the shroud from ${ally.username}.` };
+        return { ok: true, reason: `Rekindle lifts Grave Chill from ${ally.username}.` };
       }
       return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
     }
@@ -422,7 +422,7 @@ export function createWorld() {
       if (power.id === "stealth") p.stealthUntil = now + 10000;
       if (power.id === "ward") p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
       if (power.id === "stealth") return { ok: true, reason: "You slip into stealth." };
-      if (power.id === "wall") return { ok: true, reason: "Wall of Steel raised." };
+      if (power.id === "wall") return { ok: true, reason: "Bulwark Stance raised." };
       if (power.id === "ward") return { ok: true, reason: "Ward raised." };
       return { ok: true, reason: "Shield Block raised." };
     }
@@ -469,6 +469,17 @@ export function createWorld() {
     p.trainPoints = (p.trainPoints || 0) + gained;
     log(`${p.username} is now level ${next}.`);
     return { ok: true, reason: `Level ${next}.` };
+  }
+
+  function setHp(id: string, hp: number): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    p.hp = Math.max(0, Math.min(p.maxHp, Math.floor(hp)));
+    if (p.hp <= 0) {
+      dropGrave(p);
+      return { ok: true, reason: "You have fallen." };
+    }
+    return { ok: true, reason: `HP ${Math.round(p.hp)}.` };
   }
 
   function buy(id: string, itemId: string): ActionResult {
@@ -589,8 +600,8 @@ export function createWorld() {
     p.stamina = p.maxStamina;
     p.graveDropped = false;
     p.shroudUntil = Date.now() + DEATH_SHROUD_MS;
-    log(`${p.username} returned to Uthgaard under a death shroud, leaving ${xpLost} XP behind.`);
-    return { ok: true, reason: "Shrouded for 60s." };
+    log(`${p.username} returned to the Village of Caldrenmoor under Grave Chill, leaving ${xpLost} XP behind.`);
+    return { ok: true, reason: "Grave Chill for 60s." };
   }
 
   function dropGrave(p: PlayerState) {
@@ -797,6 +808,7 @@ export function createWorld() {
     skill,
     promote,
     setLevel,
+    setHp,
     buy,
     sell,
     useItem,

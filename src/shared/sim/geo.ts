@@ -14,7 +14,7 @@ export interface CityDef {
 }
 
 export const CITIES: CityDef[] = [
-  { id: "uthgaard", name: "Uthgaard", x: 0, z: 0, race: "human", stone: "#7a6546", stoneAlt: "#6d5a3e" },
+  { id: "uthgaard", name: "Caldrenmoor", x: 0, z: 0, race: "human", stone: "#7a6546", stoneAlt: "#6d5a3e" },
   { id: "eldenreach", name: "Eldenreach", x: 118, z: -28, race: "elf", stone: "#6d8660", stoneAlt: "#5c7454" },
   { id: "hornwatch", name: "Hornwatch", x: -86, z: 102, race: "minotaur", stone: "#6e5646", stoneAlt: "#5c4638" },
 ];

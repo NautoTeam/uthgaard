@@ -3,7 +3,7 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Uthgaard";
+const APP_NAME = "Caldrenmoor";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -15,7 +15,7 @@ export const Route = createRootRoute({
       },
       { title: APP_NAME },
       { name: "theme-color", content: "#0c1014" },
-      { name: "description", content: "Uthgaard — an isometric noob island. Walk, fight, and promote." },
+      { name: "description", content: "Caldrenmoor — an isometric starter isle. Walk, fight, and promote." },
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },

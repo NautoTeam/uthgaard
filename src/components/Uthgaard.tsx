@@ -43,7 +43,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       }}
     >
       <div className="login-create">
-      <h1>Uthgaard</h1>
+      <h1>Caldrenmoor</h1>
       <p className="sub">Three cities on a wide reach</p>
       <label>
         Name
@@ -88,7 +88,7 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
       </label>
       {(locked || block) && <p className="path-block">Minotaurs cannot take Mage or Rogue.</p>}
       <button id="joinBtn" type="submit" disabled={locked}>
-        Enter the Hamlet
+        Enter the Village
       </button>
       <p className="hint">
         Click a tile to walk. W moves up the screen, S down, A left, and D right.
@@ -231,6 +231,12 @@ function Isle({ profile }: { profile: IsleProfile }) {
             <button id="debugLevelBtn" type="button">
               Set level
             </button>
+            <button id="debugHpBtn" type="button">
+              Debug: Set HP 1
+            </button>
+            <button id="debugKillBtn" type="button">
+              Debug: Kill me
+            </button>
           </div>
           <button id="sheetClose" type="button">
             Close
@@ -240,9 +246,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
       <div id="death" hidden>
         <div id="deathPanel">
           <h2>You have fallen</h2>
-          <p id="deathHint">A tombstone holds your gold. Respawn in Uthgaard under a death shroud.</p>
+          <p id="deathHint">A tombstone holds your gold. Respawn in the Village of Caldrenmoor under Grave Chill.</p>
           <button id="respawnBtn" type="button">
-            Respawn in Uthgaard
+            Respawn in Caldrenmoor
           </button>
         </div>
       </div>

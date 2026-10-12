@@ -82,8 +82,8 @@ export function attrsFor(race: Race, cls: BaseClass): AttrBlock {
 /**
  * Death shroud lasts this long after respawn.
  * Any power with mana > 0 is a spell and cannot be cast while shrouded.
- * Stamina powers (Attack, Shield Block, Cleave, Wall of Steel, Stealth, Backstab, Stab) still work.
- * Another healer's Succor clears the shroud early.
+ * Stamina powers (Attack, Shield Block, Cleave, Bulwark Stance, Stealth, Backstab, Stab) still work.
+ * Another healer's Rekindle clears Grave Chill early.
  */
 export const DEATH_SHROUD_MS = 60_000;
 
@@ -345,9 +345,9 @@ export const POWERS: PowerDef[] = [
   { id: "attack", label: "Attack", classes: [], level: 1, slot: 1, mana: 0, stamina: 8, range: 7.6, cooldown: 780, damage: 7, damagePerLevel: 2, bonus: { Fighter: 5, Warrior: 5 }, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "shield", label: "Shield Block", classes: ["Fighter", "Warrior"], level: 1, slot: 2, mana: 0, stamina: 12, range: 0, cooldown: 8000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
   { id: "cleave", label: "Cleave", classes: ["Fighter", "Warrior"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.6, cooldown: 4000, damage: 10, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
-  { id: "wall", label: "Wall of Steel", classes: ["Fighter", "Warrior"], level: 8, slot: 4, mana: 0, stamina: 22, range: 0, cooldown: 18000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
+  { id: "wall", label: "Bulwark Stance", classes: ["Fighter", "Warrior"], level: 8, slot: 4, mana: 0, stamina: 22, range: 0, cooldown: 18000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
   { id: "heal", label: "Mending", classes: ["Healer", "Priest"], level: 1, slot: 2, mana: 10, stamina: 0, range: 0, cooldown: 2500, damage: 0, damagePerLevel: 0, bonus: {}, heal: 28, healPerLevel: 2, kind: "heal" },
-  { id: "succor", label: "Succor", classes: ["Healer", "Priest"], level: 4, slot: 3, mana: 18, stamina: 0, range: 8, cooldown: 6000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 48, healPerLevel: 4, kind: "heal" },
+  { id: "succor", label: "Rekindle", classes: ["Healer", "Priest"], level: 4, slot: 3, mana: 18, stamina: 0, range: 8, cooldown: 6000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 48, healPerLevel: 4, kind: "heal" },
   { id: "ward", label: "Ward", classes: ["Healer", "Priest"], level: 8, slot: 4, mana: 16, stamina: 0, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 12, healPerLevel: 1, kind: "buff" },
   { id: "fireball", label: "Fireball", classes: ["Mage", "Wizard"], level: 1, slot: 1, mana: 10, stamina: 0, range: 9, cooldown: 1200, damage: 14, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "frostbind", label: "Frostbind", classes: ["Mage", "Wizard"], level: 1, slot: 2, mana: 12, stamina: 0, range: 8, cooldown: 6000, damage: 6, damagePerLevel: 1, bonus: {}, heal: 0, healPerLevel: 0, kind: "snare" },
