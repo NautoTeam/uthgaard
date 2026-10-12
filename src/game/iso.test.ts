@@ -141,3 +141,86 @@ test("pointerToView still maps CSS pixels, not the bitmap", () => {
   assert.equal(p.x, viewW / 2);
   assert.equal(p.y, viewH / 2);
 });
+
+test("a lost device-pixel scale does not walk a click right of the sprite west", () => {
+  // Live Fenhollow report: view ~1926×1122, bitmap 2×, transform stuck at 1.
+  // The sprite paints at view/4. A click at CSS 640,200 is upper-right of that
+  // sprite and must not come out 21 tiles west (the old target was 25,66).
+  const liveW = 1926;
+  const liveH = 1122;
+  const heroX = 46;
+  const heroZ = 73;
+  const camX = -661;
+  const camZ = 1433;
+  const hit = resolveClick({
+    clientX: 640,
+    clientY: 200,
+    rect: { left: 0, top: 0, width: liveW, height: liveH },
+    viewW: liveW,
+    viewH: liveH,
+    clientW: liveW,
+    clientH: liveH,
+    camX,
+    camZ,
+    heroX,
+    heroZ,
+    bitmapW: liveW * 2,
+    bitmapH: liveH * 2,
+    transformA: 1,
+    transformD: 1,
+    transformE: 0,
+    transformF: 0,
+  });
+  const hs = worldToScreen(heroX, heroZ, camX, camZ, liveW, liveH);
+  assert.ok(hit.sx > hs.x + 40, `draw x ${hit.sx.toFixed(0)} should be right of hero ${hs.x.toFixed(0)}`);
+  assert.ok(hit.x > heroX, `world x ${hit.x.toFixed(2)} should be east of ${heroX}`);
+  assert.ok(hit.x > 40, `must not jump west to ~25 (got ${hit.x.toFixed(2)})`);
+  assert.ok(Math.hypot(hit.x - heroX, hit.z - heroZ) < 20, `stayed near the hero (${hit.x.toFixed(1)},${hit.z.toFixed(1)})`);
+});
+
+test("a healthy 2× transform matches the CSS click, including a backing-store rect", () => {
+  const heroScreen = worldToScreen(hero.x, hero.z, camX, camZ, viewW, viewH);
+  const clientX = heroScreen.x + 180;
+  const clientY = heroScreen.y - 40;
+  const healthy = resolveClick({
+    clientX,
+    clientY,
+    rect: { left: 0, top: 0, width: viewW, height: viewH },
+    viewW,
+    viewH,
+    clientW: viewW,
+    clientH: viewH,
+    camX,
+    camZ,
+    heroX: hero.x,
+    heroZ: hero.z,
+    bitmapW: viewW * 2,
+    bitmapH: viewH * 2,
+    transformA: 2,
+    transformD: 2,
+    transformE: 0,
+    transformF: 0,
+  });
+  const plain = fenClick({ clientX, clientY, rect: { left: 0, top: 0, width: viewW, height: viewH } });
+  assert.ok(Math.abs(healthy.x - plain.x) < 1e-6);
+  assert.ok(Math.abs(healthy.z - plain.z) < 1e-6);
+  assert.ok(healthy.x > hero.x);
+  const backing = resolveClick({
+    clientX,
+    clientY,
+    rect: { left: 0, top: 0, width: viewW * 2, height: viewH * 2 },
+    viewW,
+    viewH,
+    clientW: viewW,
+    clientH: viewH,
+    camX,
+    camZ,
+    heroX: hero.x,
+    heroZ: hero.z,
+    bitmapW: viewW * 2,
+    bitmapH: viewH * 2,
+    transformA: 2,
+    transformD: 2,
+  });
+  assert.ok(Math.abs(backing.x - plain.x) < 1e-6, `backing x ${backing.x} vs ${plain.x}`);
+});

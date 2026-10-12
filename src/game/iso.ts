@@ -84,6 +84,13 @@ export interface ClickResolveInput {
   camZ: number;
   heroX?: number;
   heroZ?: number;
+  /** Backing store size. With the scale used to draw, this maps the cursor into that same space. */
+  bitmapW?: number;
+  bitmapH?: number;
+  transformA?: number;
+  transformD?: number;
+  transformE?: number;
+  transformF?: number;
 }
 
 export interface ClickResolve {
@@ -100,25 +107,41 @@ export interface ClickResolve {
 /**
  * The pointer path the canvas handler uses. Screen position comes from
  * client coordinates and the element box (so a CSS scale still hits the
- * pixel under the cursor). The world point is the hero's tile plus the
- * screen delta from the pixel the hero is drawn at, which is the camera.
+ * pixel under the cursor). When the backing store and the scale that was
+ * actually used to draw are known, the cursor is converted into that same
+ * pixel space. A lost device-pixel scale otherwise paints the hero in the
+ * top-left quarter, and every click — even one to the right of the sprite —
+ * lands west of the math point.
  */
 export function resolveClick(input: ClickResolveInput): ClickResolve {
+  const heroX = Number.isFinite(input.heroX) ? (input.heroX as number) : 0;
+  const heroZ = Number.isFinite(input.heroZ) ? (input.heroZ as number) : 0;
+  const heroKnown = Number.isFinite(input.heroX) && Number.isFinite(input.heroZ);
   let width = Math.max(1, input.rect.width);
   let height = Math.max(1, input.rect.height);
   const cw = Math.max(1, input.clientW || input.viewW);
   const ch = Math.max(1, input.clientH || input.viewH);
   // A backing-store-sized box (width ≈ css × dpr) compresses every click
-  // into the top-left of the view. Draw space is the CSS box.
+  // into the top-left of the view. The box we want is the CSS box.
   if (width > cw * 1.45 && height > ch * 1.45) {
     width = cw;
     height = ch;
   }
-  const sx = ((input.clientX - input.rect.left) / width) * input.viewW;
-  const sy = ((input.clientY - input.rect.top) / height) * input.viewH;
-  const heroX = Number.isFinite(input.heroX) ? (input.heroX as number) : 0;
-  const heroZ = Number.isFinite(input.heroZ) ? (input.heroZ as number) : 0;
-  const heroKnown = Number.isFinite(input.heroX) && Number.isFinite(input.heroZ);
+  const bitmapW = input.bitmapW ?? 0;
+  const bitmapH = input.bitmapH ?? 0;
+  const scaleX = input.transformA ?? 0;
+  const scaleY = input.transformD ?? 0;
+  let sx: number;
+  let sy: number;
+  if (bitmapW > 1 && bitmapH > 1 && Math.abs(scaleX) > 0.01 && Math.abs(scaleY) > 0.01) {
+    const bx = ((input.clientX - input.rect.left) / width) * bitmapW;
+    const by = ((input.clientY - input.rect.top) / height) * bitmapH;
+    sx = (bx - (input.transformE ?? 0)) / scaleX;
+    sy = (by - (input.transformF ?? 0)) / scaleY;
+  } else {
+    sx = ((input.clientX - input.rect.left) / width) * input.viewW;
+    sy = ((input.clientY - input.rect.top) / height) * input.viewH;
+  }
   let x: number;
   let z: number;
   if (heroKnown) {

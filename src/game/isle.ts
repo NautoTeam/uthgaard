@@ -180,6 +180,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const clickDebug = root.querySelector<HTMLElement>("#clickDebug");
   const clickDebugToggle = root.querySelector<HTMLInputElement>("#clickDebugToggle");
 
+  let blockPanelClicks = false;
+  function armPanelBlock() {
+    if (blockPanelClicks) return;
+    blockPanelClicks = true;
+    const release = () => {
+      window.removeEventListener("pointerup", release, true);
+      window.removeEventListener("pointercancel", release, true);
+      setTimeout(() => {
+        blockPanelClicks = false;
+      }, 0);
+    };
+    window.addEventListener("pointerup", release, true);
+    window.addEventListener("pointercancel", release, true);
+  }
   const panelStack: HTMLElement[] = [];
   function setOpen(el: HTMLElement, open: boolean) {
     const drop = (other: HTMLElement) => {
@@ -400,14 +414,32 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return { ok: true };
   }
 
-  function resize() {
+  let drawScaleX = 1;
+  let drawScaleY = 1;
+  let drawOx = 0;
+  let drawOy = 0;
+
+  function applyDrawTransform() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    viewW = canvas.clientWidth || window.innerWidth;
-    viewH = canvas.clientHeight || window.innerHeight;
-    canvas.width = Math.max(1, Math.floor(viewW * dpr));
-    canvas.height = Math.max(1, Math.floor(viewH * dpr));
+    const wantW = Math.max(1, Math.floor(viewW * dpr));
+    const wantH = Math.max(1, Math.floor(viewH * dpr));
+    if (canvas.width !== wantW || canvas.height !== wantH) {
+      canvas.width = wantW;
+      canvas.height = wantH;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
+    const t = typeof ctx.getTransform === "function" ? ctx.getTransform() : null;
+    drawScaleX = t?.a || dpr;
+    drawScaleY = t?.d || dpr;
+    drawOx = t?.e || 0;
+    drawOy = t?.f || 0;
+  }
+
+  function resize() {
+    viewW = canvas.clientWidth || window.innerWidth;
+    viewH = canvas.clientHeight || window.innerHeight;
+    applyDrawTransform();
   }
 
   function worldToScreen(x: number, z: number) {
@@ -1238,6 +1270,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       cam.x += (tx - cam.x) * Math.min(1, 0.45);
       cam.z += (tz - cam.z) * Math.min(1, 0.45);
     }
+    applyDrawTransform();
     ctx.fillStyle = "#10241f";
     ctx.fillRect(0, 0, viewW, viewH);
     const corners = [
@@ -1632,6 +1665,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     tz: number;
     heroX: number;
     heroZ: number;
+    viewW: number;
+    viewH: number;
+    scale: number;
+    bitmapW: number;
   };
   let lastClick: LastClick | null = null;
 
@@ -1651,6 +1688,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       `camera ${c.camX.toFixed(0)},${c.camZ.toFixed(0)}`,
       `target ${c.tx.toFixed(0)},${c.tz.toFixed(0)}`,
       `hero ${c.heroX.toFixed(0)},${c.heroZ.toFixed(0)}`,
+      `view ${c.viewW.toFixed(0)}×${c.viewH.toFixed(0)} scale ${c.scale.toFixed(2)} bitmap ${c.bitmapW.toFixed(0)}`,
     ].join("\n");
   }
 
@@ -1673,6 +1711,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       camZ: cam.z,
       heroX: hero?.x,
       heroZ: hero?.z,
+      bitmapW: canvas.width,
+      bitmapH: canvas.height,
+      transformA: drawScaleX,
+      transformD: drawScaleY,
+      transformE: drawOx,
+      transformF: drawOy,
     });
   }
 
@@ -1692,6 +1736,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       tz: tile.z,
       heroX: hit.heroX,
       heroZ: hit.heroZ,
+      viewW,
+      viewH,
+      scale: drawScaleX,
+      bitmapW: canvas.width,
     };
     paintClickDebug();
   }
@@ -1717,8 +1765,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       let openD = Infinity;
       let openX = bestX;
       let openZ = bestZ;
-      for (let z = cz - 4; z <= cz + 4; z++) {
-        for (let x = cx - 4; x <= cx + 4; x++) {
+      for (let z = cz - 8; z <= cz + 8; z++) {
+        for (let x = cx - 8; x <= cx + 8; x++) {
           if (blocked(x, z)) continue;
           const d = diamondDistance(sx, sy, worldToScreen(x, z));
           if (d < openD) {
@@ -1728,13 +1776,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           }
         }
       }
-      if (openD <= 2.4) {
-        bestX = openX;
-        bestZ = openZ;
-        best = openD;
-      } else {
-        return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
-      }
+      if (openD <= 6) return { x: openX, z: openZ };
+      return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
     }
     const projected = worldToScreen(bestX, bestZ);
     if (best > 1.35 || Math.hypot(projected.x - sx, projected.y - sy) > 52) {
@@ -1750,6 +1793,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!keepChase) chaseId = null;
     repaths = 0;
     path = p ? routeTo(p.x, p.z, x, z) : [];
+    note(`walk → (${Math.round(x)},${Math.round(z)})`);
   }
 
   function spriteHit(sx: number, sy: number, x: number, z: number, height: number) {
@@ -1762,6 +1806,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (e.button !== 0 || !mapOverlay.hidden) return;
     const p = me();
     if (!p || p.hp <= 0) return;
+    armPanelBlock();
     const hit = readClick(e);
     const sx = hit.sx;
     const sy = hit.sy;
@@ -2045,6 +2090,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function onTravelClick(e: Event) {
+    if (blockPanelClicks) return;
     const btn = (e.target as HTMLElement).closest("button[data-city]");
     if (!btn) return;
     e.preventDefault();
@@ -2148,6 +2194,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
   }
   function onBagClick(e: Event) {
+    if (blockPanelClicks) return;
     const btn = (e.target as HTMLElement).closest("button");
     if (!btn) return;
     e.preventDefault();
@@ -2159,6 +2206,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else if (slot) send({ op: "unequip", id: myId, slot });
   }
   function onShopClick(e: Event) {
+    if (blockPanelClicks) return;
     const btn = (e.target as HTMLElement).closest("button[data-buy], button[data-sell]");
     if (!btn) return;
     e.preventDefault();
@@ -2168,6 +2216,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else if (sellId) send({ op: "sell", id: myId, itemId: sellId });
   }
   function onTrainClick(e: Event) {
+    if (blockPanelClicks) return;
     const btn = (e.target as HTMLElement).closest("button[data-train]");
     if (!btn) return;
     e.preventDefault();
