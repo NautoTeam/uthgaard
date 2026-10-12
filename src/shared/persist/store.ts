@@ -12,6 +12,8 @@ export interface CharacterRecord {
   gold: number;
   x?: number;
   z?: number;
+  /** Current health. Missing on older saves, which arrive at full health. */
+  hp?: number;
   inventory?: Record<string, number>;
   equipment?: Record<string, string>;
   trainPoints?: number;

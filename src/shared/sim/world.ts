@@ -42,6 +42,7 @@ export interface JoinInput {
   hotbar?: string[];
   shroudUntil?: number;
   attunedGates?: string[];
+  hp?: number;
 }
 
 function applyStats(p: PlayerState) {
@@ -250,9 +251,11 @@ export function createWorld() {
       attunedGates: input.attunedGates?.length ? [...input.attunedGates] : [...DEFAULT_ATTUNED],
     };
     applyStats(player);
-    player.hp = player.maxHp;
+    const savedHp = typeof input.hp === "number" ? input.hp : null;
+    player.hp = savedHp == null ? player.maxHp : Math.max(0, Math.min(player.maxHp, savedHp));
     player.mana = player.maxMana;
     player.stamina = player.maxStamina;
+    if (player.hp <= 0) player.graveDropped = true;
     players.set(player.id, player);
     log(`${player.username} entered ${home.name}.`);
     return player;
@@ -294,7 +297,7 @@ export function createWorld() {
       if (!wayfarer || p.attunedGates.includes(city.id)) continue;
       if (Math.hypot(p.x - wayfarer.x, p.z - wayfarer.z) > 6) continue;
       p.attunedGates.push(city.id);
-      log(`You attune to the ${city.name} stone.`);
+      log(`${city.name} stones attuned.`);
     }
   }
 
@@ -494,7 +497,7 @@ export function createWorld() {
     if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
     if (!p.attunedGates.includes(cityId)) {
       p.attunedGates.push(cityId);
-      log(`You attune to the ${city.name} stone.`);
+      log(`${city.name} stones attuned.`);
     }
     log(`${p.username} stepped through the stones to ${city.name}.`);
     return { ok: true };
@@ -871,6 +874,38 @@ export function createWorld() {
     return p.level - before;
   }
 
+  function removeGrave(graveId: string) {
+    graves.delete(graveId);
+  }
+
+  function spawnTest(id: string): ActionResult {
+    const p = players.get(id);
+    if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
+    const level = Math.max(1, p.level);
+    const type = "Bandit";
+    const spot = nearestOpen(p.x + 3, p.z);
+    const hp = mobHp(type, level);
+    const mobId = "t" + mid++;
+    monsters.set(mobId, {
+      id: mobId,
+      type,
+      level,
+      maxHp: hp,
+      hp,
+      x: spot.x,
+      z: spot.z,
+      homeX: spot.x,
+      homeZ: spot.z,
+      slotX: spot.x,
+      slotZ: spot.z,
+      targetId: p.id,
+      respawnAt: 0,
+      nextHit: 0,
+      snareUntil: 0,
+    });
+    return { ok: true, reason: "A test foe appears." };
+  }
+
   return {
     join,
     leave,
@@ -892,6 +927,8 @@ export function createWorld() {
     loot,
     grantXp,
     adoptGraves,
+    removeGrave,
+    spawnTest,
     note,
     step,
     snapshot,

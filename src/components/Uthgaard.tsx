@@ -142,6 +142,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="debugHudLevelBtn" type="button">
           Set level
         </button>
+        <button id="debugSpawnBtn" type="button">
+          Spawn test mob
+        </button>
       </div>
       <div id="groupFrame" hidden />
       <div id="inviteToast" hidden>
@@ -284,7 +287,16 @@ function Isle({ profile }: { profile: IsleProfile }) {
         </div>
       </div>
       <div id="chat">
+        <div id="chatTabs">
+          <button id="chatTabSay" type="button" className="on">
+            Say
+          </button>
+          <button id="chatTabPvp" type="button">
+            PvP
+          </button>
+        </div>
         <div id="messages" />
+        <div id="pvpMessages" hidden />
         <input id="chatInput" placeholder="Say something…" enterKeyHint="send" />
       </div>
     </div>

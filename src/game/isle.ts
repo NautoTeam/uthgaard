@@ -57,17 +57,18 @@ type Intent =
   | { op: "use"; id: string; itemId: string }
   | { op: "equip"; id: string; itemId: string }
   | { op: "unequip"; id: string; slot: string }
-  | { op: "train"; id: string; skillId: string };
+  | { op: "train"; id: string; skillId: string }
+  | { op: "spawn"; id: string };
 
 declare global {
   interface Window {
     __controlsTest?: {
       getYaw: () => number;
       getSpeed: () => number;
-      getPos?: () => { x: number; z: number; hp: number; mana: number; gold: number; xp: number };
+      getPos?: () => { x: number; z: number; hp: number; mana: number; gold: number; xp: number; level: number };
       hurt?: (amount: number) => void;
       setKeys?: (codes: string[]) => void;
-      monsters?: () => Array<{ id: string; type: string; hp: number; x: number; z: number }>;
+      monsters?: () => Array<{ id: string; type: string; level: number; hp: number; x: number; z: number }>;
       npcs?: () => Array<{ id: string; name: string; role: string; city: string; x: number; z: number }>;
       mapOpen?: () => boolean;
       place?: (x: number, z: number) => void;
@@ -107,6 +108,11 @@ declare global {
       flushSave?: () => void;
       panels?: () => { shop: boolean; travel: boolean; train: boolean; shopTitle: string; trainTitle: string };
       groupMembers?: () => Array<{ id: string; name: string; level: number; hp: number; maxHp: number }>;
+      spawnMob?: () => void;
+      attackPeer?: () => string;
+      zoneText?: () => string;
+      pvpLines?: () => string[];
+      floats?: () => string[];
     };
   }
 }
@@ -130,6 +136,7 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "equip") return world.equip(intent.id, intent.itemId);
   if (intent.op === "unequip") return world.unequip(intent.id, intent.slot);
   if (intent.op === "train") return world.train(intent.id, intent.skillId);
+  if (intent.op === "spawn") return world.spawnTest(intent.id);
   return { ok: false };
 }
 
@@ -152,6 +159,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const ctx = canvas.getContext("2d")!;
   const statsEl = root.querySelector<HTMLElement>("#stats")!;
   const messages = root.querySelector<HTMLElement>("#messages")!;
+  const pvpBox = root.querySelector<HTMLElement>("#pvpMessages");
   const promoteBtn = root.querySelector<HTMLButtonElement>("#promoteBtn")!;
   const mapOverlay = root.querySelector<HTMLElement>("#mapOverlay")!;
   const mapCanvas = root.querySelector<HTMLCanvasElement>("#mapCanvas")!;
@@ -301,6 +309,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     hotbar: saved?.hotbar,
     shroudUntil: saved?.shroudUntil,
     attunedGates: saved?.attunedGates,
+    hp: saved?.hp,
   };
 
   const authority = createAuthority();
@@ -327,10 +336,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let seenGold = -1;
   let graveSig = "";
   let chaseId: string | null = null;
+  let pvpId: string | null = null;
   let repaths = 0;
   let stuckFor = 0;
   let lastSpeed = 0;
   let lastLogs = "";
+  const pvpLines: string[] = [];
+  let lastPvp = "";
+  let chatTab: "say" | "pvp" = "say";
   let viewW = 1;
   let viewH = 1;
   type GroupPeer = {
@@ -721,6 +734,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 700);
   }
 
+  function townNear(x: number, z: number) {
+    let best: (typeof CITIES)[number] | null = null;
+    let bestD = 16;
+    for (const city of CITIES) {
+      if ((city.phase ?? 1) > 1) continue;
+      const d = Math.hypot(city.x - x, city.z - z);
+      if (d < bestD) {
+        best = city;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function pvpOpen(x: number, z: number) {
+    return zoneAt(x, z)?.pvp === true;
+  }
+
+  function placeName(x: number, z: number) {
+    return zoneAt(x, z)?.name ?? townNear(x, z)?.name ?? islandAt(x, z)?.name ?? "the wild";
+  }
+
   function hud() {
     const p = me();
     if (!p) return;
@@ -738,10 +773,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
     const zone = zoneAt(p.x, p.z);
-    const island = islandAt(p.x, p.z);
-    const zoneLabel = zone
-      ? `${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${zone.pvp ? " · PvP area" : ""}`
-      : (island?.name ?? "The Reach");
+    const town = townNear(p.x, p.z);
+    const pvp = zone?.pvp ? " · PvP area" : "";
+    const zoneLabel = town && zone
+      ? `${town.name} · ${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${pvp}`
+      : town
+        ? `${town.name}${pvp}`
+        : zone
+          ? `${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${pvp}`
+          : (islandAt(p.x, p.z)?.name ?? "The Reach");
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
       `<div class="zone-line">${zoneLabel}</div>` +
@@ -825,6 +865,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       messages.innerHTML = lines.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
       messages.scrollTop = messages.scrollHeight;
       lastLogs = sig;
+    }
+    const pvpSig = pvpLines.join("\n");
+    if (pvpBox && pvpSig !== lastPvp) {
+      pvpBox.innerHTML = pvpLines.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+      pvpBox.scrollTop = pvpBox.scrollHeight;
+      lastPvp = pvpSig;
     }
     paintGroup();
   }
@@ -1089,6 +1135,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     } else if (chaseId && !chase) {
       chaseId = null;
     }
+    if (pvpId) {
+      pressPvp();
+      return;
+    }
     const foe = chase ?? currentTarget();
     if (!foe) return;
     const dist = Math.hypot(foe.x - p.x, foe.z - p.z);
@@ -1194,7 +1244,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           dest = null;
           path = [];
           lootGrave = null;
-          send({ op: "loot", id: myId, graveId });
+          const result = send({ op: "loot", id: myId, graveId });
+          if (result && "ok" in result && result.ok) postGroup({ t: "graveGone", graveId });
         }
       }
       if (dest) {
@@ -1595,6 +1646,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (disk.hotbar) p.hotbar = [...disk.hotbar];
     if (typeof disk.trainPoints === "number") p.trainPoints = disk.trainPoints;
     if (disk.attunedGates) p.attunedGates = [...disk.attunedGates];
+    if (typeof disk.hp === "number") {
+      p.hp = Math.max(0, Math.min(p.maxHp, disk.hp));
+      if (p.hp <= 0) p.graveDropped = true;
+    }
     if ((p.shroudUntil ?? 0) > Date.now()) {
       p.hp = p.maxHp;
       p.mana = p.maxMana;
@@ -1651,6 +1706,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       hotbar: p.hotbar,
       shroudUntil: p.shroudUntil,
       attunedGates: p.attunedGates,
+      hp: p.hp,
       rev: nextRev,
       inputAt: lastInput,
     });
@@ -1676,6 +1732,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     z?: number;
     race?: string;
     amount?: number;
+    dmg?: number;
+    gold?: number;
+    graveId?: string;
+    place?: string;
   };
 
   function postGroup(msg: GroupWire) {
@@ -1882,6 +1942,57 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       paintGroup();
       return;
     }
+    if (msg.t === "graveGone" && msg.graveId) {
+      world.removeGrave(msg.graveId);
+      return;
+    }
+    if (msg.t === "down" && msg.fromName && msg.name && msg.place) {
+      addPvp(`${msg.fromName} defeated ${msg.name} at ${msg.place}.`);
+      if (msg.graveId && typeof msg.x === "number" && typeof msg.z === "number") {
+        world.adoptGraves([
+          {
+            id: msg.graveId,
+            owner: msg.name,
+            x: msg.x,
+            z: msg.z,
+            gold: Math.max(0, Math.floor(msg.gold ?? 0)),
+            items: {},
+            born: Date.now(),
+          },
+        ]);
+      }
+      return;
+    }
+    if (msg.t === "hit" && msg.id === myId && msg.fromId && msg.fromId !== myId) {
+      const p = me();
+      if (!p || p.hp <= 0) return;
+      if (!pvpOpen(p.x, p.z)) return;
+      if (myGroup && (msg.group === myGroup || groupPresence.get(msg.fromId)?.group === myGroup)) return;
+      if (typeof msg.x !== "number" || typeof msg.z !== "number") return;
+      if (Math.hypot(p.x - msg.x, p.z - msg.z) > 12) return;
+      const dmg = Math.max(1, Math.floor(msg.dmg ?? 0));
+      const next = Math.max(0, p.hp - dmg);
+      world.setHp(myId, next);
+      dirty = true;
+      if (next <= 0) {
+        const grave = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
+        const place = placeName(grave?.x ?? p.x, grave?.z ?? p.z);
+        addPvp(`${msg.fromName ?? "Someone"} defeated ${p.username} at ${place}.`);
+        postGroup({
+          t: "down",
+          fromName: msg.fromName,
+          name: p.username,
+          x: grave?.x ?? p.x,
+          z: grave?.z ?? p.z,
+          gold: grave?.gold ?? 0,
+          graveId: grave?.id,
+          place,
+          id: myId,
+        });
+        pulseGroup();
+      }
+      return;
+    }
     if (msg.t === "xp" && msg.fromId && msg.fromId !== myId && msg.group && msg.group === myGroup && typeof msg.amount === "number") {
       const p = me();
       if (!p || typeof msg.x !== "number" || typeof msg.z !== "number") return;
@@ -1907,6 +2018,109 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       race: p.race,
       group: myGroup,
     });
+  }
+
+  function addPvp(line: string) {
+    pvpLines.push(line);
+    if (pvpLines.length > 40) pvpLines.shift();
+    lastPvp = "";
+    showChatTab("pvp");
+    chat.classList.add("open");
+  }
+
+  function strikePeer(peer: GroupPeer): string {
+    const p = me();
+    if (!p || p.hp <= 0) return "none";
+    if (!pvpOpen(p.x, p.z)) {
+      pvpId = null;
+      note("This is a haven. No fighting here.");
+      return "haven";
+    }
+    if (myGroup && peer.group === myGroup) {
+      pvpId = null;
+      note("You cannot strike a group member.");
+      return "group";
+    }
+    const dist = Math.hypot(peer.x - p.x, peer.z - p.z);
+    const range = powerById("attack")?.range ?? 7.6;
+    if (dist > range) return "far";
+    const now = Date.now();
+    const power = powerById("attack");
+    const ready = Math.max(p.nextSwing || 0, p.cooldowns?.attack ?? 0);
+    if (now < ready) return "wait";
+    const cost = power?.stamina ?? 0;
+    if (cost > 0 && p.stamina < cost) {
+      note("Not enough stamina.");
+      return "stamina";
+    }
+    p.stamina = Math.max(0, p.stamina - cost);
+    const cd = now + (power?.cooldown ?? 780);
+    p.nextSwing = cd;
+    if (!p.cooldowns) p.cooldowns = {};
+    p.cooldowns.attack = cd;
+    const actor = actors.get(myId);
+    if (actor) actor.attackUntil = performance.now() + 640;
+    if (Math.random() * 100 >= hitChance(p)) {
+      floatAt(peer.x, peer.z, "Miss", "#f0e2b0", 96);
+      return "miss";
+    }
+    const dmg = Math.max(1, trainedDamage(p));
+    floatAt(peer.x, peer.z, `-${dmg}`, "#ffb4a8", 110);
+    postGroup({
+      t: "hit",
+      fromId: myId,
+      fromName: p.username,
+      id: peer.id,
+      group: myGroup,
+      dmg,
+      x: p.x,
+      z: p.z,
+    });
+    return "hit";
+  }
+
+  function nearestPeer() {
+    const p = me();
+    if (!p) return null;
+    let best: GroupPeer | null = null;
+    let bestD = 40;
+    for (const peer of freshPeers()) {
+      const d = Math.hypot(peer.x - p.x, peer.z - p.z);
+      if (d < bestD) {
+        bestD = d;
+        best = peer;
+      }
+    }
+    return best;
+  }
+
+  function pressPvp() {
+    const p = localPlayer();
+    if (!p || p.hp <= 0) {
+      pvpId = null;
+      return;
+    }
+    const peer = freshPeers().find((row) => row.id === pvpId) ?? null;
+    if (!peer) {
+      pvpId = null;
+      return;
+    }
+    if (!pvpOpen(p.x, p.z) || (myGroup && peer.group === myGroup)) {
+      pvpId = null;
+      return;
+    }
+    const range = powerById("attack")?.range ?? 7.6;
+    const dist = Math.hypot(peer.x - p.x, peer.z - p.z);
+    if (dist > range) {
+      const step = Math.min(dist - range * 0.65, 6);
+      const x = p.x + ((peer.x - p.x) / dist) * step;
+      const z = p.z + ((peer.z - p.z) / dist) * step;
+      if (!dest || Math.hypot(dest.x - x, dest.z - z) > 1.2) goTo(x, z, null);
+      return;
+    }
+    dest = null;
+    path = [];
+    strikePeer(peer);
   }
 
   function peerAt(sx: number, sy: number) {
@@ -2171,9 +2385,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (above > 108 && above < 152 && dx < 48) return true;
     return dx < 34 && above > -4 && above < 112;
   }
+  let pendingMove: { x: number; z: number } | null = null;
   function onPointer(e: PointerEvent) {
     if (ctxMenu) ctxMenu.hidden = true;
     if (e.button !== 0 || !mapOverlay.hidden) return;
+    if (e.target !== canvas) return;
+    const top = document.elementFromPoint(e.clientX, e.clientY);
+    if (top && top !== canvas && !canvas.contains(top)) return;
     const hit = readClick(e);
     touchInput();
     const p = me();
@@ -2197,7 +2415,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         dest = null;
         path = [];
         lootGrave = null;
-        send({ op: "loot", id: myId, graveId: pickedGrave.id });
+        const result = send({ op: "loot", id: myId, graveId: pickedGrave.id });
+        if (result && "ok" in result && result.ok) postGroup({ t: "graveGone", graveId: pickedGrave.id });
       } else {
         talkNpc = null;
         goTo(pickedGrave.x, pickedGrave.z, null);
@@ -2237,6 +2456,33 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
+    const peer = peerAt(sx, sy);
+    if (peer) {
+      pinnedId = null;
+      chaseId = null;
+      lootGrave = null;
+      rememberClick(e, hit, peer);
+      const dist = Math.hypot(peer.x - p.x, peer.z - p.z);
+      const range = powerById("attack")?.range ?? 7.6;
+      if (!pvpOpen(p.x, p.z) || (myGroup && peer.group === myGroup)) {
+        dest = null;
+        path = [];
+        pvpId = null;
+        pendingMove = null;
+        strikePeer(peer);
+        return;
+      }
+      pvpId = peer.id;
+      if (dist > range) {
+        const step = Math.min(dist - range * 0.65, 6);
+        goTo(p.x + ((peer.x - p.x) / dist) * step, p.z + ((peer.z - p.z) / dist) * step, null);
+      } else {
+        dest = null;
+        path = [];
+        strikePeer(peer);
+      }
+      return;
+    }
     let picked: string | null = null;
     for (const m of view().monsters) {
       if (m.hp <= 0) continue;
@@ -2260,6 +2506,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (picked) {
       pinnedId = picked;
       chaseId = picked;
+      pvpId = null;
       const m = view().monsters.find((mon) => mon.id === picked);
       if (m) {
         const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
@@ -2279,10 +2526,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     pinnedId = null;
     chaseId = null;
+    pvpId = null;
     lootGrave = null;
     const tile = pickTile(sx, sy, w.x, w.z);
     rememberClick(e, hit, tile);
-    goTo(tile.x, tile.z, null);
+    pendingMove = { x: tile.x, z: tile.z };
+  }
+
+  function onWorldUp(e: PointerEvent) {
+    const move = pendingMove;
+    pendingMove = null;
+    if (!move || e.button !== 0) return;
+    if (e.target !== canvas) return;
+    const top = document.elementFromPoint(e.clientX, e.clientY);
+    if (top && top !== canvas && !canvas.contains(top)) return;
+    goTo(move.x, move.z, null);
+  }
+
+  function onRootPointerDown(e: PointerEvent) {
+    const target = e.target;
+    if (target === canvas || (target instanceof Node && canvas.contains(target))) return;
+    pendingMove = null;
   }
 
   function openNpc(id: string) {
@@ -2433,15 +2697,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     path = [];
     talkNpc = null;
     setOpen(travelPanel, false);
+    const had = (p.attunedGates ?? DEFAULT_ATTUNED).includes(cityId);
     if (host) {
       const result = world.travel(p.id, cityId);
       if (!result.ok && result.reason) floatText(result.reason, "#f0dca0", 130);
+      else if (result.ok && !had) floatText(`${city.name} stones attuned.`);
     } else {
       const spot = arrivalAt(city.x, city.z);
       p.x = spot.x;
       p.z = spot.z;
       if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
-      if (!p.attunedGates.includes(cityId)) p.attunedGates.push(cityId);
+      if (!p.attunedGates.includes(cityId)) {
+        p.attunedGates.push(cityId);
+        floatText(`${city.name} stones attuned.`);
+      }
     }
   }
 
@@ -2478,6 +2747,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onTravelClose(e: Event) {
     e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
     setOpen(travelPanel, false);
   }
 
@@ -2603,6 +2874,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     e.preventDefault();
     setOpen(sheet, false);
   }
+  function onSpawnMob(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    send({ op: "spawn", id: myId });
+  }
+
+  function showChatTab(tab: "say" | "pvp") {
+    chatTab = tab;
+    root.querySelector("#chatTabSay")?.classList.toggle("on", tab === "say");
+    root.querySelector("#chatTabPvp")?.classList.toggle("on", tab === "pvp");
+    messages.hidden = tab !== "say";
+    if (pvpBox) pvpBox.hidden = tab !== "pvp";
+  }
+
+  function onChatTab(e: Event) {
+    e.preventDefault();
+    const id = (e.currentTarget as HTMLElement).id;
+    showChatTab(id === "chatTabPvp" ? "pvp" : "say");
+  }
+
   function onDebugLevel(e: Event) {
     e.preventDefault();
     const input = root.querySelector<HTMLInputElement>("#debugLevelInput");
@@ -2737,7 +3029,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
   clickDebugToggle?.addEventListener("change", paintClickDebug);
   paintClickDebug();
+  showChatTab("say");
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
+  root.querySelector("#chatTabSay")?.addEventListener("pointerup", onChatTab);
+  root.querySelector("#chatTabPvp")?.addEventListener("pointerup", onChatTab);
+  root.querySelector("#debugSpawnBtn")?.addEventListener("pointerup", onSpawnMob);
   mapBtn.addEventListener("pointerup", onMap);
   mapClose.addEventListener("pointerup", onMapClose);
   talkBtn.addEventListener("pointerup", onTalk);
@@ -2746,6 +3042,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   respawnBtn.addEventListener("pointerup", onRespawn);
   chatInput.addEventListener("keydown", onChatKey);
   canvas.addEventListener("pointerdown", onPointer);
+  canvas.addEventListener("pointerup", onWorldUp);
+  root.addEventListener("pointerdown", onRootPointerDown, true);
+  window.addEventListener("pointerup", onWorldUp);
   stick.addEventListener("pointerdown", onStickDown);
   stick.addEventListener("pointermove", onStickMove);
   stick.addEventListener("pointerup", resetStick);
@@ -2781,7 +3080,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     getSpeed: () => lastSpeed,
     getPos: () => {
       const p = localPlayer();
-      return { x: p?.x ?? 0, z: p?.z ?? 0, hp: p?.hp ?? 0, mana: p?.mana ?? 0, gold: p?.gold ?? 0, xp: p?.xp ?? 0 };
+      return { x: p?.x ?? 0, z: p?.z ?? 0, hp: p?.hp ?? 0, mana: p?.mana ?? 0, gold: p?.gold ?? 0, xp: p?.xp ?? 0, level: p?.level ?? 1 };
     },
     hurt: (amount: number) => {
       const p = localPlayer();
@@ -2792,7 +3091,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       for (const code of codes) keys.add(code);
     },
     monsters: () =>
-      view().monsters.filter((m) => m.hp > 0).map((m) => ({ id: m.id, type: m.type, hp: m.hp, x: m.x, z: m.z })),
+      view().monsters.filter((m) => m.hp > 0).map((m) => ({ id: m.id, type: m.type, level: m.level, hp: m.hp, x: m.x, z: m.z })),
     npcs: () => NPCS.map((n) => ({ id: n.id, name: n.name, role: n.role, city: n.city, x: n.x, z: n.z })),
     mapOpen: () => !mapOverlay.hidden,
     place: (x: number, z: number) => {
@@ -2841,6 +3140,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       trainTitle: trainTitle?.textContent ?? "",
     }),
     groupMembers: () => groupRoster().map((row) => ({ id: row.id, name: row.name, level: row.level, hp: row.hp, maxHp: row.maxHp })),
+    spawnMob: () => {
+      pendingMove = null;
+      send({ op: "spawn", id: myId });
+    },
+    attackPeer: () => {
+      const peer = nearestPeer();
+      if (!peer) return "none";
+      return strikePeer(peer);
+    },
+    zoneText: () => root.querySelector(".zone-line")?.textContent ?? "",
+    pvpLines: () => pvpLines.slice(),
+    floats: () => floaters.map((f) => f.text),
   };
 
   resize();
@@ -2864,6 +3175,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
+    root.querySelector("#chatTabSay")?.removeEventListener("pointerup", onChatTab);
+    root.querySelector("#chatTabPvp")?.removeEventListener("pointerup", onChatTab);
+    root.querySelector("#debugSpawnBtn")?.removeEventListener("pointerup", onSpawnMob);
     root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
     root.querySelector("#debugHudLevelBtn")?.removeEventListener("pointerup", onDebugHudLevel);
     root.querySelector("#inviteAccept")?.removeEventListener("pointerup", acceptInvite);
@@ -2891,6 +3205,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     respawnBtn.removeEventListener("pointerup", onRespawn);
     chatInput.removeEventListener("keydown", onChatKey);
     canvas.removeEventListener("pointerdown", onPointer);
+    canvas.removeEventListener("pointerup", onWorldUp);
+    root.removeEventListener("pointerdown", onRootPointerDown, true);
+    window.removeEventListener("pointerup", onWorldUp);
     stick.removeEventListener("pointerdown", onStickDown);
     stick.removeEventListener("pointermove", onStickMove);
     stick.removeEventListener("pointerup", resetStick);
