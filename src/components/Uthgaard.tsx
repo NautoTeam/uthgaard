@@ -232,7 +232,10 @@ function Isle({ profile }: { profile: IsleProfile }) {
               <input id="debugLevelInput" type="number" min={1} max={25} defaultValue={10} />
             </label>
             <button id="debugLevelBtn" type="button">
-              Set level
+              Debug: Set level
+            </button>
+            <button id="debugPlusBtn" type="button">
+              Debug: +1 level
             </button>
             <button id="debugHpBtn" type="button">
               Debug: Set HP 1

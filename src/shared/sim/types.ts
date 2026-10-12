@@ -1,4 +1,5 @@
 import type { BaseClass, Prestige, Race } from "../content/catalog";
+import { BOUNDS } from "../content/world";
 
 export type { BaseClass, CampDef, Prestige, Race } from "../content/catalog";
 export { BASE_CLASSES, CAMPS, PRESTIGE_OF, RACES, attrsFor, classAllowed, DEBUG_SET_LEVEL } from "../content/catalog";
@@ -91,6 +92,15 @@ export function xpNeed(level: number) {
   return level * 70;
 }
 
+export function clampX(v: number) {
+  return Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, v));
+}
+
+export function clampZ(v: number) {
+  return Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, v));
+}
+
+/** @deprecated Use clampX or clampZ. Still clamps a single axis to the old isle edge. */
 export function clampCoord(v: number) {
   return Math.max(-168, Math.min(168, v));
 }

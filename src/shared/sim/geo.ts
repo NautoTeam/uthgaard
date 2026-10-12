@@ -1,7 +1,9 @@
-import { CAMPS, clampCoord } from "./types";
-import { LAKES as WORLD_LAKES, LIVE_CITIES, ROADS as WORLD_ROADS } from "../content/world";
+import { CAMPS, clampX, clampZ } from "./types";
+import { LAKES as WORLD_LAKES, LIVE_CITIES, ROADS as WORLD_ROADS, ZONES, BOUNDS } from "../content/world";
+import { isLand, terrainAt, zoneAt } from "./mask";
 
 export const LAND = 150;
+/** @deprecated Visible tiles use BOUNDS. Kept so older imports still resolve. */
 export const WORLD_EDGE = 168;
 
 export interface CityDef {
@@ -198,27 +200,79 @@ for (const hall of HALLS) {
 for (const [x, z] of TREES) SOLIDS.push({ x, z, r: 0.85 });
 for (const [x, z] of FIRES) SOLIDS.push({ x, z, r: 0.7 });
 
+/** Extra trees only off the Reach, so the 96 home-isle trees stay on the same hashes. */
+const TREE_DENSITY: Record<string, number> = {
+  forest: 0.008,
+  marsh: 0.004,
+  meadow: 0.003,
+  moor: 0.004,
+  highland: 0.003,
+  scrub: 0.003,
+  bog: 0.003,
+  hub: 0.002,
+};
+for (const zone of ZONES) {
+  if (zone.island === "reach") continue;
+  const density = TREE_DENSITY[zone.terrain] ?? TREE_DENSITY.forest / 2;
+  const span = 70;
+  const x0 = zone.seed[0] - span;
+  const x1 = zone.seed[0] + span;
+  const z0 = zone.seed[1] - span;
+  const z1 = zone.seed[1] + span;
+  for (let z = z0; z <= z1; z += 2) {
+    for (let x = x0; x <= x1; x += 2) {
+      if (hash(x * 13.1 + z * 7.7 + 400) > density * 4) continue;
+      if (zoneAt(x, z)?.id !== zone.id || !isLand(x, z) || terrainAt(x, z) === "lake") continue;
+      if (CITIES.some((c) => Math.hypot(x - c.x, z - c.z) < 14)) continue;
+      if (onRoad(x, z, 2.8)) continue;
+      if (CAMPS.some((c) => Math.hypot(x - c.cx, z - c.cz) < 5)) continue;
+      TREES.push([x, z]);
+      SOLIDS.push({ x, z, r: 0.85 });
+    }
+  }
+}
+
+const SOLID_BUCKET = 8;
+const solidBuckets = new Map<string, Array<{ x: number; z: number; r: number }>>();
+function solidKey(x: number, z: number) {
+  return `${Math.floor(x / SOLID_BUCKET)},${Math.floor(z / SOLID_BUCKET)}`;
+}
+for (const solid of SOLIDS) {
+  const key = solidKey(solid.x, solid.z);
+  const list = solidBuckets.get(key);
+  if (list) list.push(solid);
+  else solidBuckets.set(key, [solid]);
+}
+
 export function blocked(x: number, z: number) {
-  if (Math.hypot(x, z) > LAND) return true;
+  if (!isLand(x, z)) return true;
   if (inLake(x, z)) return true;
-  for (const s of SOLIDS) {
-    const dx = x - s.x;
-    const dz = z - s.z;
-    if (dx * dx + dz * dz < s.r * s.r) return true;
+  const bx = Math.floor(x / SOLID_BUCKET);
+  const bz = Math.floor(z / SOLID_BUCKET);
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const list = solidBuckets.get(`${bx + dx},${bz + dz}`);
+      if (!list) continue;
+      for (const s of list) {
+        const ddx = x - s.x;
+        const ddz = z - s.z;
+        if (ddx * ddx + ddz * ddz < s.r * s.r) return true;
+      }
+    }
   }
   return false;
 }
 
 export function resolveMove(x: number, z: number, nx: number, nz: number) {
-  nx = clampCoord(nx);
-  nz = clampCoord(nz);
+  nx = clampX(nx);
+  nz = clampZ(nz);
   if (!blocked(nx, nz)) return { x: nx, z: nz };
   if (!blocked(nx, z)) return { x: nx, z };
   if (!blocked(x, nz)) return { x, z: nz };
   return { x, z };
 }
 
-export function nearestOpen(x: number, z: number) {
+export function nearestOpen(x: number, z: number): { x: number; z: number } {
   if (!blocked(x, z)) return { x, z };
   for (let r = 0.6; r <= 10; r += 0.6) {
     for (let a = 0; a < 12; a++) {
@@ -227,7 +281,29 @@ export function nearestOpen(x: number, z: number) {
       if (!blocked(nx, nz)) return { x: nx, z: nz };
     }
   }
-  return { x: 0, z: 0 };
+  if (seekingCity) return { x: CITIES[0].x, z: CITIES[0].z + 2.6 };
+  seekingCity = true;
+  try {
+    const city = nearestCityPoint(x, z);
+    return arrivalAt(city.x, city.z);
+  } finally {
+    seekingCity = false;
+  }
+}
+
+let seekingCity = false;
+
+function nearestCityPoint(x: number, z: number) {
+  let best = CITIES[0];
+  let bestD = Infinity;
+  for (const city of CITIES) {
+    const d = Math.hypot(city.x - x, city.z - z);
+    if (d < bestD) {
+      best = city;
+      bestD = d;
+    }
+  }
+  return best;
 }
 
 /** Pixel gap between two footprints in the isometric view (tile is 48×24). */
@@ -250,7 +326,7 @@ export function underHall(x: number, z: number) {
   return false;
 }
 
-export function arrivalAt(x: number, z: number) {
+export function arrivalAt(x: number, z: number): { x: number; z: number } {
   const npc = NPCS.find((n) => Math.hypot(n.x - x, n.z - z) < 14);
   const nx = npc ? npc.x - x : 0;
   const nz = npc ? npc.z - z : 1;
@@ -306,10 +382,10 @@ export function routeTo(x0: number, z0: number, x1: number, z1: number) {
   const start = openTile(x0, z0);
   const goal = openTile(x1, z1);
   if (start.x === goal.x && start.z === goal.z) return [] as Array<{ x: number; z: number }>;
-  const xMin = Math.max(-166, Math.min(start.x, goal.x) - 16);
-  const xMax = Math.min(166, Math.max(start.x, goal.x) + 16);
-  const zMin = Math.max(-166, Math.min(start.z, goal.z) - 16);
-  const zMax = Math.min(166, Math.max(start.z, goal.z) + 16);
+  const xMin = Math.max(BOUNDS.minX, Math.min(start.x, goal.x) - 16);
+  const xMax = Math.min(BOUNDS.maxX, Math.max(start.x, goal.x) + 16);
+  const zMin = Math.max(BOUNDS.minZ, Math.min(start.z, goal.z) - 16);
+  const zMax = Math.min(BOUNDS.maxZ, Math.max(start.z, goal.z) + 16);
   const key = (x: number, z: number) => `${x},${z}`;
   const h = (x: number, z: number) => Math.abs(x - goal.x) + Math.abs(z - goal.z);
   const gScore = new Map<string, number>();

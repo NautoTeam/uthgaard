@@ -6,7 +6,6 @@ import {
   LAKES,
   NPCS,
   ROADS,
-  WORLD_EDGE,
   cityAt,
   nearestWayfarer,
   resolveMove,
@@ -21,6 +20,8 @@ import {
   routeTo,
   screenGap,
 } from "./geo";
+import { BOUNDS, TERRAIN_PALETTE, WORLD_CITIES } from "../shared/content/world";
+import { terrainAt } from "../shared/sim/mask";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
 import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
@@ -386,7 +387,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function tileColor(x: number, z: number) {
-    return tileFill(x, z);
+    if (x * x + z * z <= 156 * 156) return tileFill(x, z);
+    const name = terrainAt(x, z);
+    if (name === "plaza") {
+      let best = WORLD_CITIES[0];
+      let bestD = 1e9;
+      for (const city of WORLD_CITIES) {
+        const d = Math.hypot(city.x - x, city.z - z);
+        if (d < bestD) {
+          best = city;
+          bestD = d;
+        }
+      }
+      return (x * 3 + z) % 5 === 0 ? best.stoneAlt : best.stone;
+    }
+    if (name === "road") return (x + z) & 1 ? "#7a6848" : "#6a563c";
+    if (name === "camp") return "#5a4032";
+    if (name === "lake") return (x + z) & 1 ? "#1d5c68" : "#184e58";
+    const pair = TERRAIN_PALETTE[name] ?? TERRAIN_PALETTE.deep;
+    return (x + z) & 1 ? pair[1] : pair[0];
   }
 
   function drawDiamond(x: number, z: number, fill: string) {
@@ -1093,20 +1112,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       screenToWorld(-40, viewH + 40),
       screenToWorld(viewW + 40, viewH + 40),
     ];
-    let minX = WORLD_EDGE;
-    let maxX = -WORLD_EDGE;
-    let minZ = WORLD_EDGE;
-    let maxZ = -WORLD_EDGE;
+    let minX = BOUNDS.maxX;
+    let maxX = BOUNDS.minX;
+    let minZ = BOUNDS.maxZ;
+    let maxZ = BOUNDS.minZ;
     for (const c of corners) {
       minX = Math.min(minX, c.x);
       maxX = Math.max(maxX, c.x);
       minZ = Math.min(minZ, c.z);
       maxZ = Math.max(maxZ, c.z);
     }
-    const x0 = Math.max(-WORLD_EDGE, Math.floor(minX) - 1);
-    const x1 = Math.min(WORLD_EDGE, Math.ceil(maxX) + 1);
-    const z0 = Math.max(-WORLD_EDGE, Math.floor(minZ) - 1);
-    const z1 = Math.min(WORLD_EDGE, Math.ceil(maxZ) + 1);
+    const x0 = Math.max(BOUNDS.minX, Math.floor(minX) - 1);
+    const x1 = Math.min(BOUNDS.maxX, Math.ceil(maxX) + 1);
+    const z0 = Math.max(BOUNDS.minZ, Math.floor(minZ) - 1);
+    const z1 = Math.min(BOUNDS.maxZ, Math.ceil(maxZ) + 1);
     for (let x = x0; x <= x1; x++) {
       for (let z = z0; z <= z1; z++) drawDiamond(x, z, tileColor(x, z));
     }
@@ -1834,6 +1853,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const input = root.querySelector<HTMLInputElement>("#debugLevelInput");
     send({ op: "setLevel", id: myId, level: Number(input?.value || 10) });
   }
+  function onDebugPlus(e: Event) {
+    e.preventDefault();
+    send({ op: "setLevel", id: myId, level: (me()?.level ?? 1) + 1 });
+  }
   function onDebugHp(e: Event) {
     e.preventDefault();
     send({ op: "setHp", id: myId, hp: 1 });
@@ -1923,6 +1946,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#trainClose")!.addEventListener("pointerup", onTrainClose);
   root.querySelector("#trainPromote")?.addEventListener("pointerup", onPromote);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
+  root.querySelector("#debugPlusBtn")?.addEventListener("pointerup", onDebugPlus);
   root.querySelector("#debugHpBtn")?.addEventListener("pointerup", onDebugHp);
   root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
@@ -2010,6 +2034,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
     root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
+    root.querySelector("#debugPlusBtn")?.removeEventListener("pointerup", onDebugPlus);
     root.querySelector("#debugHpBtn")?.removeEventListener("pointerup", onDebugHp);
     root.querySelector("#debugKillBtn")?.removeEventListener("pointerup", onDebugKill);
     root.querySelector("#mapBtn")?.removeEventListener("pointerup", onMap);

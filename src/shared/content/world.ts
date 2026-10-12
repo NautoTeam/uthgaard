@@ -27,6 +27,7 @@ export interface IslandDef {
   rot?: number;
   seed?: number;
   lobes?: Array<[number, number]>;
+  footprint?: { bbox?: [number, number, number, number] };
 }
 
 export interface ZoneDef {
@@ -123,6 +124,15 @@ function touchesLive(x: number, z: number) {
 
 export const ROADS: Array<[number, number, number, number]> = file.roads.filter(
   ([ax, az, bx, bz]) => touchesLive(ax, az) && touchesLive(bx, bz),
+);
+
+function touchesPhase1(x: number, z: number) {
+  return WORLD_CITIES.some((city) => Math.hypot(city.x - x, city.z - z) < 1.5);
+}
+
+/** Reach roads plus the Wardstone and Stiltwick spurs. The live isle still draws ROADS only. */
+export const PHASE1_ROADS: Array<[number, number, number, number]> = file.roads.filter(
+  ([ax, az, bx, bz]) => touchesPhase1(ax, az) && touchesPhase1(bx, bz),
 );
 export const LAKES = file.lakes.map((lake) => ({ ...lake }));
 
