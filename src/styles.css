@@ -567,6 +567,23 @@ body {
   image-rendering: pixelated;
 }
 
+.zone-line {
+  color: #d7c28a;
+  font-size: 13px;
+  margin: 2px 0 4px;
+}
+
+#travelButtons button[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#travelButtons .circuit {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
 #mapClose {
   width: 100%;
   margin-top: 8px;

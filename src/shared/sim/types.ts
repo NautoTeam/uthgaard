@@ -45,6 +45,8 @@ export interface PlayerState extends PlayerInit {
   stealthUntil: number;
   shroudUntil: number;
   graveDropped: boolean;
+  /** Ley Gate stones this hero has stood beside. Missing on old saves. */
+  attunedGates?: string[];
 }
 
 export interface MonsterState {

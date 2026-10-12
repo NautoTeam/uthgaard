@@ -18,6 +18,7 @@ export interface CharacterRecord {
   skills?: Record<string, number>;
   hotbar?: string[];
   shroudUntil?: number;
+  attunedGates?: string[];
 }
 
 export interface CharacterStore {

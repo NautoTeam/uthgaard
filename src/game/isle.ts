@@ -20,8 +20,8 @@ import {
   routeTo,
   screenGap,
 } from "./geo";
-import { BOUNDS, TERRAIN_PALETTE, WORLD_CITIES } from "../shared/content/world";
-import { terrainAt } from "../shared/sim/mask";
+import { BOUNDS, CIRCUITS, DEFAULT_ATTUNED, GATES, LINKS, TERRAIN_PALETTE, WORLD_CITIES, gateHop, islandAt } from "../shared/content/world";
+import { terrainAt, zoneAt } from "../shared/sim/mask";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
 import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
@@ -190,6 +190,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     trainPoints: saved?.trainPoints,
     skills: saved?.skills,
     hotbar: saved?.hotbar,
+    attunedGates: saved?.attunedGates,
   };
 
   const authority = createAuthority();
@@ -639,8 +640,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const need = xpNeed(p.level);
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
+    const zone = zoneAt(p.x, p.z);
+    const island = islandAt(p.x, p.z);
+    const zoneLabel = zone
+      ? `${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${zone.pvp ? " · PvP area" : ""}`
+      : (island?.name ?? "The Reach");
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
+      `<div class="zone-line">${zoneLabel}</div>` +
       `<div class="gold-line">Gold ${p.gold}</div>` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(hp)}/${maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(mana)}/${maxMana}</span></div>` +
@@ -710,26 +717,65 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
   }
 
+  let mapCache: HTMLCanvasElement | null = null;
+
+  function hexRgb(hex: string) {
+    const n = Number.parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  function ensureMapCache() {
+    if (mapCache) return mapCache;
+    const mapW = 640;
+    const spanX = BOUNDS.maxX - BOUNDS.minX;
+    const spanZ = BOUNDS.maxZ - BOUNDS.minZ;
+    const mapH = Math.max(1, Math.round((mapW * spanZ) / spanX));
+    const canvas = document.createElement("canvas");
+    canvas.width = mapW;
+    canvas.height = mapH;
+    const g = canvas.getContext("2d");
+    if (!g) return canvas;
+    const image = g.createImageData(mapW, mapH);
+    const pix = image.data;
+    for (let py = 0; py < mapH; py++) {
+      const z = BOUNDS.minZ + ((py + 0.5) / mapH) * spanZ;
+      for (let px = 0; px < mapW; px++) {
+        const x = BOUNDS.minX + ((px + 0.5) / mapW) * spanX;
+        const name = terrainAt(x, z);
+        const pair = TERRAIN_PALETTE[name] ?? TERRAIN_PALETTE.deep;
+        const [r, gch, b] = hexRgb(pair[(px + py) & 1] ?? pair[0]);
+        const at = (py * mapW + px) * 4;
+        pix[at] = r;
+        pix[at + 1] = gch;
+        pix[at + 2] = b;
+        pix[at + 3] = 255;
+      }
+    }
+    g.putImageData(image, 0, 0);
+    mapCache = canvas;
+    return canvas;
+  }
+
   function drawWorldMap() {
     const g = mapCanvas.getContext("2d");
     if (!g) return;
+    const base = ensureMapCache();
+    mapCanvas.width = base.width;
+    mapCanvas.height = base.height;
     const w = mapCanvas.width;
     const h = mapCanvas.height;
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = "#0e1c18";
-    g.fillRect(0, 0, w, h);
-    const span = 360;
-    const to = (x: number, z: number) => ({ x: w / 2 + (x / span) * w, y: h / 2 + (z / span) * h });
-    g.fillStyle = "#123e46";
-    g.beginPath();
-    g.ellipse(w / 2, h / 2, (168 / span) * w, (168 / span) * h, 0, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = "#2f4a34";
-    g.beginPath();
-    g.ellipse(w / 2, h / 2, (150 / span) * w, (150 / span) * h, 0, 0, Math.PI * 2);
-    g.fill();
+    g.drawImage(base, 0, 0);
+    const spanX = BOUNDS.maxX - BOUNDS.minX;
+    const spanZ = BOUNDS.maxZ - BOUNDS.minZ;
+    const to = (x: number, z: number) => ({
+      x: ((x - BOUNDS.minX) / spanX) * w,
+      y: ((z - BOUNDS.minZ) / spanZ) * h,
+    });
+    const hero = me();
+    const title = root.querySelector("#mapTitle");
+    if (title) title.textContent = (hero && islandAt(hero.x, hero.z)?.name) || "The Reach";
     g.strokeStyle = "#8a7344";
-    g.lineWidth = 3;
+    g.lineWidth = 2;
     g.beginPath();
     for (const [ax, az, bx, bz] of ROADS) {
       const a = to(ax, az);
@@ -738,45 +784,42 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       g.lineTo(b.x, b.y);
     }
     g.stroke();
-    g.fillStyle = "#184e58";
-    for (const lake of LAKES) {
-      const pt = to(lake.x, lake.z);
-      g.beginPath();
-      g.arc(pt.x, pt.y, (lake.r / span) * w, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.font = "14px Georgia";
+    g.font = "13px Georgia";
     g.textAlign = "center";
     for (const city of CITIES) {
       const pt = to(city.x, city.z);
       g.fillStyle = city.stone;
-      g.fillRect(pt.x - 7, pt.y - 7, 14, 14);
+      g.fillRect(pt.x - 5, pt.y - 5, 10, 10);
+      const gate = GATES.find((row) => row.cityId === city.id);
+      const circuitId = gate?.circuits.find((id) => CIRCUITS.some((row) => row.id === id)) ?? "hearth";
+      const circuit = CIRCUITS.find((row) => row.id === circuitId);
+      g.fillStyle = circuit?.color ?? "#e0b050";
+      g.beginPath();
+      g.moveTo(pt.x, pt.y - 8);
+      g.lineTo(pt.x + 6, pt.y);
+      g.lineTo(pt.x, pt.y + 8);
+      g.lineTo(pt.x - 6, pt.y);
+      g.closePath();
+      g.fill();
       g.fillStyle = "#f0e2b0";
       g.fillText(city.name, pt.x, pt.y - 12);
     }
-    const colors = ["#6a3030", "#2f6a38", "#6a6a30", "#6a4a28", "#4a306a", "#6a3060"];
-    CAMPS.forEach((camp, i) => {
+    const level = hero?.level ?? 1;
+    for (const camp of CAMPS) {
       const pt = to(camp.cx, camp.cz);
-      g.fillStyle = colors[i] || "#6a3030";
+      g.fillStyle = conFor(camp.level, level).color;
       g.beginPath();
-      g.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+      g.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
       g.fill();
-      g.fillStyle = "#efe6c8";
-      g.font = "13px Georgia";
-      g.fillText(`${camp.type}s  ${camp.level}`, pt.x, pt.y - 12);
-    });
+    }
     for (const p of view().players) {
       if (p.hp <= 0) continue;
       const pt = to(p.x, p.z);
       g.fillStyle = p.id === myId ? "#f2d36b" : "#d8d8d8";
       g.beginPath();
-      g.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+      g.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
       g.fill();
-      g.fillText(p.username, pt.x, pt.y + 16);
     }
-    g.fillStyle = "#cbb";
-    g.font = "12px Georgia";
-    g.fillText("Gold mark is you. Roads link the three cities.", w / 2, h - 16);
   }
 
   function nearestId(range: number) {
@@ -824,32 +867,33 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return best;
   }
 
-  const MELEE_GAP = 108;
-
   function livingMonster(id: string | null) {
     if (!id) return null;
     return view().monsters.find((m) => m.id === id && m.hp > 0) ?? null;
   }
 
-  function adjacentStand(mx: number, mz: number, px: number, pz: number, minGap = MELEE_GAP) {
+  function adjacentStand(mx: number, mz: number, px: number, pz: number) {
     const d = Math.hypot(px - mx, pz - mz) || 1;
-    const ux = (px - mx) / d;
-    const uz = (pz - mz) / d;
+    const facing = Math.atan2(pz - mz, px - mx);
     let best: { x: number; z: number } | null = null;
     let bestScore = Infinity;
-    for (let dist = 1.5; dist <= 8; dist += 0.5) {
-      const x = Math.round(mx + ux * dist);
-      const z = Math.round(mz + uz * dist);
-      if (blocked(x, z)) continue;
-      const gap = screenGap(x, z, mx, mz);
-      if (gap < minGap || gap > minGap + 48) continue;
-      const score = gap + Math.hypot(x - px, z - pz);
-      if (score < bestScore) {
-        bestScore = score;
-        best = { x, z };
+    for (let ring = 1.45; ring <= 2.35; ring += 0.3) {
+      for (let step = -3; step <= 3; step++) {
+        const ang = facing + step * 0.42;
+        const x = Math.round(mx + Math.cos(ang) * ring);
+        const z = Math.round(mz + Math.sin(ang) * ring);
+        if (Math.hypot(x - mx, z - mz) < 1.05 || blocked(x, z)) continue;
+        const score = Math.hypot(x - px, z - pz);
+        if (score < bestScore) {
+          bestScore = score;
+          best = { x, z };
+        }
       }
     }
-    return best ?? nearestOpen(mx + ux * 4, mz + uz * 4);
+    if (best) return best;
+    const ux = (px - mx) / d;
+    const uz = (pz - mz) / d;
+    return nearestOpen(mx + ux * 1.8, mz + uz * 1.8);
   }
 
   function rangedStand(mx: number, mz: number, px: number, pz: number) {
@@ -874,8 +918,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const chase = livingMonster(chaseId);
     const ranged = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
     if (chase && !moving) {
-      const gap = screenGap(chase.x, chase.z, p.x, p.z);
-      const closeEnough = ranged ? Math.hypot(chase.x - p.x, chase.z - p.z) <= 7.2 : gap >= MELEE_GAP;
+      const dist = Math.hypot(chase.x - p.x, chase.z - p.z);
+      const closeEnough = ranged ? dist <= 7.2 : dist <= 2.35 && dist >= 1.05;
       if (closeEnough) {
         dest = null;
         path = [];
@@ -1368,6 +1412,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       skills: p.skills,
       hotbar: p.hotbar,
       shroudUntil: p.shroudUntil,
+      attunedGates: p.attunedGates,
     });
   }
 
@@ -1402,6 +1447,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       pressSlot(Number(digit[1]) - 1);
       return;
     }
+    if (e.code === "KeyM" && !e.repeat) {
+      e.preventDefault();
+      onMap(e);
+      return;
+    }
     if (e.code === "KeyI") {
       e.preventDefault();
       bag.hidden = !bag.hidden;
@@ -1433,28 +1483,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function pickTile(sx: number, sy: number) {
     const rough = screenToWorld(sx, sy);
-    let bestX = Math.round(rough.x);
-    let bestZ = Math.round(rough.z);
+    const cx = Math.round(rough.x);
+    const cz = Math.round(rough.z);
+    let bestX = cx;
+    let bestZ = cz;
     let best = Infinity;
-    for (let x = bestX - 3; x <= bestX + 3; x++) {
-      for (let z = bestZ - 3; z <= bestZ + 3; z++) {
+    for (let z = cz - 6; z <= cz + 6; z++) {
+      for (let x = cx - 6; x <= cx + 6; x++) {
+        if (blocked(x, z)) continue;
         const p = worldToScreen(x, z);
         const d = Math.abs(sx - p.x) / (TW / 2) + Math.abs(sy - p.y) / (TH / 2);
         if (d < best) {
           best = d;
           bestX = x;
           bestZ = z;
-        }
-      }
-    }
-    if (!blocked(bestX, bestZ)) return { x: bestX, z: bestZ };
-    for (let r = 1; r <= 6; r++) {
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-          const x = bestX + dx;
-          const z = bestZ + dz;
-          if (!blocked(x, z)) return { x, z };
         }
       }
     }
@@ -1536,13 +1578,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return;
     }
     let picked: string | null = null;
-    let best = 1.7;
     for (const m of view().monsters) {
       if (m.hp <= 0) continue;
-      const d = Math.hypot(m.x - w.x, m.z - w.z);
-      if (d < best) {
-        best = d;
+      if (spriteHit(sx, sy, m.x, m.z, 96)) {
         picked = m.id;
+        break;
+      }
+    }
+    if (!picked) {
+      let best = 1.7;
+      for (const m of view().monsters) {
+        if (m.hp <= 0) continue;
+        const d = Math.hypot(m.x - w.x, m.z - w.z);
+        if (d < best) {
+          best = d;
+          picked = m.id;
+        }
       }
     }
     if (picked) {
@@ -1551,8 +1602,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const m = view().monsters.find((mon) => mon.id === picked);
       if (m) {
         const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
-        const gap = screenGap(m.x, m.z, p.x, p.z);
-        const inRange = mage ? Math.hypot(m.x - p.x, m.z - p.z) <= 7.2 : gap >= MELEE_GAP;
+        const dist = Math.hypot(m.x - p.x, m.z - p.z);
+        const inRange = mage ? dist <= 7.2 : dist <= 2.35 && dist >= 1.05;
         if (!inRange) {
           const spot = mage ? rangedStand(m.x, m.z, p.x, p.z) : adjacentStand(m.x, m.z, p.x, p.z);
           goTo(spot.x, spot.z, null, true);
@@ -1673,11 +1724,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const city = cityAt(cityId);
     const p = me();
     if (!city || !p || !nearestWayfarer(p.x, p.z, 8)) return;
+    const attuned = p.attunedGates?.length ? p.attunedGates : DEFAULT_ATTUNED;
     travelTitle.textContent = `Wayfarer of ${city.name}`;
-    travelHint.textContent = "The gate can carry you to another city.";
-    travelButtons.innerHTML = CITIES.filter((c) => c.id !== city.id)
-      .map((c) => `<button type="button" data-city="${c.id}">${c.name}</button>`)
-      .join("");
+    travelHint.textContent = "The stones can carry you onward.";
+    const groups = CIRCUITS.map((circuit) => {
+      const hops = LINKS.filter(
+        (link) => link.circuit === circuit.id && (link.from === city.id || link.to === city.id),
+      ).map((link) => (link.from === city.id ? link.to : link.from));
+      if (!hops.length) return "";
+      const buttons = hops
+        .map((id) => {
+          const dest = cityAt(id);
+          if (!dest) return "";
+          const reason = gateHop(city.id, id, p.level, attuned);
+          const disabled = reason ? " disabled" : "";
+          const note = reason ? ` title="${reason.replace(/"/g, "")}"` : "";
+          return `<button type="button" data-city="${id}"${disabled}${note}>${dest.name}</button>`;
+        })
+        .join("");
+      return `<div class="circuit" style="color:${circuit.color}">${circuit.name}</div>${buttons}`;
+    }).join("");
+    travelButtons.innerHTML = groups;
     travelPanel.hidden = false;
   }
 
@@ -1685,16 +1752,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = localPlayer();
     const city = cityAt(cityId);
     if (!p || !city || p.hp <= 0) return;
-    if (!nearestWayfarer(p.x, p.z, 4.2)) return;
+    const here = nearestWayfarer(p.x, p.z, 4.2);
+    if (!here) return;
+    const attuned = p.attunedGates?.length ? p.attunedGates : DEFAULT_ATTUNED;
+    const reason = gateHop(here.city, cityId, p.level, attuned);
+    if (reason) {
+      floatText(reason, "#f0dca0", 130);
+      return;
+    }
     dest = null;
     path = [];
     talkNpc = null;
     travelPanel.hidden = true;
-    if (host) world.travel(p.id, cityId);
-    else {
+    if (host) {
+      const result = world.travel(p.id, cityId);
+      if (!result.ok && result.reason) floatText(result.reason, "#f0dca0", 130);
+    } else {
       const spot = arrivalAt(city.x, city.z);
       p.x = spot.x;
       p.z = spot.z;
+      if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
+      if (!p.attunedGates.includes(cityId)) p.attunedGates.push(cityId);
       channel?.postMessage({ t: "intent", intent: { op: "travel", id: myId, cityId } });
     }
   }

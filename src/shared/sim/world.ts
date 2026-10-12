@@ -1,5 +1,6 @@
-import { arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { CITIES, NPCS, arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
+import { DEFAULT_ATTUNED, gateHop } from "../content/world";
 import type { GraveState } from "./types";
 import {
   CAMPS,
@@ -31,6 +32,7 @@ export interface JoinInput {
   skills?: Record<string, number>;
   hotbar?: string[];
   shroudUntil?: number;
+  attunedGates?: string[];
 }
 
 function applyStats(p: PlayerState) {
@@ -57,6 +59,7 @@ function applyStats(p: PlayerState) {
   if (!p.stealthUntil) p.stealthUntil = 0;
   if (p.shroudUntil == null) p.shroudUntil = 0;
   if (p.graveDropped == null) p.graveDropped = false;
+  if (!p.attunedGates?.length) p.attunedGates = [...DEFAULT_ATTUNED];
   const bar = defaultHotbar(p.baseClass, p.prestigeClass, p.level);
   if (!p.hotbar || p.hotbar.length !== 8) p.hotbar = bar;
   else for (let i = 0; i < 8; i++) if (!p.hotbar[i]) p.hotbar[i] = bar[i];
@@ -150,7 +153,15 @@ export function createWorld() {
   function snapshot(): PublicState {
     return {
       players: [...players.values()].map((p) => ({ ...p })),
-      monsters: [...monsters.values()].map((m) => ({ ...m })),
+      monsters: [...monsters.values()]
+        .filter((m) => {
+          for (const p of players.values()) {
+            if (p.hp <= 0) continue;
+            if (Math.hypot(p.x - m.x, p.z - m.z) <= 70) return true;
+          }
+          return false;
+        })
+        .map((m) => ({ ...m })),
       logs: logs.slice(),
       graves: [...graves.values()].map((g) => ({ ...g, items: { ...g.items } })),
     };
@@ -226,6 +237,7 @@ export function createWorld() {
       stealthUntil: 0,
       shroudUntil: input.shroudUntil ?? 0,
       graveDropped: false,
+      attunedGates: input.attunedGates?.length ? [...input.attunedGates] : [...DEFAULT_ATTUNED],
     };
     applyStats(player);
     player.hp = player.maxHp;
@@ -261,7 +273,19 @@ export function createWorld() {
     p.x = nx;
     p.z = nz;
     p.rotation = rotation || 0;
+    attuneNearby(p);
     return { ok: true };
+  }
+
+  function attuneNearby(p: PlayerState) {
+    if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
+    for (const city of CITIES) {
+      const wayfarer = NPCS.find((npc) => npc.city === city.id && npc.role === "wayfarer");
+      if (!wayfarer || p.attunedGates.includes(city.id)) continue;
+      if (Math.hypot(p.x - wayfarer.x, p.z - wayfarer.z) > 6) continue;
+      p.attunedGates.push(city.id);
+      log(`You attune to the ${city.name} stone.`);
+    }
   }
 
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
@@ -447,12 +471,22 @@ export function createWorld() {
     const p = players.get(id);
     const city = cityAt(cityId);
     if (!p || p.hp <= 0 || !city) return { ok: false, reason: "That gate is shut." };
-    if (!nearestWayfarer(p.x, p.z, 4.2)) return { ok: false, reason: "Find a wayfarer." };
-    if (Math.hypot(p.x - city.x, p.z - city.z) < 8) return { ok: true };
+    const here = nearestWayfarer(p.x, p.z, 4.2);
+    if (!here) return { ok: false, reason: "Find a wayfarer." };
+    if (here.city === cityId) return { ok: true };
+    const reason = gateHop(here.city, cityId, p.level, p.attunedGates ?? DEFAULT_ATTUNED);
+    if (reason) return { ok: false, reason };
     const spot = arrivalAt(city.x, city.z);
+    if (blocked(spot.x, spot.z)) return { ok: false, reason: "The arrival stone is blocked." };
     p.x = spot.x;
     p.z = spot.z;
-    log(`${p.username} stepped through the gate to ${city.name}.`);
+    p.rotation = 0;
+    if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
+    if (!p.attunedGates.includes(cityId)) {
+      p.attunedGates.push(cityId);
+      log(`You attune to the ${city.name} stone.`);
+    }
+    log(`${p.username} stepped through the stones to ${city.name}.`);
     return { ok: true };
   }
 
@@ -695,6 +729,18 @@ export function createWorld() {
         }
         continue;
       }
+      const camp = campOf(m);
+      let campHot = !camp;
+      if (camp) {
+        for (const p of players.values()) {
+          if (p.hp <= 0) continue;
+          if (Math.hypot(p.x - camp.cx, p.z - camp.cz) <= 60) {
+            campHot = true;
+            break;
+          }
+        }
+      }
+      if (!campHot) continue;
       const homeD = Math.hypot(m.x - m.homeX, m.z - m.homeZ);
       const def = mobByType(m.type);
       if (!m.nextHit) m.nextHit = 0;

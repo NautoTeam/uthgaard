@@ -1,5 +1,5 @@
 import { CAMPS, clampX, clampZ } from "./types";
-import { LAKES as WORLD_LAKES, LIVE_CITIES, ROADS as WORLD_ROADS, ZONES, BOUNDS } from "../content/world";
+import { LAKES as WORLD_LAKES, WORLD_CITIES, PHASE1_ROADS, ZONES, BOUNDS } from "../content/world";
 import { isLand, terrainAt, zoneAt } from "./mask";
 
 export const LAND = 150;
@@ -20,8 +20,8 @@ export interface CityDef {
   phase?: number;
 }
 
-export const CITIES: CityDef[] = LIVE_CITIES;
-export const ROADS: Array<[number, number, number, number]> = WORLD_ROADS;
+export const CITIES: CityDef[] = WORLD_CITIES;
+export const ROADS: Array<[number, number, number, number]> = PHASE1_ROADS;
 export const LAKES = WORLD_LAKES;
 
 export interface Hall {

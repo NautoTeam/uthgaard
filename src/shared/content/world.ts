@@ -211,3 +211,24 @@ export function zoneAt(x: number, z: number) {
   }
   return best;
 }
+
+export const DEFAULT_ATTUNED = ["uthgaard", "eldenreach", "hornwatch", "wardstone"];
+
+/** Why a Ley Gate hop is refused, or null when the stones will open. */
+export function gateHop(fromId: string, toId: string, level: number, attuned: string[]): string | null {
+  const city = WORLD_CITIES.find((row) => row.id === toId);
+  if (!city || fromId === toId) return "That gate is shut.";
+  const link = LINKS.find(
+    (row) => (row.from === fromId && row.to === toId) || (row.to === fromId && row.from === toId),
+  );
+  if (!link) return "The stones do not reach that place.";
+  const circuit = CIRCUITS.find((row) => row.id === link.circuit);
+  if (circuit && level < circuit.minLevel) {
+    if (circuit.id === "tide") return "Reach level 20 to use the Tide stones.";
+    return `Reach level ${circuit.minLevel} to use the ${circuit.name}.`;
+  }
+  if (circuit?.attune && circuit.firstHopFrom !== fromId && !attuned.includes(toId)) {
+    return `You have not attuned to ${city.name}'s stone.`;
+  }
+  return null;
+}
