@@ -146,7 +146,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       <div id="travel" hidden>
         <div id="travelPanel">
           <div id="travelTitle">Wayfarer</div>
-          <p id="travelHint">The gate can carry you to another city.</p>
+          <p id="travelHint">The stones can carry you onward.</p>
           <div id="travelButtons" />
           <button id="travelClose" type="button">
             Stay

@@ -119,7 +119,7 @@ export function createWorld() {
   function clearOfMobs(x: number, z: number, exceptId?: string) {
     for (const m of monsters.values()) {
       if (m.hp <= 0 || m.id === exceptId) continue;
-      if (screenGap(x, z, m.x, m.z) < 100) return false;
+      if (screenGap(x, z, m.x, m.z) < 58) return false;
     }
     return true;
   }

@@ -108,6 +108,8 @@ const PHASE1_ISLANDS = new Set(file.phases.phase1_cap25);
 
 export const BOUNDS: Bounds = file.bounds;
 export const ISLANDS: IslandDef[] = file.islands.filter((row) => PHASE1_ISLANDS.has(row.id));
+/** Later isles are not walkable yet. The map draws them as fogged outlines. */
+export const LATER_ISLANDS: IslandDef[] = file.islands.filter((row) => !PHASE1_ISLANDS.has(row.id));
 export const ZONES: ZoneDef[] = file.zones.filter((row) => PHASE1_ISLANDS.has(row.island));
 export const WORLD_CITIES: WorldCity[] = file.cities.filter((row) => (row.phase ?? 1) <= 1);
 export const LIVE_CITY_IDS = ["uthgaard", "eldenreach", "hornwatch"] as const;
