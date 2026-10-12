@@ -89,6 +89,20 @@ export const PRESTIGE_BONUS: Record<Exclude<Prestige, "">, { hp: number; mana: n
   Scout: { hp: 18, mana: 0 },
 };
 
+/** Level-scaled HP, mana, and stamina. The HUD and set-level both read this. */
+export function poolsFor(p: { race: Race; baseClass: BaseClass; level: number; prestigeClass?: string }) {
+  const a = attrsFor(p.race, p.baseClass);
+  let maxHp = Math.floor(70 + a.con * 2 + p.level * 9);
+  let maxMana = Math.floor(24 + a.int * 2 + p.level * 4);
+  let maxStamina = Math.floor(50 + a.dex * 2 + p.level * 2);
+  const bonus = p.prestigeClass ? PRESTIGE_BONUS[p.prestigeClass as Exclude<Prestige, "">] : undefined;
+  if (bonus) {
+    maxHp += bonus.hp;
+    maxMana += bonus.mana;
+  }
+  return { maxHp, maxMana, maxStamina };
+}
+
 export interface CampDef {
   type: string;
   level: number;
@@ -301,84 +315,56 @@ export interface PowerDef {
   label: string;
   /** Base classes and prestige names that may use it. Empty = everyone. */
   classes: string[];
+  /** Usable at this level. Hotbar fills the slot once the character reaches it. */
+  level: number;
+  /** Default hotbar slot, 1–8. 0 means not pre-slotted. */
+  slot: number;
   mana: number;
-  /**
-   * Stamina spent. Melee powers use this.
-   * Basic attack spends a little and refills between swings, so a new fighter
-   * does not stall. Stab spends more. Spells spend mana and 0 stamina.
-   */
+  /** Stamina spent. Melee powers use this. Spells spend mana and 0 stamina. */
   stamina: number;
+  /** 0 is self-cast. */
   range: number;
+  cooldown: number;
   damage: number;
   damagePerLevel: number;
-  /** Extra damage for these class names. */
   bonus: Record<string, number>;
   heal: number;
   healPerLevel: number;
-  kind: "damage" | "heal";
+  kind: "damage" | "heal" | "buff" | "snare" | "stealth";
 }
 
 export const POWERS: PowerDef[] = [
-  {
-    id: "attack",
-    label: "Attack",
-    classes: [],
-    mana: 0,
-    stamina: 8,
-    range: 7.6,
-    damage: 7,
-    damagePerLevel: 2,
-    bonus: { Fighter: 5, Warrior: 5 },
-    heal: 0,
-    healPerLevel: 0,
-    kind: "damage",
-  },
-  {
-    id: "heal",
-    label: "Heal",
-    classes: ["Healer", "Priest"],
-    mana: 10,
-    stamina: 0,
-    range: 0,
-    damage: 0,
-    damagePerLevel: 0,
-    bonus: {},
-    heal: 28,
-    healPerLevel: 2,
-    kind: "heal",
-  },
-  {
-    id: "fireball",
-    label: "Fireball",
-    classes: ["Mage", "Wizard"],
-    mana: 10,
-    stamina: 0,
-    range: 9,
-    damage: 14,
-    damagePerLevel: 3,
-    bonus: {},
-    heal: 0,
-    healPerLevel: 0,
-    kind: "damage",
-  },
-  {
-    id: "stab",
-    label: "Stab",
-    classes: ["Rogue", "Scout"],
-    mana: 0,
-    stamina: 14,
-    range: 3.4,
-    damage: 12,
-    damagePerLevel: 2,
-    bonus: {},
-    heal: 0,
-    healPerLevel: 0,
-    kind: "damage",
-  },
+  { id: "attack", label: "Attack", classes: [], level: 1, slot: 1, mana: 0, stamina: 8, range: 7.6, cooldown: 780, damage: 7, damagePerLevel: 2, bonus: { Fighter: 5, Warrior: 5 }, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "shield", label: "Shield Block", classes: ["Fighter", "Warrior"], level: 1, slot: 2, mana: 0, stamina: 12, range: 0, cooldown: 8000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
+  { id: "cleave", label: "Cleave", classes: ["Fighter", "Warrior"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.6, cooldown: 4000, damage: 10, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "wall", label: "Wall of Steel", classes: ["Fighter", "Warrior"], level: 8, slot: 4, mana: 0, stamina: 22, range: 0, cooldown: 18000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
+  { id: "heal", label: "Mending", classes: ["Healer", "Priest"], level: 1, slot: 2, mana: 10, stamina: 0, range: 0, cooldown: 2500, damage: 0, damagePerLevel: 0, bonus: {}, heal: 28, healPerLevel: 2, kind: "heal" },
+  { id: "succor", label: "Succor", classes: ["Healer", "Priest"], level: 4, slot: 3, mana: 18, stamina: 0, range: 0, cooldown: 6000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 48, healPerLevel: 4, kind: "heal" },
+  { id: "ward", label: "Ward", classes: ["Healer", "Priest"], level: 8, slot: 4, mana: 16, stamina: 0, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 12, healPerLevel: 1, kind: "buff" },
+  { id: "fireball", label: "Fireball", classes: ["Mage", "Wizard"], level: 1, slot: 1, mana: 10, stamina: 0, range: 9, cooldown: 1200, damage: 14, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "frostbind", label: "Frostbind", classes: ["Mage", "Wizard"], level: 1, slot: 2, mana: 12, stamina: 0, range: 8, cooldown: 6000, damage: 6, damagePerLevel: 1, bonus: {}, heal: 0, healPerLevel: 0, kind: "snare" },
+  { id: "bolt", label: "Arcane Bolt", classes: ["Mage", "Wizard"], level: 4, slot: 3, mana: 8, stamina: 0, range: 9, cooldown: 800, damage: 9, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "nova", label: "Nova", classes: ["Mage", "Wizard"], level: 8, slot: 4, mana: 22, stamina: 0, range: 7, cooldown: 8000, damage: 22, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "stealth", label: "Stealth", classes: ["Rogue", "Scout"], level: 1, slot: 2, mana: 0, stamina: 10, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "stealth" },
+  { id: "backstab", label: "Backstab", classes: ["Rogue", "Scout"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.2, cooldown: 5000, damage: 18, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "stab", label: "Stab", classes: ["Rogue", "Scout"], level: 1, slot: 4, mana: 0, stamina: 14, range: 3.4, cooldown: 2000, damage: 12, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
 ];
 
 export function powerById(id: string) {
   return POWERS.find((p) => p.id === id) ?? null;
+}
+
+/** Class powers overwrite the shared Attack slot. Empty slots stay empty until that level. */
+export function defaultHotbar(baseClass: string, prestige: string, level: number) {
+  const slots = ["", "", "", "", "", "", "", ""];
+  const usable = (power: PowerDef) => {
+    if (power.level > level || power.slot < 1 || power.slot > 8) return false;
+    if (!power.classes.length) return true;
+    return power.classes.includes(baseClass) || (!!prestige && power.classes.includes(prestige));
+  };
+  for (const power of POWERS) if (usable(power) && !power.classes.length) slots[power.slot - 1] = power.id;
+  for (const power of POWERS) if (usable(power) && power.classes.length) slots[power.slot - 1] = power.id;
+  return slots;
 }
 
 /** Sheet damage: basic attack plus weapon. Unequip drops the weapon term. */

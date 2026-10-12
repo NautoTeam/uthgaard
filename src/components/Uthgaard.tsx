@@ -153,19 +153,16 @@ function Isle({ profile }: { profile: IsleProfile }) {
           </button>
         </div>
       </div>
+      <div id="hotbar">
+        {Array.from({ length: 8 }, (_, i) => (
+          <button key={i} type="button" data-slot={i}>
+            <i className="cd" />
+            <b className="key">{i + 1}</b>
+            <span className="nm">—</span>
+          </button>
+        ))}
+      </div>
       <div id="skills">
-        <button type="button" data-skill="attack">
-          Attack
-        </button>
-        <button type="button" data-skill="heal">
-          Heal
-        </button>
-        <button type="button" data-skill="fireball">
-          Fireball
-        </button>
-        <button type="button" data-skill="stab">
-          Stab
-        </button>
         <button id="sheetBtn" type="button">
           Sheet
         </button>

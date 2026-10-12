@@ -216,6 +216,52 @@ body {
   color: #fff;
 }
 
+#hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  z-index: 8;
+}
+
+#hotbar button {
+  position: relative;
+  width: 72px;
+  height: 54px;
+  overflow: hidden;
+  padding: 14px 4px 4px;
+  background: #243024;
+  color: #efe6c8;
+  border: 1px solid #6a5a38;
+  touch-action: manipulation;
+}
+
+#hotbar .key {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  font-size: 11px;
+  color: #e6c56a;
+}
+
+#hotbar .nm {
+  display: block;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+#hotbar .cd {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
 #skills {
   position: absolute;
   right: max(8px, env(safe-area-inset-right));

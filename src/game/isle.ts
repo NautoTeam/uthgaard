@@ -22,7 +22,7 @@ import {
   screenGap,
 } from "./geo";
 import { CAMPS, PRESTIGE_OF, xpNeed, type BaseClass, type PublicState, type Race } from "./types";
-import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, gearTotals, hitChance, itemById, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
+import { MOBS, RACES, EQUIP_SLOTS, SKILLS, VENDOR_STOCK, attrsFor, conFor, defaultHotbar, gearTotals, hitChance, itemById, poolsFor, trainedDamage, mobByType, powerById, DEBUG_SET_LEVEL } from "../shared/content/catalog";
 import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 
@@ -184,6 +184,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     equipment: saved?.equipment,
     trainPoints: saved?.trainPoints,
     skills: saved?.skills,
+    hotbar: saved?.hotbar,
   };
 
   const authority = createAuthority();
@@ -588,18 +589,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function hud() {
     const p = me();
     if (!p) return;
-    const hpPct = Math.max(0, (p.hp / p.maxHp) * 100);
-    const mpPct = Math.max(0, (p.mana / p.maxMana) * 100);
-    const spPct = Math.max(0, ((p.stamina ?? 0) / (p.maxStamina || 1)) * 100);
+    const pools = poolsFor(p);
+    const maxHp = pools.maxHp;
+    const maxMana = pools.maxMana;
+    const maxStamina = pools.maxStamina;
+    const hp = p.maxHp === maxHp ? p.hp : p.hp >= p.maxHp - 0.5 || p.maxHp === 100 ? maxHp : Math.min(p.hp, maxHp);
+    const mana = p.maxMana === maxMana ? p.mana : p.mana >= p.maxMana - 0.5 || p.maxMana === 50 ? maxMana : Math.min(p.mana, maxMana);
+    const stamina = p.maxStamina === maxStamina ? p.stamina ?? 0 : (p.stamina ?? 0) >= p.maxStamina - 0.5 || p.maxStamina === 50 ? maxStamina : Math.min(p.stamina ?? 0, maxStamina);
+    const hpPct = Math.max(0, (hp / maxHp) * 100);
+    const mpPct = Math.max(0, (mana / maxMana) * 100);
+    const spPct = Math.max(0, (stamina / (maxStamina || 1)) * 100);
     const need = xpNeed(p.level);
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
       `<div class="gold-line">Gold ${p.gold}</div>` +
-      `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(p.hp)}/${p.maxHp}</span></div>` +
-      `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(p.mana)}/${p.maxMana}</span></div>` +
-      `<div class="bar sp"><i style="width:${spPct}%"></i><span>SP ${Math.round(p.stamina ?? 0)}/${p.maxStamina ?? 0}</span></div>` +
+      `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(hp)}/${maxHp}</span></div>` +
+      `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(mana)}/${maxMana}</span></div>` +
+      `<div class="bar sp"><i style="width:${spPct}%"></i><span>SP ${Math.round(stamina)}/${maxStamina}</span></div>` +
       `<div class="bar xp"><i style="width:${xpPct}%"></i><span>${xpLabel}</span></div>`;
     const sheetBody = root.querySelector<HTMLElement>("#sheetBody");
     if (sheetBody) {
@@ -616,20 +624,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         `<p class="sheet-note">Training points ${p.trainPoints ?? 0}. Sword ${p.skills?.sword ?? 0}% adds damage. Focus ${p.skills?.focus ?? 0}% adds hit chance.</p>` +
         `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
     }
+    const bar = p.hotbar?.length === 8 ? p.hotbar : defaultHotbar(p.baseClass, p.prestigeClass, p.level);
+    root.querySelectorAll<HTMLButtonElement>("#hotbar button").forEach((btn, i) => {
+      const id = bar[i] || "";
+      const power = id ? powerById(id) : null;
+      const name = btn.querySelector(".nm");
+      if (name) name.textContent = power ? power.label : "—";
+      const until = id ? (p.cooldowns?.[id] ?? 0) : 0;
+      const left = Math.max(0, until - Date.now());
+      const cd = btn.querySelector<HTMLElement>(".cd");
+      if (cd) cd.style.height = power && left > 0 ? `${Math.min(100, (left / power.cooldown) * 100)}%` : "0%";
+    });
     if (seenGold >= 0 && p.gold > seenGold) floatText(`+${p.gold - seenGold} gold`, "#e6c56a", 132);
     seenGold = p.gold;
     paintShop();
-    const kind = classKind(p.prestigeClass || p.baseClass);
-    for (const btn of skillButtons) {
-      const skill = btn.dataset.skill;
-      if (!skill) continue;
-      btn.hidden = !(
-        skill === "attack" ||
-        (skill === "heal" && kind === "healer") ||
-        (skill === "fireball" && kind === "mage") ||
-        (skill === "stab" && kind === "rogue")
-      );
-    }
     const ready = p.level >= 10 && !p.prestigeClass;
     promoteBtn.hidden = !ready;
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
@@ -837,13 +845,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const foe = chase ?? currentTarget();
     if (!foe) return;
     const dist = Math.hypot(foe.x - p.x, foe.z - p.z);
-    if (Date.now() < (p.nextSwing || 0)) return;
-    if (ranged && dist <= 8 && p.mana >= 10) {
+    if (ranged && dist <= 8 && p.mana >= 10 && Date.now() >= (p.cooldowns?.fireball ?? 0)) {
       pinnedId = foe.id;
       act("fireball");
       return;
     }
-    if (dist <= (powerById("attack")?.range ?? 7.6)) {
+    if (dist <= (powerById("attack")?.range ?? 7.6) && Date.now() >= Math.max(p.nextSwing || 0, p.cooldowns?.attack ?? 0)) {
       pinnedId = foe.id;
       act("attack");
     }
@@ -1098,9 +1105,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.restore();
           shadowAt(npc.x, npc.z, 12);
           drawHero(npc.race, npc.id, npc.x, npc.z);
-          ctx.fillStyle = npc.role === "vendor" ? "#b7e7a8" : npc.role === "trainer" ? "#c5e6ff" : "#f0e2b0";
-          ctx.font = "13px Georgia";
+          const tag = npc.role === "vendor" ? "VENDOR" : npc.role === "trainer" ? "TRAINER" : "WAYFARER";
+          const tagColor = npc.role === "vendor" ? "#39ff6a" : npc.role === "trainer" ? "#7ecbff" : "#f0e2b0";
+          ctx.fillStyle = "rgba(8,10,8,.82)";
+          ctx.fillRect(p.x - 46, p.y - 148, 92, 34);
+          ctx.font = "bold 13px Georgia";
           ctx.textAlign = "center";
+          ctx.fillStyle = tagColor;
+          ctx.fillText(tag, p.x, p.y - 134);
+          ctx.font = "13px Georgia";
+          ctx.fillStyle = "#fff6d8";
           ctx.fillText(npc.name, p.x, p.y - 118);
         },
       });
@@ -1277,6 +1291,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       equipment: p.equipment,
       trainPoints: p.trainPoints,
       skills: p.skills,
+      hotbar: p.hotbar,
     });
   }
 
@@ -1305,6 +1320,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
     }
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    const digit = /^Digit([1-8])$/.exec(e.code) || /^Numpad([1-8])$/.exec(e.code);
+    if (digit) {
+      e.preventDefault();
+      pressSlot(Number(digit[1]) - 1);
+      return;
+    }
     if (e.code === "KeyI") {
       e.preventDefault();
       bag.hidden = !bag.hidden;
@@ -1606,11 +1627,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function act(skill: string) {
     const power = powerById(skill);
-    const range = power && power.range > 0 ? power.range : skill === "stab" ? 3.5 : 3.8;
+    const selfCast = !power || power.range <= 0 || power.kind === "heal" || power.kind === "buff" || power.kind === "stealth";
+    const range = power && power.range > 0 ? power.range : 3.8;
     const pinned = pinnedId ? view().monsters.find((m) => m.id === pinnedId && m.hp > 0) : null;
     const p = me();
     const pinOk = pinned && p && Math.hypot(pinned.x - p.x, pinned.z - p.z) <= range;
-    const targetId = skill === "heal" ? null : pinOk ? pinned.id : nearestId(range);
+    const targetId = selfCast ? null : pinOk ? pinned.id : nearestId(range);
     const actor = actors.get(myId) ?? {
       x: 0,
       z: 0,
@@ -1623,9 +1645,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     };
     const now = performance.now();
     actor.attackUntil = now + 640;
-    if (skill === "fireball" || skill === "heal") actor.castUntil = now + 700;
+    if (power && power.mana > 0) actor.castUntil = now + 700;
     actors.set(myId, actor);
-    if (skill === "fireball" && targetId && p && (p.baseClass === "Mage" || p.prestigeClass === "Wizard") && p.mana >= 10) {
+    if (power && power.mana > 0 && power.kind !== "heal" && power.kind !== "buff" && targetId && p) {
       const m = view().monsters.find((mon) => mon.id === targetId);
       if (m) bolts.push({ x0: p.x, z0: p.z, x1: m.x, z1: m.z, born: performance.now() });
     }
@@ -1633,26 +1655,30 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else send({ op: "skill", id: myId, skill, targetId });
   }
 
-  function onSkill(e: Event) {
-    const btn = (e.currentTarget as HTMLElement).dataset.skill;
-    if (!btn) return;
-    e.preventDefault();
-    if (btn === "attack") {
-      const p = me();
-      const t = currentTarget();
-      if (p && t) {
-        const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
-        const inRange = mage ? Math.hypot(t.x - p.x, t.z - p.z) <= 7.2 : screenGap(t.x, t.z, p.x, p.z) >= MELEE_GAP;
-        if (!inRange) {
-          pinnedId = t.id;
-          chaseId = t.id;
-          const spot = mage ? rangedStand(t.x, t.z, p.x, p.z) : adjacentStand(t.x, t.z, p.x, p.z);
-          goTo(spot.x, spot.z, null, true);
-          return;
-        }
-      }
+  function pressSlot(index: number) {
+    const p = me();
+    const bar = p?.hotbar?.length === 8 ? p.hotbar : defaultHotbar(p?.baseClass || "Fighter", p?.prestigeClass || "", p?.level || 1);
+    const id = bar[index] || "";
+    if (!id) {
+      floatText("Nothing in that slot.");
+      return;
     }
-    act(btn);
+    const power = powerById(id);
+    const t = currentTarget();
+    if (power && power.range > 0 && p && t && Math.hypot(t.x - p.x, t.z - p.z) > power.range) {
+      pinnedId = t.id;
+      chaseId = t.id;
+      const mage = power.mana > 0;
+      const spot = mage ? rangedStand(t.x, t.z, p.x, p.z) : adjacentStand(t.x, t.z, p.x, p.z);
+      goTo(spot.x, spot.z, null, true);
+    }
+    act(id);
+  }
+
+  function onHotbar(e: Event) {
+    const slot = Number((e.currentTarget as HTMLElement).dataset.slot || 0);
+    e.preventDefault();
+    pressSlot(slot);
   }
 
   function onSheet(e: Event) {
@@ -1781,8 +1807,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (stickActive) setStick(e.clientX, e.clientY);
   }
 
-  const skillButtons = [...root.querySelectorAll<HTMLButtonElement>("#skills button[data-skill]")];
-  skillButtons.forEach((btn) => btn.addEventListener("pointerup", onSkill));
+  const hotbarButtons = [...root.querySelectorAll<HTMLButtonElement>("#hotbar button")];
+  hotbarButtons.forEach((btn) => btn.addEventListener("pointerup", onHotbar));
   promoteBtn.addEventListener("pointerup", onPromote);
   root.querySelector("#sheetBtn")!.addEventListener("pointerup", onSheet);
   root.querySelector("#sheetClose")!.addEventListener("pointerup", onSheetClose);
@@ -1875,7 +1901,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     window.clearInterval(saveTimer);
     onLeave();
     channel?.close();
-    skillButtons.forEach((btn) => btn.removeEventListener("pointerup", onSkill));
+    hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
     root.querySelector("#mapBtn")?.removeEventListener("pointerup", onMap);

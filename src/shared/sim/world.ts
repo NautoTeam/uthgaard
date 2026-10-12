@@ -1,5 +1,5 @@
 import { arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, conXp, conFor, mobByType, mobHp, powerById, PRESTIGE_BONUS, attrsFor } from "../content/catalog";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor } from "../content/catalog";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -28,6 +28,7 @@ export interface JoinInput {
   equipment?: Record<string, string>;
   trainPoints?: number;
   skills?: Record<string, number>;
+  hotbar?: string[];
 }
 
 function applyStats(p: PlayerState) {
@@ -37,14 +38,10 @@ function applyStats(p: PlayerState) {
   p.con = a.con;
   p.int = a.int;
   p.spi = a.spi;
-  p.maxHp = Math.floor(70 + a.con * 2 + p.level * 9);
-  p.maxMana = Math.floor(24 + a.int * 2 + p.level * 4);
-  p.maxStamina = Math.floor(50 + a.dex * 2 + p.level * 2);
-  const bonus = p.prestigeClass ? PRESTIGE_BONUS[p.prestigeClass] : undefined;
-  if (bonus) {
-    p.maxHp += bonus.hp;
-    p.maxMana += bonus.mana;
-  }
+  const pools = poolsFor(p);
+  p.maxHp = pools.maxHp;
+  p.maxMana = pools.maxMana;
+  p.maxStamina = pools.maxStamina;
   if (p.hp == null || p.hp > p.maxHp) p.hp = p.maxHp;
   if (p.mana == null || p.mana > p.maxMana) p.mana = p.maxMana;
   if (p.stamina == null || p.stamina > p.maxStamina) p.stamina = p.maxStamina;
@@ -52,6 +49,13 @@ function applyStats(p: PlayerState) {
   if (!p.equipment) p.equipment = {};
   if (p.trainPoints == null) p.trainPoints = 0;
   if (!p.skills) p.skills = {};
+  if (!p.cooldowns) p.cooldowns = {};
+  if (!p.guardUntil) p.guardUntil = 0;
+  if (!p.wallUntil) p.wallUntil = 0;
+  if (!p.stealthUntil) p.stealthUntil = 0;
+  const bar = defaultHotbar(p.baseClass, p.prestigeClass, p.level);
+  if (!p.hotbar || p.hotbar.length !== 8) p.hotbar = bar;
+  else for (let i = 0; i < 8; i++) if (!p.hotbar[i]) p.hotbar[i] = bar[i];
 }
 
 function levelUp(p: PlayerState) {
@@ -133,6 +137,7 @@ export function createWorld() {
         targetId: null,
         respawnAt: 0,
         nextHit: 0,
+        snareUntil: 0,
       });
     }
   }
@@ -152,7 +157,13 @@ export function createWorld() {
       if (!p.inventory) p.inventory = {};
       const row = { ...p, inventory: { ...(p.inventory ?? {}) }, equipment: { ...(p.equipment ?? {}) }, skills: { ...(p.skills ?? {}) } };
       players.set(p.id, row);
+      const prevMax = row.maxHp;
       applyStats(row);
+      if (prevMax !== row.maxHp && (row.hp >= prevMax - 0.5 || prevMax === 100)) {
+        row.hp = row.maxHp;
+        row.mana = row.maxMana;
+        row.stamina = row.maxStamina;
+      }
     }
     for (const m of state.monsters) {
       const slotX = m.slotX ?? m.x;
@@ -198,6 +209,11 @@ export function createWorld() {
       equipment: { ...(input.equipment ?? {}) },
       trainPoints: input.trainPoints ?? 0,
       skills: { ...(input.skills ?? {}) },
+      hotbar: input.hotbar ? [...input.hotbar] : [],
+      cooldowns: {},
+      guardUntil: 0,
+      wallUntil: 0,
+      stealthUntil: 0,
     };
     applyStats(player);
     player.hp = player.maxHp;
@@ -267,29 +283,40 @@ export function createWorld() {
 
   function strike(p: PlayerState, m: MonsterState, powerId: string, now: number): ActionResult {
     const power = powerById(powerId);
-    if (!power || power.kind !== "damage") return { ok: false, reason: "That path cannot use this." };
+    if (!power || (power.kind !== "damage" && power.kind !== "snare")) return { ok: false, reason: "That path cannot use this." };
     if (!canUse(p, power.classes)) return { ok: false, reason: "That path cannot use this." };
     if (m.hp <= 0) return { ok: false, reason: "Nothing in reach." };
     if (Math.hypot(p.x - m.x, p.z - m.z) > power.range) return { ok: false, reason: "Too far." };
-    if (p.nextSwing && now < p.nextSwing) return { ok: false };
+    if (!p.cooldowns) p.cooldowns = {};
+    const readyAt = Math.max(p.cooldowns[power.id] ?? 0, powerId === "attack" ? p.nextSwing || 0 : 0);
+    if (now < readyAt) return { ok: false, reason: "Not ready yet." };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
     if (power.stamina > 0 && p.stamina < power.stamina) return { ok: false, reason: "Not enough stamina." };
     if (power.mana === 0 && Math.random() * 100 >= hitChance(p)) {
-      p.nextSwing = now + (powerId === "attack" ? 780 : 900);
+      const cd = now + power.cooldown;
+      p.cooldowns[power.id] = cd;
+      if (powerId === "attack") p.nextSwing = cd;
       return { ok: true, dmg: 0, reason: "Missed." };
     }
     p.mana -= power.mana;
     p.stamina -= power.stamina || 0;
-    p.nextSwing = now + (powerId === "attack" ? 780 : 900);
+    p.cooldowns[power.id] = now + power.cooldown;
+    if (powerId === "attack") p.nextSwing = p.cooldowns[power.id];
     const bonus = power.bonus[p.baseClass] ?? power.bonus[p.prestigeClass] ?? 0;
     const strBonus = power.mana > 0 ? 0 : Math.max(0, Math.floor((p.str - 20) / 10));
     const gear = power.mana > 0 ? 0 : gearTotals(p.equipment).damage;
-    const dmg =
+    let dmg =
       powerId === "attack"
         ? trainedDamage(p)
         : power.damage + p.level * power.damagePerLevel + bonus + strBonus + gear;
+    if (powerId === "backstab" && p.stealthUntil > now) {
+      dmg *= 2;
+      p.stealthUntil = 0;
+    }
     m.hp = Math.max(0, m.hp - dmg);
     m.targetId = p.id;
+    p.stealthUntil = 0;
+    if (power.kind === "snare") m.snareUntil = now + 4000;
     if (m.hp <= 0) {
       const gold = powerId === "fireball" ? 2 : 1 + Math.floor(m.level / (powerId === "stab" ? 3 : 2));
       const verb =
@@ -301,8 +328,9 @@ export function createWorld() {
       const xp = finishKill(p, m, gold, verb);
       return { ok: true, dmg, reason: `+${xp} XP` };
     }
-    const hit = powerId === "fireball" ? "Fireball" : powerId === "stab" ? "Stab" : "Attack";
-    return { ok: true, dmg, reason: `${hit} hits for ${dmg}.` };
+    const hit = power.label || "Attack";
+    const snare = power.kind === "snare" ? " Snared." : "";
+    return { ok: true, dmg, reason: `${hit} hits for ${dmg}.${snare}` };
   }
 
   function attack(id: string, targetId: string | null): ActionResult {
@@ -312,28 +340,55 @@ export function createWorld() {
     return strike(p, m, "attack", Date.now());
   }
 
+  function beginPower(p: PlayerState, powerId: string, now: number): ActionResult | null {
+    const power = powerById(powerId);
+    if (!power) return { ok: false, reason: "That path cannot use this." };
+    if (p.level < power.level) return { ok: false, reason: `Requires level ${power.level}.` };
+    if (!canUse(p, power.classes)) return { ok: false, reason: "That path cannot use this." };
+    if (!p.cooldowns) p.cooldowns = {};
+    if (now < (p.cooldowns[power.id] ?? 0)) return { ok: false, reason: "Not ready yet." };
+    if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
+    if (power.stamina > 0 && p.stamina < power.stamina) return { ok: false, reason: "Not enough stamina." };
+    return null;
+  }
+
+  function payPower(p: PlayerState, powerId: string, now: number) {
+    const power = powerById(powerId)!;
+    p.mana -= power.mana;
+    p.stamina -= power.stamina || 0;
+    if (!p.cooldowns) p.cooldowns = {};
+    p.cooldowns[power.id] = now + power.cooldown;
+  }
+
   function skill(id: string, name: string, targetId: string | null): ActionResult {
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot act." };
     const power = powerById(name);
     if (!power) return { ok: false, reason: "That path cannot use this." };
-    if (!canUse(p, power.classes)) {
-      if (power.kind === "heal") return { ok: false, reason: "Only healers can mend." };
-      if (name === "fireball") return { ok: false, reason: "Only mages can cast fireball." };
-      if (name === "stab") return { ok: false, reason: "Only rogues can stab." };
-      return { ok: false, reason: "That path cannot use this." };
-    }
+    const now = Date.now();
+    const blockedPower = beginPower(p, name, now);
+    if (blockedPower) return blockedPower;
     if (power.kind === "heal") {
       if (p.hp >= p.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
-      if (p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
-      p.mana -= power.mana;
+      payPower(p, name, now);
       const gain = Math.min(p.maxHp - p.hp, power.heal + p.level * power.healPerLevel);
       p.hp += gain;
-      return { ok: true, reason: `Healed for ${Math.round(gain)}.` };
+      return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
+    }
+    if (power.kind === "buff" || power.kind === "stealth") {
+      payPower(p, name, now);
+      if (power.id === "shield" || power.id === "ward") p.guardUntil = now + 8000;
+      if (power.id === "wall") p.wallUntil = now + 6000;
+      if (power.id === "stealth") p.stealthUntil = now + 10000;
+      if (power.id === "ward") p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
+      if (power.id === "stealth") return { ok: true, reason: "You slip into stealth." };
+      if (power.id === "wall") return { ok: true, reason: "Wall of Steel raised." };
+      if (power.id === "ward") return { ok: true, reason: "Ward raised." };
+      return { ok: true, reason: "Shield Block raised." };
     }
     const m = targetId ? monsters.get(targetId) : undefined;
     if (!m || m.hp <= 0) return { ok: false, reason: "Nothing in reach." };
-    return strike(p, m, power.id, Date.now());
+    return strike(p, m, power.id, now);
   }
 
   function promote(id: string, cls: string): ActionResult {
@@ -564,6 +619,7 @@ export function createWorld() {
         let preyD = def.aggro;
         for (const p of players.values()) {
           if (p.hp <= 0) continue;
+          if (p.stealthUntil > now && m.targetId !== p.id) continue;
           if (!conFor(m.level, p.level).aggro) continue;
           const d = Math.hypot(p.x - m.x, p.z - m.z);
           if (d < preyD) {
@@ -585,7 +641,9 @@ export function createWorld() {
           if (now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
-            const dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
+            let dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
+            if (t.wallUntil > now) dmg = Math.max(1, Math.floor(dmg * 0.25));
+            else if (t.guardUntil > now) dmg = Math.max(1, Math.floor(dmg * 0.5));
             t.hp = Math.max(0, t.hp - dmg);
             if (t.hp <= 0) {
               log(`${t.username} was slain by a ${m.type}.`);
@@ -593,7 +651,7 @@ export function createWorld() {
             }
           }
         } else {
-          const stepLen = Math.min(0.42, Math.max(0, d - 5.6));
+          const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.42, Math.max(0, d - 5.6));
           const nx = m.x + ((t.x - m.x) / d) * stepLen;
           const nz = m.z + ((t.z - m.z) / d) * stepLen;
           const stepPos = resolveMove(m.x, m.z, nx, nz);

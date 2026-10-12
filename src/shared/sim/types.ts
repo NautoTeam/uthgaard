@@ -37,6 +37,11 @@ export interface PlayerState extends PlayerInit {
   equipment: Record<string, string>;
   trainPoints: number;
   skills: Record<string, number>;
+  hotbar: string[];
+  cooldowns: Record<string, number>;
+  guardUntil: number;
+  wallUntil: number;
+  stealthUntil: number;
 }
 
 export interface MonsterState {
@@ -55,6 +60,7 @@ export interface MonsterState {
   targetId: string | null;
   respawnAt: number;
   nextHit: number;
+  snareUntil: number;
 }
 
 export interface PublicState {
