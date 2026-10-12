@@ -862,6 +862,15 @@ export function createWorld() {
     }
   }
 
+  function grantXp(id: string, amount: number) {
+    const p = players.get(id);
+    if (!p || !(amount > 0)) return 0;
+    p.xp += Math.floor(amount);
+    const before = p.level;
+    levelUp(p);
+    return p.level - before;
+  }
+
   return {
     join,
     leave,
@@ -881,6 +890,7 @@ export function createWorld() {
     travel,
     respawn,
     loot,
+    grantXp,
     adoptGraves,
     note,
     step,

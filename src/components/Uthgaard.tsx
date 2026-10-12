@@ -134,6 +134,26 @@ function Isle({ profile }: { profile: IsleProfile }) {
     <div id="game">
       <canvas id="view" />
       <div id="clickDebug" />
+      <div id="debugHud" hidden>
+        <label>
+          Set level
+          <input id="debugHudLevel" type="number" min={1} max={25} defaultValue={20} />
+        </label>
+        <button id="debugHudLevelBtn" type="button">
+          Set level
+        </button>
+      </div>
+      <div id="groupFrame" hidden />
+      <div id="inviteToast" hidden>
+        <p id="inviteText" />
+        <button id="inviteAccept" type="button">
+          Accept
+        </button>
+        <button id="inviteDecline" type="button">
+          Decline
+        </button>
+      </div>
+      <div id="ctxMenu" hidden />
       <div id="stats" />
       <div id="legend">
         W up the screen, S down, A left, D right. Click a tile to walk. Click a creature, then Space or Attack. Halls, trees, and water block you.
@@ -201,7 +221,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       </div>
       <div id="train" hidden>
         <div id="trainPanel">
-          <div id="trainTitle">Eadric</div>
+          <div id="trainTitle">Trainer</div>
           <p id="trainPoints">Training points 0</p>
           <div id="trainList" />
           <button id="trainPromote" type="button" hidden>
@@ -214,7 +234,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       </div>
       <div id="shop" hidden>
         <div id="shopPanel">
-          <div id="shopTitle">Marta</div>
+          <div id="shopTitle">Vendor</div>
           <p id="shopGold">Gold 0</p>
           <div id="shopStock" />
           <div id="shopBag" />

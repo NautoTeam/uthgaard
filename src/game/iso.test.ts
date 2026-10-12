@@ -135,6 +135,51 @@ test("screen pixels are not treated as world tiles when the camera is far from t
   assert.ok(Math.hypot(hit.x - forgotten.x, hit.z - forgotten.z) > 40);
 });
 
+test("screenToWorld undoes worldToScreen for scattered heroes and cameras", () => {
+  for (let i = 0; i < 24; i++) {
+    const x = ((i * 17) % 90) - 30;
+    const z = ((i * 13) % 110) - 40;
+    const camX = i * 11 - 80;
+    const camZ = i * 7 - 40;
+    const w = 640 + (i % 6) * 180;
+    const h = 480 + (i % 5) * 120;
+    const s = worldToScreen(x, z, camX, camZ, w, h);
+    const back = screenToWorld(s.x, s.y, camX, camZ, w, h);
+    assert.ok(Math.abs(back.x - x) < 1e-6, `x ${back.x} vs ${x}`);
+    assert.ok(Math.abs(back.z - z) < 1e-6, `z ${back.z} vs ${z}`);
+  }
+});
+
+test("resolveClick matches the absolute inverse, and up-right is up-right in world deltas", () => {
+  const w = 1100;
+  const h = 700;
+  const hx = 12;
+  const hz = 40;
+  const cx = (hx - hz) * 24;
+  const cz = (hx + hz) * 12;
+  const hs = worldToScreen(hx, hz, cx, cz, w, h);
+  const hit = resolveClick({
+    clientX: hs.x + 140,
+    clientY: hs.y - 90,
+    rect: { left: 0, top: 0, width: w, height: h },
+    viewW: w,
+    viewH: h,
+    clientW: w,
+    clientH: h,
+    camX: cx,
+    camZ: cz,
+    heroX: hx,
+    heroZ: hz,
+  });
+  const abs = screenToWorld(hit.sx, hit.sy, cx, cz, w, h);
+  assert.ok(Math.abs(abs.x - hit.x) < 1e-6);
+  assert.ok(Math.abs(abs.z - hit.z) < 1e-6);
+  const dx = hit.x - hx;
+  const dz = hit.z - hz;
+  assert.ok(dx - dz > 0, `dx-dz ${dx - dz}`);
+  assert.ok(dx + dz < 0, `dx+dz ${dx + dz}`);
+});
+
 test("pointerToView still maps CSS pixels, not the bitmap", () => {
   const rect = { left: 0, top: 0, width: viewW, height: viewH };
   const p = pointerToView(viewW / 2, viewH / 2, rect, viewW, viewH);

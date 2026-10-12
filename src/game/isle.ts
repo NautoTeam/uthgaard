@@ -104,6 +104,9 @@ declare global {
         heroZ: number;
       } | null;
       dest?: () => { x: number; z: number } | null;
+      flushSave?: () => void;
+      panels?: () => { shop: boolean; travel: boolean; train: boolean; shopTitle: string; trainTitle: string };
+      groupMembers?: () => Array<{ id: string; name: string; level: number; hp: number; maxHp: number }>;
     };
   }
 }
@@ -166,10 +169,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const respawnBtn = root.querySelector<HTMLButtonElement>("#respawnBtn")!;
   const sheet = root.querySelector<HTMLElement>("#sheet")!;
   const shop = root.querySelector<HTMLElement>("#shop")!;
+  const shopTitle = root.querySelector<HTMLElement>("#shopTitle");
   const shopGold = root.querySelector<HTMLElement>("#shopGold")!;
   const shopStock = root.querySelector<HTMLElement>("#shopStock")!;
   const shopBag = root.querySelector<HTMLElement>("#shopBag")!;
   const trainPanel = root.querySelector<HTMLElement>("#train")!;
+  const trainTitle = root.querySelector<HTMLElement>("#trainTitle");
   const trainPointsEl = root.querySelector<HTMLElement>("#trainPoints")!;
   const trainList = root.querySelector<HTMLElement>("#trainList")!;
   const bag = root.querySelector<HTMLElement>("#bag")!;
@@ -177,6 +182,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const dollSlots = root.querySelector<HTMLElement>("#dollSlots")!;
   const debugRow = root.querySelector<HTMLElement>("#debugLevel");
   if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
+  const debugHud = root.querySelector<HTMLElement>("#debugHud");
+  const showDebugHud = new URLSearchParams(window.location.search).get("debug") === "1";
+  if (debugHud && showDebugHud) debugHud.hidden = false;
+  const groupFrame = root.querySelector<HTMLElement>("#groupFrame");
+  const inviteToast = root.querySelector<HTMLElement>("#inviteToast");
+  const inviteText = root.querySelector<HTMLElement>("#inviteText");
+  const ctxMenu = root.querySelector<HTMLElement>("#ctxMenu");
   const clickDebug = root.querySelector<HTMLElement>("#clickDebug");
   const clickDebugToggle = root.querySelector<HTMLInputElement>("#clickDebugToggle");
 
@@ -207,10 +219,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       el.hidden = true;
       return;
     }
-    if (el === mapOverlay) {
-      for (const other of [sheet, bag, shop, trainPanel, travelPanel]) drop(other);
-    } else {
-      drop(mapOverlay);
+    for (const other of [sheet, bag, shop, trainPanel, travelPanel, mapOverlay]) {
+      if (other !== el) drop(other);
     }
     el.hidden = false;
     panelStack.push(el);
@@ -323,7 +333,30 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let lastLogs = "";
   let viewW = 1;
   let viewH = 1;
+  type GroupPeer = {
+    id: string;
+    name: string;
+    level: number;
+    hp: number;
+    maxHp: number;
+    x: number;
+    z: number;
+    race: string;
+    group: string | null;
+    seen: number;
+  };
+  const groupPresence = new Map<string, GroupPeer>();
+  let myGroup: string | null = null;
+  let pendingInvite: { fromId: string; fromName: string; group: string } | null = null;
+  const GROUP_NEAR = 20;
   const cam = { x: 0, z: 0 };
+  {
+    const spawned = localPlayer();
+    if (spawned) {
+      cam.x = (spawned.x - spawned.z) * (TW / 2);
+      cam.z = (spawned.x + spawned.z) * (TH / 2);
+    }
+  }
   const notes: string[] = [];
   const floaters: Array<{ x: number; z: number; text: string; born: number; color: string; lift: number; size: number; life: number }> = [];
   let dead = false;
@@ -398,8 +431,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           if (live) live.nextSwing = Date.now() + 900;
           note(result.reason);
         } else if (result.ok === false) note(result.reason);
-        else if (result.reason.startsWith("+")) floatText(result.reason, "#b6e38a");
-        else if (!result.reason.includes("hits for") && result.reason !== "Missed.") floatText(result.reason);
+        else if (result.reason.startsWith("+")) {
+          if (!(result.reason.includes("XP") && shareKillXp(result.reason))) floatText(result.reason, "#b6e38a");
+        } else if (!result.reason.includes("hits for") && result.reason !== "Missed.") floatText(result.reason);
       }
       if (intent.op === "buy" || intent.op === "sell" || intent.op === "use" || intent.op === "equip" || intent.op === "unequip" || intent.op === "train" || intent.op === "promote") {
         bagSig = "";
@@ -792,6 +826,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       messages.scrollTop = messages.scrollHeight;
       lastLogs = sig;
     }
+    paintGroup();
   }
 
   let mapCache: HTMLCanvasElement | null = null;
@@ -1197,6 +1232,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         talkNpc = null;
         repaths = 0;
         stuckFor = 0;
+        dirty = true;
+        persist();
         if (npcId) openNpc(npcId);
       } else if (d > 0.05) {
         vx = (dx / d) * MOVE;
@@ -1240,6 +1277,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     repaths = 0;
     lastSpeed = stuck ? 0 : Math.hypot(vx, vz);
     if (stuck) return;
+    if (nx !== p.x || nz !== p.z) dirty = true;
     p.x = nx;
     p.z = nz;
     p.rotation = Math.atan2(vx, vz);
@@ -1421,6 +1459,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         },
       });
     }
+    for (const peer of freshPeers()) {
+      drawables.push({
+        key: peer.x + peer.z + 0.01,
+        draw: () => {
+          const race = (peer.race || "human").toLowerCase();
+          shadowAt(peer.x, peer.z, 14);
+          drawHero(race, `ghost-${peer.id}`, peer.x, peer.z);
+          const pt = worldToScreen(peer.x, peer.z);
+          ctx.font = "13px Georgia";
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#d5e6ff";
+          ctx.fillText(peer.name, pt.x, pt.y - 120);
+        },
+      });
+    }
     drawables.sort((a, b) => a.key - b.key);
     for (const d of drawables) d.draw();
     for (const m of state.monsters) {
@@ -1522,11 +1575,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let notedDeath = false;
 
   function saveIsNewer(disk: NonNullable<ReturnType<typeof loadSave>>) {
-    const at = disk.inputAt ?? 0;
-    const rev = disk.rev ?? 0;
-    if (at > appliedAt) return true;
-    if (at === appliedAt && rev > saveRev) return true;
-    return false;
+    return (disk.inputAt ?? 0) > appliedAt;
   }
 
   function adoptSave(disk: NonNullable<ReturnType<typeof loadSave>>) {
@@ -1534,6 +1583,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!p) return;
     if (typeof disk.x === "number") p.x = disk.x;
     if (typeof disk.z === "number") p.z = disk.z;
+    cam.x = (p.x - p.z) * (TW / 2);
+    cam.z = (p.x + p.z) * (TH / 2);
     p.gold = disk.gold ?? p.gold;
     p.level = disk.level || p.level;
     p.xp = disk.xp ?? p.xp;
@@ -1568,8 +1619,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function touchInput() {
-    const disk = loadSave(profile.username);
-    if (disk && saveIsNewer(disk)) adoptSave(disk);
     lastInput = Date.now();
     dirty = true;
   }
@@ -1608,9 +1657,323 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (wrote !== false) {
       saveRev = wrote;
       appliedAt = lastInput;
-      dirty = true;
+      dirty = false;
     }
   }
+
+  type GroupWire = {
+    t: string;
+    id?: string;
+    name?: string;
+    fromId?: string;
+    fromName?: string;
+    toName?: string;
+    group?: string | null;
+    level?: number;
+    hp?: number;
+    maxHp?: number;
+    x?: number;
+    z?: number;
+    race?: string;
+    amount?: number;
+  };
+
+  function postGroup(msg: GroupWire) {
+    groupChannel?.postMessage(msg);
+  }
+
+  function myName() {
+    return me()?.username ?? profile.username;
+  }
+
+  function hideInvite() {
+    pendingInvite = null;
+    if (inviteToast) inviteToast.hidden = true;
+  }
+
+  function showInvite(fromName: string) {
+    if (!inviteToast || !inviteText) return;
+    inviteText.textContent = `${fromName} invites you.`;
+    inviteToast.hidden = false;
+  }
+
+  function freshPeers() {
+    const now = Date.now();
+    const rows: GroupPeer[] = [];
+    for (const peer of groupPresence.values()) {
+      if (now - peer.seen > 1600) continue;
+      rows.push(peer);
+    }
+    return rows;
+  }
+
+  function findPeer(name: string) {
+    const want = name.trim().toLowerCase();
+    if (!want) return null;
+    return freshPeers().find((peer) => peer.name.toLowerCase() === want) ?? null;
+  }
+
+  function groupRoster() {
+    const self = me();
+    if (!myGroup || !self) return [];
+    const rows = [
+      {
+        id: myId,
+        name: self.username,
+        level: self.level,
+        hp: self.hp,
+        maxHp: Math.max(1, self.maxHp),
+      },
+    ];
+    for (const peer of freshPeers()) {
+      if (peer.group !== myGroup) continue;
+      rows.push({
+        id: peer.id,
+        name: peer.name,
+        level: peer.level,
+        hp: peer.hp,
+        maxHp: Math.max(1, peer.maxHp),
+      });
+    }
+    return rows;
+  }
+
+  function paintGroup() {
+    if (!groupFrame) return;
+    const rows = groupRoster();
+    if (rows.length < 2) {
+      groupFrame.hidden = true;
+      groupFrame.innerHTML = "";
+      return;
+    }
+    groupFrame.hidden = false;
+    groupFrame.innerHTML = rows
+      .map((row) => {
+        const pct = Math.max(0, Math.min(100, (row.hp / row.maxHp) * 100));
+        return `<div class="group-row"><b>${escapeHtml(row.name)}</b> · Lv ${row.level}<div class="bar hp"><i style="width:${pct}%"></i></div></div>`;
+      })
+      .join("");
+  }
+
+  function membersNear(x: number, z: number) {
+    if (!myGroup) return [];
+    const ids = [myId];
+    for (const peer of freshPeers()) {
+      if (peer.group !== myGroup) continue;
+      if (Math.hypot(peer.x - x, peer.z - z) <= GROUP_NEAR) ids.push(peer.id);
+    }
+    return ids;
+  }
+
+  function shareKillXp(reason: string) {
+    const matched = /^\+(\d+) XP$/.exec(reason);
+    if (!matched || !myGroup) return false;
+    const base = Number(matched[1]);
+    const p = me();
+    if (!p || !(base > 0)) return false;
+    const near = membersNear(p.x, p.z);
+    if (near.length < 2) return false;
+    const bonus = Math.ceil(base * 0.1 * (near.length - 1));
+    if (bonus > 0) world.grantXp(myId, bonus);
+    const total = base + bonus;
+    dirty = true;
+    note(`+${total} XP`);
+    postGroup({ t: "xp", fromId: myId, amount: total, x: p.x, z: p.z, group: myGroup });
+    return true;
+  }
+
+  function ensureGroup() {
+    if (!myGroup) myGroup = myId;
+    return myGroup;
+  }
+
+  function inviteNamed(name: string) {
+    const peer = findPeer(name);
+    if (!peer) {
+      note("No one nearby by that name.");
+      return;
+    }
+    if (myGroup && peer.group === myGroup) {
+      note(`${peer.name} is already in the group.`);
+      return;
+    }
+    const group = ensureGroup();
+    postGroup({ t: "invite", fromId: myId, fromName: myName(), toName: peer.name, group });
+    note(`You invite ${peer.name}.`);
+    pulseGroup();
+  }
+
+  function acceptInvite() {
+    if (!pendingInvite) return;
+    myGroup = pendingInvite.group;
+    postGroup({ t: "join", id: myId, name: myName(), group: myGroup, level: me()?.level ?? 1, hp: me()?.hp ?? 0, maxHp: me()?.maxHp ?? 1, x: me()?.x ?? 0, z: me()?.z ?? 0, race: me()?.race ?? profile.race });
+    note("You join the group.");
+    hideInvite();
+    pulseGroup();
+    paintGroup();
+  }
+
+  function declineInvite() {
+    if (!pendingInvite) return;
+    postGroup({ t: "decline", fromId: pendingInvite.fromId, name: myName() });
+    note("You decline.");
+    hideInvite();
+  }
+
+  function leaveGroup() {
+    if (!myGroup) return;
+    const group = myGroup;
+    myGroup = null;
+    postGroup({ t: "leave", id: myId, group });
+    note("You leave the group.");
+    pulseGroup();
+    paintGroup();
+  }
+
+  function rememberPeer(msg: GroupWire) {
+    if (!msg.id || msg.id === myId) return;
+    const prev = groupPresence.get(msg.id);
+    groupPresence.set(msg.id, {
+      id: msg.id,
+      name: msg.name || prev?.name || "Hero",
+      level: msg.level ?? prev?.level ?? 1,
+      hp: msg.hp ?? prev?.hp ?? 0,
+      maxHp: msg.maxHp ?? prev?.maxHp ?? 1,
+      x: typeof msg.x === "number" ? msg.x : prev?.x ?? 0,
+      z: typeof msg.z === "number" ? msg.z : prev?.z ?? 0,
+      race: msg.race || prev?.race || "human",
+      group: msg.group === undefined ? prev?.group ?? null : msg.group,
+      seen: Date.now(),
+    });
+  }
+
+  function onGroupMessage(ev: MessageEvent) {
+    const msg = ev.data as GroupWire;
+    if (!msg || typeof msg.t !== "string") return;
+    if (msg.t === "hi" && msg.id) {
+      rememberPeer(msg);
+      return;
+    }
+    if (msg.t === "invite" && msg.toName && msg.toName.toLowerCase() === myName().toLowerCase() && msg.fromId && msg.fromId !== myId) {
+      if (myGroup) {
+        postGroup({ t: "decline", fromId: msg.fromId, name: myName() });
+        return;
+      }
+      pendingInvite = { fromId: msg.fromId, fromName: msg.fromName || "Someone", group: msg.group || msg.fromId };
+      showInvite(pendingInvite.fromName);
+      return;
+    }
+    if (msg.t === "join" && msg.id && msg.group && msg.group === myGroup) {
+      rememberPeer({ ...msg, group: msg.group });
+      paintGroup();
+      return;
+    }
+    if (msg.t === "decline" && msg.fromId === myId && msg.name) {
+      note(`${msg.name} declines.`);
+      if (groupRoster().length < 2) {
+        myGroup = null;
+        paintGroup();
+      }
+      return;
+    }
+    if (msg.t === "leave" && msg.id) {
+      const peer = groupPresence.get(msg.id);
+      if (peer) peer.group = null;
+      paintGroup();
+      return;
+    }
+    if (msg.t === "xp" && msg.fromId && msg.fromId !== myId && msg.group && msg.group === myGroup && typeof msg.amount === "number") {
+      const p = me();
+      if (!p || typeof msg.x !== "number" || typeof msg.z !== "number") return;
+      if (Math.hypot(p.x - msg.x, p.z - msg.z) > GROUP_NEAR) return;
+      world.grantXp(myId, msg.amount);
+      dirty = true;
+      note(`+${Math.floor(msg.amount)} XP`);
+    }
+  }
+
+  function pulseGroup() {
+    const p = me();
+    if (!p) return;
+    postGroup({
+      t: "hi",
+      id: myId,
+      name: p.username,
+      level: p.level,
+      hp: p.hp,
+      maxHp: p.maxHp,
+      x: p.x,
+      z: p.z,
+      race: p.race,
+      group: myGroup,
+    });
+  }
+
+  function peerAt(sx: number, sy: number) {
+    let best: GroupPeer | null = null;
+    let bestD = 48;
+    for (const peer of freshPeers()) {
+      const sp = worldToScreen(peer.x, peer.z);
+      const above = sp.y - sy;
+      if (Math.abs(sx - sp.x) > 36 || above < -6 || above > 130) continue;
+      const d = Math.hypot(sx - sp.x, sy - sp.y);
+      if (d < bestD) {
+        bestD = d;
+        best = peer;
+      }
+    }
+    return best;
+  }
+
+  function showCtx(clientX: number, clientY: number, peer: GroupPeer | null) {
+    if (!ctxMenu) return;
+    const items: Array<{ act: string; label: string; name: string }> = [];
+    if (peer && peer.group !== myGroup) items.push({ act: "invite", label: `Invite ${peer.name}`, name: peer.name });
+    if (myGroup) items.push({ act: "leave", label: "Leave group", name: "" });
+    if (!items.length) {
+      ctxMenu.hidden = true;
+      return;
+    }
+    const rect = root.getBoundingClientRect();
+    ctxMenu.style.left = `${Math.round(clientX - rect.left)}px`;
+    ctxMenu.style.top = `${Math.round(clientY - rect.top)}px`;
+    ctxMenu.innerHTML = items
+      .map((item) => `<button type="button" data-act="${item.act}" data-name="${escapeHtml(item.name)}">${escapeHtml(item.label)}</button>`)
+      .join("");
+    ctxMenu.hidden = false;
+  }
+
+  function onContextMenu(e: MouseEvent) {
+    if (!(e.target instanceof Node) || !root.contains(e.target)) return;
+    e.preventDefault();
+    if (!mapOverlay.hidden) return;
+    const hit = readClick(e);
+    showCtx(e.clientX, e.clientY, peerAt(hit.sx, hit.sy));
+  }
+
+  function onCtxClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !ctxMenu) return;
+    e.preventDefault();
+    const act = btn.dataset.act;
+    const name = btn.dataset.name || "";
+    ctxMenu.hidden = true;
+    if (act === "invite" && name) inviteNamed(name);
+    if (act === "leave") leaveGroup();
+  }
+
+  function handleSlash(text: string) {
+    const body = text.slice(1).trim();
+    const gap = body.indexOf(" ");
+    const cmd = (gap < 0 ? body : body.slice(0, gap)).toLowerCase();
+    const arg = gap < 0 ? "" : body.slice(gap + 1).trim();
+    if (cmd === "invite" && arg) inviteNamed(arg);
+    else if (cmd === "leave") leaveGroup();
+    else if (cmd === "accept") acceptInvite();
+    else note("Unknown command.");
+  }
+
+  let groupChannel: BroadcastChannel | null = null;
 
   function onKeyDown(e: KeyboardEvent) {
     touchInput();
@@ -1801,13 +2164,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const above = p.y - sy;
     return Math.abs(sx - p.x) < 48 && above > -18 && above < height;
   }
+  function npcHit(sx: number, sy: number, x: number, z: number) {
+    const p = worldToScreen(x, z);
+    const above = p.y - sy;
+    const dx = Math.abs(sx - p.x);
+    if (above > 108 && above < 152 && dx < 48) return true;
+    return dx < 34 && above > -4 && above < 112;
+  }
   function onPointer(e: PointerEvent) {
-    touchInput();
+    if (ctxMenu) ctxMenu.hidden = true;
     if (e.button !== 0 || !mapOverlay.hidden) return;
+    const hit = readClick(e);
+    touchInput();
     const p = me();
     if (!p || p.hp <= 0) return;
     armPanelBlock();
-    const hit = readClick(e);
     const sx = hit.sx;
     const sy = hit.sy;
     const w = { x: hit.x, z: hit.z };
@@ -1836,20 +2207,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     let pickedNpc: (typeof NPCS)[number] | null = null;
     for (const npc of NPCS) {
-      if (spriteHit(sx, sy, npc.x, npc.z, 160)) {
+      if (npcHit(sx, sy, npc.x, npc.z)) {
         pickedNpc = npc;
         break;
-      }
-    }
-    if (!pickedNpc) {
-      let npcBest = 2.1;
-      for (const npc of NPCS) {
-        const d = Math.hypot(npc.x - w.x, npc.z - w.z);
-        const sp = worldToScreen(npc.x, npc.z);
-        if (d < npcBest && Math.hypot(sp.x - sx, sp.y - sy) < 90) {
-          npcBest = d;
-          pickedNpc = npc;
-        }
       }
     }
     if (pickedNpc) {
@@ -1937,7 +2297,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function openTrain() {
     const p = me();
-    if (!p || !nearestTrainer(p.x, p.z, 8)) return;
+    const trainer = p ? nearestTrainer(p.x, p.z, 8) : null;
+    if (!p || !trainer) return;
+    if (trainTitle) trainTitle.textContent = trainer.name;
     trainSig = "";
     setOpen(trainPanel, true);
     paintTrain();
@@ -1965,7 +2327,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function openShop() {
     const p = me();
-    if (!p || !nearestVendor(p.x, p.z, 8)) return;
+    const vendor = p ? nearestVendor(p.x, p.z, 8) : null;
+    if (!p || !vendor) return;
+    if (shopTitle) shopTitle.textContent = vendor.name;
     shopSig = "";
     setOpen(shop, true);
     paintShop();
@@ -2242,7 +2606,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function onDebugLevel(e: Event) {
     e.preventDefault();
     const input = root.querySelector<HTMLInputElement>("#debugLevelInput");
+    touchInput();
     send({ op: "setLevel", id: myId, level: Number(input?.value || 10) });
+    persist();
+  }
+  function onDebugHudLevel(e: Event) {
+    e.preventDefault();
+    const input = root.querySelector<HTMLInputElement>("#debugHudLevel");
+    touchInput();
+    send({ op: "setLevel", id: myId, level: Number(input?.value || 20) });
+    persist();
   }
   function onDebugPlus(e: Event) {
     e.preventDefault();
@@ -2287,10 +2660,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function onChatKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && chatInput.value.trim()) {
-      send({ op: "chat", id: myId, msg: chatInput.value.trim() });
-      chatInput.value = "";
+    if (e.key !== "Enter") return;
+    const text = chatInput.value.trim();
+    if (!text) return;
+    chatInput.value = "";
+    if (text.startsWith("/")) {
+      handleSlash(text);
+      return;
     }
+    send({ op: "chat", id: myId, msg: text });
   }
 
   function setStick(clientX: number, clientY: number) {
@@ -2350,6 +2728,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   trainClose.addEventListener("pointerup", onTrainClose);
   root.querySelector("#trainPromote")?.addEventListener("pointerup", onPromote);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
+  root.querySelector("#debugHudLevelBtn")?.addEventListener("pointerup", onDebugHudLevel);
+  root.querySelector("#inviteAccept")?.addEventListener("pointerup", acceptInvite);
+  root.querySelector("#inviteDecline")?.addEventListener("pointerup", declineInvite);
+  ctxMenu?.addEventListener("pointerup", onCtxClick);
   root.querySelector("#debugPlusBtn")?.addEventListener("pointerup", onDebugPlus);
   root.querySelector("#debugHpBtn")?.addEventListener("pointerup", onDebugHp);
   root.querySelector("#debugKillBtn")?.addEventListener("pointerup", onDebugKill);
@@ -2372,11 +2754,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   window.addEventListener("keyup", onKeyUp);
   window.addEventListener("blur", onBlur);
   window.addEventListener("resize", resize);
+  root.addEventListener("contextmenu", onContextMenu);
+
+  try {
+    groupChannel = new BroadcastChannel("caldrenmoor-group-v1");
+    groupChannel.onmessage = (ev) => onGroupMessage(ev);
+    pulseGroup();
+  } catch {
+    groupChannel = null;
+  }
 
   const stepTimer = window.setInterval(() => {
     if (host && mapOverlay.hidden) authority.step(Date.now());
   }, 400);
   const saveTimer = window.setInterval(persist, 2000);
+  const groupTimer = window.setInterval(pulseGroup, 400);
 
   function onLeave() {
     persist();
@@ -2412,6 +2804,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       dest = null;
       path = [];
       chaseId = null;
+      cam.x = (p.x - p.z) * (TW / 2);
+      cam.z = (p.x + p.z) * (TH / 2);
     },
     swing: () => act("attack"),
     setLevel: (level: number) => send({ op: "setLevel", id: myId, level }),
@@ -2435,6 +2829,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }),
     lastClick: () => lastClick,
     dest: () => (dest ? { x: dest.x, z: dest.z } : null),
+    flushSave: () => {
+      dirty = true;
+      persist();
+    },
+    panels: () => ({
+      shop: !shop.hidden,
+      travel: !travelPanel.hidden,
+      train: !trainPanel.hidden,
+      shopTitle: shopTitle?.textContent ?? "",
+      trainTitle: trainTitle?.textContent ?? "",
+    }),
+    groupMembers: () => groupRoster().map((row) => ({ id: row.id, name: row.name, level: row.level, hp: row.hp, maxHp: row.maxHp })),
   };
 
   resize();
@@ -2450,12 +2856,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     cancelAnimationFrame(raf);
     window.clearInterval(stepTimer);
     window.clearInterval(saveTimer);
+    window.clearInterval(groupTimer);
     onLeave();
+    groupChannel?.close();
+    groupChannel = null;
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
     root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
+    root.querySelector("#debugHudLevelBtn")?.removeEventListener("pointerup", onDebugHudLevel);
+    root.querySelector("#inviteAccept")?.removeEventListener("pointerup", acceptInvite);
+    root.querySelector("#inviteDecline")?.removeEventListener("pointerup", declineInvite);
+    ctxMenu?.removeEventListener("pointerup", onCtxClick);
     root.querySelector("#debugPlusBtn")?.removeEventListener("pointerup", onDebugPlus);
     root.querySelector("#debugHpBtn")?.removeEventListener("pointerup", onDebugHp);
     root.querySelector("#debugKillBtn")?.removeEventListener("pointerup", onDebugKill);
@@ -2486,6 +2899,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     window.removeEventListener("keyup", onKeyUp);
     window.removeEventListener("blur", onBlur);
     window.removeEventListener("resize", resize);
+    root.removeEventListener("contextmenu", onContextMenu);
     window.removeEventListener("pagehide", onLeave);
     if (window.__controlsTest) delete window.__controlsTest;
   };
