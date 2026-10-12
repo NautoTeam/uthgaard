@@ -34,3 +34,19 @@ export function deleteSave(username: string) {
   delete map[username];
   localStorage.setItem(KEY, JSON.stringify(map));
 }
+
+const GRAVES = "uthgaard-graves-v1";
+
+export function loadGraves<T>(): T[] {
+  try {
+    const raw = localStorage.getItem(GRAVES);
+    const parsed = raw ? (JSON.parse(raw) as T[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeGraves(graves: unknown[]) {
+  localStorage.setItem(GRAVES, JSON.stringify(graves));
+}

@@ -240,7 +240,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       <div id="death" hidden>
         <div id="deathPanel">
           <h2>You have fallen</h2>
-          <p id="deathHint">Respawn in Uthgaard leaves some gold and XP behind.</p>
+          <p id="deathHint">A tombstone holds your gold. Respawn in Uthgaard under a death shroud.</p>
           <button id="respawnBtn" type="button">
             Respawn in Uthgaard
           </button>

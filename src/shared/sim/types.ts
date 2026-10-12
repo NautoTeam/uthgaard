@@ -42,6 +42,8 @@ export interface PlayerState extends PlayerInit {
   guardUntil: number;
   wallUntil: number;
   stealthUntil: number;
+  shroudUntil: number;
+  graveDropped: boolean;
 }
 
 export interface MonsterState {
@@ -63,9 +65,19 @@ export interface MonsterState {
   snareUntil: number;
 }
 
+export interface GraveState {
+  id: string;
+  owner: string;
+  x: number;
+  z: number;
+  gold: number;
+  items: Record<string, number>;
+}
+
 export interface PublicState {
   players: PlayerState[];
   monsters: MonsterState[];
+  graves: GraveState[];
   logs: string[];
 }
 

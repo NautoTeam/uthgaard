@@ -1,5 +1,6 @@
 import { arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
-import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor } from "../content/catalog";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
+import type { GraveState } from "./types";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -29,6 +30,7 @@ export interface JoinInput {
   trainPoints?: number;
   skills?: Record<string, number>;
   hotbar?: string[];
+  shroudUntil?: number;
 }
 
 function applyStats(p: PlayerState) {
@@ -53,6 +55,8 @@ function applyStats(p: PlayerState) {
   if (!p.guardUntil) p.guardUntil = 0;
   if (!p.wallUntil) p.wallUntil = 0;
   if (!p.stealthUntil) p.stealthUntil = 0;
+  if (p.shroudUntil == null) p.shroudUntil = 0;
+  if (p.graveDropped == null) p.graveDropped = false;
   const bar = defaultHotbar(p.baseClass, p.prestigeClass, p.level);
   if (!p.hotbar || p.hotbar.length !== 8) p.hotbar = bar;
   else for (let i = 0; i < 8; i++) if (!p.hotbar[i]) p.hotbar[i] = bar[i];
@@ -73,6 +77,7 @@ function levelUp(p: PlayerState) {
 export function createWorld() {
   const players = new Map<string, PlayerState>();
   const monsters = new Map<string, MonsterState>();
+  const graves = new Map<string, GraveState>();
   const logs: string[] = [];
   let mid = 1;
 
@@ -147,6 +152,7 @@ export function createWorld() {
       players: [...players.values()].map((p) => ({ ...p })),
       monsters: [...monsters.values()].map((m) => ({ ...m })),
       logs: logs.slice(),
+      graves: [...graves.values()].map((g) => ({ ...g, items: { ...g.items } })),
     };
   }
 
@@ -171,6 +177,10 @@ export function createWorld() {
       monsters.set(m.id, { ...m, slotX, slotZ });
     }
     logs.splice(0, logs.length, ...state.logs.slice(-40));
+    if (Array.isArray(state.graves)) {
+      graves.clear();
+      for (const g of state.graves) graves.set(g.id, { ...g, items: { ...(g.items ?? {}) } });
+    }
   }
 
   function join(input: JoinInput): PlayerState {
@@ -214,6 +224,8 @@ export function createWorld() {
       guardUntil: 0,
       wallUntil: 0,
       stealthUntil: 0,
+      shroudUntil: input.shroudUntil ?? 0,
+      graveDropped: false,
     };
     applyStats(player);
     player.hp = player.maxHp;
@@ -345,6 +357,7 @@ export function createWorld() {
     if (!power) return { ok: false, reason: "That path cannot use this." };
     if (p.level < power.level) return { ok: false, reason: `Requires level ${power.level}.` };
     if (!canUse(p, power.classes)) return { ok: false, reason: "That path cannot use this." };
+    if (power.mana > 0 && p.shroudUntil > now) return { ok: false, reason: "The shroud prevents casting." };
     if (!p.cooldowns) p.cooldowns = {};
     if (now < (p.cooldowns[power.id] ?? 0)) return { ok: false, reason: "Not ready yet." };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
@@ -368,6 +381,33 @@ export function createWorld() {
     const now = Date.now();
     const blockedPower = beginPower(p, name, now);
     if (blockedPower) return blockedPower;
+    if (power.id === "succor") {
+      let ally = targetId ? players.get(targetId) : undefined;
+      if (!ally || ally.hp <= 0) {
+        let best: PlayerState | null = null;
+        let bestD = power.range;
+        for (const other of players.values()) {
+          if (other.hp <= 0 || other.shroudUntil <= now) continue;
+          const d = Math.hypot(other.x - p.x, other.z - p.z);
+          if (d <= bestD) {
+            best = other;
+            bestD = d;
+          }
+        }
+        ally = best ?? p;
+      }
+      if (Math.hypot(ally.x - p.x, ally.z - p.z) > power.range) return { ok: false, reason: "Too far." };
+      const shrouded = ally.shroudUntil > now;
+      if (!shrouded && ally.hp >= ally.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
+      payPower(p, name, now);
+      const gain = Math.min(ally.maxHp - ally.hp, power.heal + p.level * power.healPerLevel);
+      ally.hp += gain;
+      if (shrouded) {
+        ally.shroudUntil = 0;
+        return { ok: true, reason: `Succor lifts the shroud from ${ally.username}.` };
+      }
+      return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
+    }
     if (power.kind === "heal") {
       if (p.hp >= p.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
       payPower(p, name, now);
@@ -539,9 +579,7 @@ export function createWorld() {
   function respawn(id: string): ActionResult {
     const p = players.get(id);
     if (!p || p.hp > 0) return { ok: false, reason: "You are still standing." };
-    const goldLost = Math.min(p.gold, Math.max(p.gold > 0 ? 5 : 0, Math.floor(p.gold * 0.15)));
     const xpLost = Math.floor(p.xp * 0.1);
-    p.gold -= goldLost;
     p.xp = Math.max(0, p.xp - xpLost);
     const spot = arrivalAt(0, 0);
     p.x = spot.x;
@@ -549,8 +587,42 @@ export function createWorld() {
     p.hp = p.maxHp;
     p.mana = p.maxMana;
     p.stamina = p.maxStamina;
-    log(`${p.username} returned to Uthgaard, leaving ${goldLost} gold and ${xpLost} XP behind.`);
-    return { ok: true };
+    p.graveDropped = false;
+    p.shroudUntil = Date.now() + DEATH_SHROUD_MS;
+    log(`${p.username} returned to Uthgaard under a death shroud, leaving ${xpLost} XP behind.`);
+    return { ok: true, reason: "Shrouded for 60s." };
+  }
+
+  function dropGrave(p: PlayerState) {
+    if (p.hp > 0 || p.graveDropped) return;
+    p.graveDropped = true;
+    const gold = Math.min(p.gold, Math.max(p.gold > 0 ? 5 : 0, Math.floor(p.gold * 0.15)));
+    p.gold -= gold;
+    const id = "g" + Math.floor(Math.random() * 1e9).toString(36);
+    graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {} });
+    log(`${p.username} fell. A tombstone holds ${gold} gold.`);
+  }
+
+  function loot(id: string, graveId: string): ActionResult {
+    const p = players.get(id);
+    const grave = graves.get(graveId);
+    if (!p || p.hp <= 0 || !grave) return { ok: false, reason: "Nothing to loot." };
+    if (Math.hypot(p.x - grave.x, p.z - grave.z) > 4) return { ok: false, reason: "Too far." };
+    p.gold += grave.gold;
+    if (!p.inventory) p.inventory = {};
+    for (const [itemId, count] of Object.entries(grave.items)) {
+      if (count > 0) p.inventory[itemId] = (p.inventory[itemId] ?? 0) + count;
+    }
+    graves.delete(graveId);
+    log(`${p.username} looted ${grave.owner}'s tombstone (${grave.gold} gold).`);
+    return { ok: true, reason: grave.gold > 0 ? `+${grave.gold} gold` : "The stone was empty." };
+  }
+
+  function adoptGraves(list: GraveState[]) {
+    for (const g of list) {
+      if (!g?.id || graves.has(g.id)) continue;
+      graves.set(g.id, { ...g, items: { ...(g.items ?? {}) } });
+    }
   }
 
   function campOf(m: MonsterState) {
@@ -706,7 +778,10 @@ export function createWorld() {
       }
     }
     for (const p of players.values()) {
-      if (p.hp <= 0) continue;
+      if (p.hp <= 0) {
+        dropGrave(p);
+        continue;
+      }
       const fighting = [...monsters.values()].some((m) => m.hp > 0 && m.targetId === p.id);
       if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + (fighting ? 0.45 : 1.35));
       if (p.mana < p.maxMana) p.mana = Math.min(p.maxMana, p.mana + 0.45 + (p.spi || 0) * 0.01);
@@ -731,6 +806,8 @@ export function createWorld() {
     chat,
     travel,
     respawn,
+    loot,
+    adoptGraves,
     note,
     step,
     snapshot,

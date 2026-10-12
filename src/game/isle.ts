@@ -1,4 +1,4 @@
-import { loadSave, writeSave } from "./save";
+import { loadSave, writeSave, loadGraves, writeGraves } from "./save";
 import {
   CITIES,
   FIRES,
@@ -47,6 +47,7 @@ type Intent =
   | { op: "chat"; id: string; msg: string }
   | { op: "travel"; id: string; cityId: string }
   | { op: "respawn"; id: string }
+  | { op: "loot"; id: string; graveId: string }
   | { op: "setLevel"; id: string; level: number }
   | { op: "buy"; id: string; itemId: string }
   | { op: "sell"; id: string; itemId: string }
@@ -81,6 +82,7 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "chat") return world.chat(intent.id, intent.msg);
   if (intent.op === "travel") return world.travel(intent.id, intent.cityId);
   if (intent.op === "respawn") return world.respawn(intent.id);
+  if (intent.op === "loot") return world.loot(intent.id, intent.graveId);
   if (intent.op === "setLevel") return world.setLevel(intent.id, intent.level);
   if (intent.op === "buy") return world.buy(intent.id, intent.itemId);
   if (intent.op === "sell") return world.sell(intent.id, intent.itemId);
@@ -190,6 +192,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const authority = createAuthority();
   const world = authority.world;
   world.join(joinBody);
+  world.adoptGraves(loadGraves());
 
   const claim = Date.now() + Math.random();
   let bestClaim = claim;
@@ -204,7 +207,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let dest: { x: number; z: number } | null = null;
   let path: Array<{ x: number; z: number }> = [];
   let talkNpc: string | null = null;
+  let lootGrave: string | null = null;
   let seenGold = -1;
+  let graveSig = "";
   let chaseId: string | null = null;
   let repaths = 0;
   let stuckFor = 0;
@@ -220,23 +225,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let lastFrame = performance.now();
   let lastSend = 0;
 
+  function placeFloater(x: number, z: number, text: string, color: string, lift: number, size: number, life: number) {
+    const now = performance.now();
+    for (let i = floaters.length - 1; i >= 0; i--) {
+      if (now - floaters[i].born > floaters[i].life) floaters.splice(i, 1);
+    }
+    const near = () => floaters.filter((f) => Math.hypot(f.x - x, f.z - z) < 2);
+    const crowded = near();
+    if (crowded.length >= 4) {
+      const oldest = crowded.reduce((a, b) => (a.born < b.born ? a : b));
+      const idx = floaters.indexOf(oldest);
+      if (idx >= 0) floaters.splice(idx, 1);
+    }
+    floaters.push({ x, z, text, born: now, color, lift: lift + near().length * 26, size, life });
+  }
+
   function floatText(text: string, color = "#f6e7b2", lift = 120) {
     const xp = text.includes("XP");
     const p = me();
-    floaters.push({
-      x: p?.x ?? 0,
-      z: p?.z ?? 0,
-      text,
-      born: performance.now(),
-      color: xp ? "#7CFF4A" : color,
-      lift: xp ? 168 : lift,
-      size: xp ? 26 : 15,
-      life: xp ? 2600 : 1700,
-    });
+    placeFloater(p?.x ?? 0, p?.z ?? 0, text, xp ? "#7CFF4A" : color, xp ? 168 : lift, xp ? 26 : 15, xp ? 2600 : 1700);
   }
 
   function floatAt(x: number, z: number, text: string, color: string, lift = 78) {
-    floaters.push({ x, z, text, born: performance.now(), color, lift, size: 15, life: 1700 });
+    placeFloater(x, z, text, color, lift, 15, 1700);
   }
 
   const seenHp = new Map<string, number>();
@@ -622,6 +633,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         `<tr><th>DMG</th><td>${trainedDamage(p)}</td><th>Hit</th><td>${hitChance(p)}%</td></tr>` +
         `</tbody></table>` +
         `<p class="sheet-note">Training points ${p.trainPoints ?? 0}. Sword ${p.skills?.sword ?? 0}% adds damage. Focus ${p.skills?.focus ?? 0}% adds hit chance.</p>` +
+        `${(p.shroudUntil ?? 0) > Date.now() ? `<p class="shroud">Death shroud ${Math.ceil(((p.shroudUntil ?? 0) - Date.now()) / 1000)}s. Spells are sealed. Melee still works.</p>` : ""}` +
         `<p class="sheet-note">Basic attack spends a little stamina and refills between swings. Stab spends more. Spells spend mana.</p>`;
     }
     const bar = p.hotbar?.length === 8 ? p.hotbar : defaultHotbar(p.baseClass, p.prestigeClass, p.level);
@@ -643,15 +655,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
     deathEl.hidden = p.hp > 0;
     if (p.hp <= 0) {
-      const goldLost = Math.min(p.gold, Math.max(p.gold > 0 ? 5 : 0, Math.floor(p.gold * 0.15)));
       const xpLost = Math.floor(p.xp * 0.1);
-      deathHint.textContent = `Respawn in Uthgaard leaves ${goldLost} gold and ${xpLost} XP behind.`;
+      const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
+      deathHint.textContent = stone
+        ? `A tombstone holds ${stone.gold} gold. Respawn in Uthgaard under a 60s shroud (${xpLost} XP). Spells stay sealed; melee still works.`
+        : `Respawn in Uthgaard under a 60s shroud. Spells stay sealed; melee still works.`;
+    }
+    const shroudLeft = Math.max(0, (p.shroudUntil ?? 0) - Date.now());
+    if (shroudLeft > 0) {
+      statsEl.innerHTML += `<div class="shroud">Shroud ${Math.ceil(shroudLeft / 1000)}s · spells sealed</div>`;
     }
     const near = nearestWayfarer(p.x, p.z);
     talkBtn.hidden = !near;
     if (!near) travelPanel.hidden = true;
     const state = view();
     const lines = [...state.logs, ...notes];
+    const graveKey = JSON.stringify(state.graves ?? []);
+    if (graveKey !== graveSig) {
+      graveSig = graveKey;
+      writeGraves(state.graves ?? []);
+      persist();
+    }
     const sig = lines.join("\n");
     if (sig !== lastLogs) {
       messages.innerHTML = lines.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
@@ -920,6 +944,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       dest = null;
       path = [];
       talkNpc = null;
+      lootGrave = null;
       chaseId = null;
       repaths = 0;
       const len = Math.hypot(ix, iz) || 1;
@@ -933,9 +958,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           dest = null;
           path = [];
           talkNpc = null;
+          lootGrave = null;
           repaths = 0;
           stuckFor = 0;
           openNpc(npcId);
+        }
+      }
+      if (lootGrave && dest) {
+        const grave = view().graves?.find((g) => g.id === lootGrave);
+        if (grave && Math.hypot(grave.x - p.x, grave.z - p.z) <= 4) {
+          const graveId = lootGrave;
+          dest = null;
+          path = [];
+          lootGrave = null;
+          send({ op: "loot", id: myId, graveId });
         }
       }
       if (dest) {
@@ -1211,6 +1247,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.fillStyle = "#fff6d8";
       ctx.fillText(`HP ${Math.ceil(m.hp)}/${m.maxHp}`, pt.x, barY - 3);
     }
+    ctx.font = "13px Georgia";
+    ctx.textAlign = "center";
+    for (const g of state.graves ?? []) {
+      const pt = worldToScreen(g.x, g.z);
+      ctx.fillStyle = "#5c564c";
+      ctx.fillRect(pt.x - 11, pt.y - 30, 22, 28);
+      ctx.strokeStyle = "#d7c28a";
+      ctx.strokeRect(pt.x - 11, pt.y - 30, 22, 28);
+      ctx.fillStyle = "#f0e2b0";
+      ctx.fillText(`${g.owner}'s tomb`, pt.x, pt.y - 40);
+      ctx.fillText(`${g.gold} gold`, pt.x, pt.y - 14);
+    }
     ctx.font = "15px Georgia";
     ctx.textAlign = "center";
     ctx.fillStyle = "#f0e2b0";
@@ -1244,13 +1292,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.save();
     ctx.textAlign = "center";
     for (let i = floaters.length - 1; i >= 0; i--) {
-      const f = floaters[i];
+      if (floatNow - floaters[i].born > floaters[i].life) floaters.splice(i, 1);
+    }
+    for (const f of floaters) {
       const age = floatNow - f.born;
       const life = f.life ?? 1700;
-      if (age > life) {
-        floaters.splice(i, 1);
-        continue;
-      }
       const fadeAt = life - 700;
       const pt = worldToScreen(f.x, f.z);
       const rise = f.size >= 22 ? 0.07 : 0.03;
@@ -1292,6 +1338,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       trainPoints: p.trainPoints,
       skills: p.skills,
       hotbar: p.hotbar,
+      shroudUntil: p.shroudUntil,
     });
   }
 
@@ -1405,6 +1452,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!p || p.hp <= 0) return;
     const { sx, sy } = canvasPoint(e);
     const w = screenToWorld(sx, sy);
+    let pickedGrave: { id: string; x: number; z: number } | null = null;
+    for (const g of view().graves ?? []) {
+      if (spriteHit(sx, sy, g.x, g.z, 48) || Math.hypot(g.x - w.x, g.z - w.z) < 1.4) {
+        pickedGrave = g;
+        break;
+      }
+    }
+    if (pickedGrave) {
+      chaseId = null;
+      const dist = Math.hypot(pickedGrave.x - p.x, pickedGrave.z - p.z);
+      if (dist <= 4) {
+        dest = null;
+        path = [];
+        lootGrave = null;
+        send({ op: "loot", id: myId, graveId: pickedGrave.id });
+      } else {
+        talkNpc = null;
+        goTo(pickedGrave.x, pickedGrave.z, null);
+        lootGrave = pickedGrave.id;
+      }
+      return;
+    }
     let pickedNpc: (typeof NPCS)[number] | null = null;
     for (const npc of NPCS) {
       if (spriteHit(sx, sy, npc.x, npc.z, 124)) {
@@ -1467,6 +1536,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     pinnedId = null;
     chaseId = null;
+    lootGrave = null;
     const tile = pickTile(sx, sy);
     goTo(tile.x, tile.z, null);
   }
@@ -1627,12 +1697,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function act(skill: string) {
     const power = powerById(skill);
-    const selfCast = !power || power.range <= 0 || power.kind === "heal" || power.kind === "buff" || power.kind === "stealth";
+    const selfCast = !power || power.range <= 0 || power.kind === "buff" || power.kind === "stealth" || (power.kind === "heal" && power.id !== "succor");
     const range = power && power.range > 0 ? power.range : 3.8;
     const pinned = pinnedId ? view().monsters.find((m) => m.id === pinnedId && m.hp > 0) : null;
     const p = me();
     const pinOk = pinned && p && Math.hypot(pinned.x - p.x, pinned.z - p.z) <= range;
-    const targetId = selfCast ? null : pinOk ? pinned.id : nearestId(range);
+    let targetId = selfCast ? null : pinOk ? pinned.id : nearestId(range);
+    if (skill === "succor" && p) {
+      const shrouded = view().players.find(
+        (pl) => pl.hp > 0 && (pl.shroudUntil ?? 0) > Date.now() && Math.hypot(pl.x - p.x, pl.z - p.z) <= 8,
+      );
+      targetId = shrouded?.id ?? p.id;
+    }
     const actor = actors.get(myId) ?? {
       x: 0,
       z: 0,

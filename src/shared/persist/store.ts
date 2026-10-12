@@ -17,6 +17,7 @@ export interface CharacterRecord {
   trainPoints?: number;
   skills?: Record<string, number>;
   hotbar?: string[];
+  shroudUntil?: number;
 }
 
 export interface CharacterStore {
