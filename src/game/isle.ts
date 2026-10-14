@@ -414,13 +414,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     for (let i = 0; i < 16; i++) {
       if (race !== "human") loadFrame(`${race}-walk-${i}`, "7");
     }
-    for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
+    if (race !== "human") {
+      for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
+    }
   }
   for (let i = 0; i < 16; i++) {
     loadFrame(`human-base-walk-${i}`, "8");
     loadFrame(`human-chest-cloth-${i}`, "8");
     loadFrame(`human-chest-hauberk-${i}`, "8");
-    loadFrame(`human-weapon-iron-${i}`, "8");
+    loadFrame(`human-base-atk-${i}`, "1");
+    loadFrame(`human-chest-cloth-atk-${i}`, "1");
+    loadFrame(`human-chest-hauberk-atk-${i}`, "1");
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -922,32 +926,173 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
-  const HUMAN_LAYERS = ["base", "legs", "feet", "chest", "weapon", "hands", "head"] as const;
+  type HandAnchor = {
+    x: number;
+    y: number;
+    angle: number;
+    behind: boolean;
+    scale: number;
+    facingFile?: string;
+  };
+  type WeaponDef = {
+    file: string;
+    pivotX: number;
+    pivotY: number;
+    baseAngle: number;
+    slot?: string;
+    facings?: Record<string, { file: string; pivotX: number; pivotY: number }>;
+  };
+  let attackMain: HandAnchor[] = [];
+  let attackOff: HandAnchor[] = [];
+  let weaponBook: Record<string, WeaponDef> = {};
+  const weaponImages: Record<string, HTMLImageElement> = {};
 
-  function humanLayerKey(
-    layer: (typeof HUMAN_LAYERS)[number],
-    frame: number,
-    equipment?: Record<string, string>,
-  ) {
-    if (layer === "base") return `human-base-walk-${frame}`;
-    if (layer === "chest") {
-      const item = itemById(equipment?.chest ?? "");
-      if (!item || item.slot !== "chest") return "";
-      if (item.id === "iron-hauberk" || item.weight === "heavy") return `human-chest-hauberk-${frame}`;
-      const label = `${item.id} ${item.name}`.toLowerCase();
-      if (label.includes("cloth") || label.includes("tunic") || label.includes("linen"))
-        return `human-chest-cloth-${frame}`;
-      return "";
-    }
-    if (layer === "weapon") {
-      const item = itemById(equipment?.weapon ?? "");
-      if (item?.id === "iron-sword") return `human-weapon-iron-${frame}`;
-      return "";
-    }
+  function loadWeaponFile(file: string) {
+    if (weaponImages[file]) return;
+    const img = new Image();
+    img.onload = () => {
+      weaponImages[file] = img;
+    };
+    img.src = `/sprites/weapons/${file}?v=1`;
+  }
+
+  const WEAPON_KEY_BY_ITEM: Record<string, string> = {
+    "iron-sword": "iron_sword",
+    dagger: "dagger",
+    mace: "mace",
+    "oak-staff": "oak_staff",
+    oak_staff: "oak_staff",
+    staff: "oak_staff",
+    "round-shield": "round_shield",
+    round_shield: "round_shield",
+    shield: "round_shield",
+  };
+
+  function walkMain(frame: number): HandAnchor {
+    const facing = Math.floor(frame / 4);
+    const table = [
+      { x: 70, y: 108, angle: -100 },
+      { x: 76, y: 100, angle: -70 },
+      { x: 104, y: 100, angle: -110 },
+      { x: 110, y: 100, angle: -80 },
+    ];
+    const row = table[facing] ?? table[0];
+    return { x: row.x, y: row.y, angle: row.angle, behind: false, scale: 0.72 };
+  }
+
+  function walkOff(frame: number): HandAnchor {
+    const facing = Math.floor(frame / 4);
+    const table = [
+      { x: 112, y: 108, behind: false, facingFile: "S" },
+      { x: 98, y: 102, behind: true, facingFile: "W" },
+      { x: 82, y: 102, behind: true, facingFile: "E" },
+      { x: 70, y: 100, behind: true, facingFile: "N" },
+    ];
+    const row = table[facing] ?? table[0];
+    return {
+      x: row.x,
+      y: row.y,
+      angle: 0,
+      behind: row.behind,
+      scale: 0.72,
+      facingFile: row.facingFile,
+    };
+  }
+
+  function loadWeaponRig() {
+    for (const file of [
+      "iron_sword.png",
+      "dagger.png",
+      "mace.png",
+      "oak_staff.png",
+      "round_shield.png",
+      "round_shield-S.png",
+      "round_shield-W.png",
+      "round_shield-E.png",
+      "round_shield-N.png",
+    ])
+      loadWeaponFile(file);
+    void Promise.all([
+      fetch("/sprites/anim/human-anchors-atk.json").then((r) => r.json()),
+      fetch("/sprites/anim/human-offhand-atk.json").then((r) => r.json()),
+      fetch("/sprites/weapons/weapons.json").then((r) => r.json()),
+    ])
+      .then(([main, off, book]) => {
+        attackMain = Array.isArray(main?.mainHand) ? main.mainHand : [];
+        attackOff = Array.isArray(off?.offHand) ? off.offHand : [];
+        const next: Record<string, WeaponDef> = {};
+        for (const [key, value] of Object.entries(book ?? {})) {
+          if (key.startsWith("_") || !value || typeof value !== "object") continue;
+          next[key] = value as WeaponDef;
+        }
+        weaponBook = next;
+      })
+      .catch(() => undefined);
+  }
+  loadWeaponRig();
+
+  function humanChestKey(kind: "walk" | "atk", frame: number, equipment?: Record<string, string>) {
+    const item = itemById(equipment?.chest ?? "");
+    if (!item || item.slot !== "chest") return "";
+    const suffix = kind === "atk" ? `-atk-${frame}` : `-${frame}`;
+    if (item.id === "iron-hauberk" || item.weight === "heavy") return `human-chest-hauberk${suffix}`;
+    const label = `${item.id} ${item.name}`.toLowerCase();
+    if (label.includes("cloth") || label.includes("tunic") || label.includes("linen"))
+      return `human-chest-cloth${suffix}`;
     return "";
   }
 
-  function drawHumanWalk(
+  function heldWeapon(itemId: string) {
+    const key = WEAPON_KEY_BY_ITEM[itemId];
+    const def = key ? weaponBook[key] : undefined;
+    if (!def || def.slot === "offhand") return null;
+    const img = weaponImages[def.file];
+    if (!img) return null;
+    return def;
+  }
+
+  function heldShield(itemId: string, facingFile?: string) {
+    const key = WEAPON_KEY_BY_ITEM[itemId];
+    const def = key ? weaponBook[key] : undefined;
+    if (!def || def.slot !== "offhand") return null;
+    const face = facingFile ? def.facings?.[facingFile] : undefined;
+    const file = face?.file ?? def.file;
+    const img = weaponImages[file];
+    if (!img) return null;
+    return {
+      file,
+      pivotX: face?.pivotX ?? def.pivotX,
+      pivotY: face?.pivotY ?? def.pivotY,
+      baseAngle: def.baseAngle ?? 0,
+    };
+  }
+
+  function drawHeld(
+    file: string,
+    anchor: HandAnchor,
+    pivotX: number,
+    pivotY: number,
+    baseAngle: number,
+    originX: number,
+    originY: number,
+    drawScale: number,
+    filter: string,
+  ) {
+    const img = weaponImages[file];
+    if (!img) return;
+    const sc = (anchor.scale || 0.72) * drawScale;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.filter = filter;
+    ctx.translate(originX + anchor.x * drawScale, originY + anchor.y * drawScale);
+    ctx.rotate(((anchor.angle - baseAngle) * Math.PI) / 180);
+    ctx.scale(sc, sc);
+    ctx.drawImage(img, -pivotX, -pivotY);
+    ctx.restore();
+  }
+
+  function drawHumanPaper(
+    kind: "walk" | "atk",
     frame: number,
     x: number,
     z: number,
@@ -956,17 +1101,37 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     filter: string,
     equipment?: Record<string, string>,
   ) {
-    let drew = false;
-    for (const layer of HUMAN_LAYERS) {
-      const key = humanLayerKey(layer, frame, equipment);
-      if (!key) continue;
-      const ok = drawFrame(key, x, z, cell, lift, filter);
-      if (layer === "base") {
-        if (!ok) return false;
-        drew = true;
-      }
-    }
-    return drew;
+    const main = kind === "atk" ? attackMain[frame] : walkMain(frame);
+    const off = kind === "atk" ? attackOff[frame] : walkOff(frame);
+    const weapon = heldWeapon(equipment?.weapon ?? "");
+    const shield = heldShield(equipment?.offhand ?? "", off?.facingFile);
+    const foot = worldToScreen(x, z);
+    const originX = foot.x - cell / 2;
+    const originY = foot.y - cell + 16 - lift;
+    const drawScale = cell / 180;
+    const props = (behind: boolean) => {
+      if (shield && off && off.behind === behind)
+        drawHeld(shield.file, off, shield.pivotX, shield.pivotY, shield.baseAngle, originX, originY, drawScale, filter);
+      if (weapon && main && main.behind === behind)
+        drawHeld(
+          weapon.file,
+          main,
+          weapon.pivotX,
+          weapon.pivotY,
+          weapon.baseAngle,
+          originX,
+          originY,
+          drawScale,
+          filter,
+        );
+    };
+    props(true);
+    const baseKey = kind === "atk" ? `human-base-atk-${frame}` : `human-base-walk-${frame}`;
+    if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
+    const chest = humanChestKey(kind, frame, equipment);
+    if (chest) drawFrame(chest, x, z, cell, lift, filter);
+    props(false);
+    return true;
   }
 
   function drawHero(race: string, id: string, x: number, z: number, cls?: string) {
@@ -999,7 +1164,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.stroke();
       ctx.restore();
     }
-    if (attacking) {
+    const gear = world.players.get(id)?.equipment;
+    if (attacking && drawn === "human") {
+      const t = 1 - (actor.attackUntil - now) / 640;
+      const step = Math.min(3, Math.floor(Math.max(0, t) * 4));
+      const frame = actor.facing * 4 + step;
+      if (!drawHumanPaper("atk", frame, x, z, cell, lift, filter, gear))
+        drawSprite(drawn, x, z, 0.18);
+    } else if (attacking) {
       const t = 1 - (actor.attackUntil - now) / 640;
       const frame = Math.min(3, Math.floor(Math.max(0, t) * 4));
       if (!drawFrame(`${drawn}-atk-${frame}`, x, z, cell, lift, filter))
@@ -1010,7 +1182,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const frame = row + col;
       const drew =
         drawn === "human"
-          ? drawHumanWalk(frame, x, z, cell, lift, filter, world.players.get(id)?.equipment)
+          ? drawHumanPaper("walk", frame, x, z, cell, lift, filter, gear)
           : drawFrame(`${drawn}-walk-${frame}`, x, z, cell, lift, filter);
       if (!drew) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }

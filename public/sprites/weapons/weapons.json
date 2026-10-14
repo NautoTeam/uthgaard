@@ -1,0 +1,90 @@
+{
+ "_schema": "Same as handoff-minotaur-v2 weapons.json. pivotX/pivotY = grip in weapon px; baseAngle = direction the weapon points in its own image (screen degrees, 0=right, 90=down, -90=up). Draw: translate(anchor.x,anchor.y); rotate((anchor.angle-baseAngle) deg); scale(anchor.scale); drawImage(img,-pivotX,-pivotY). behind=true -> draw before the body.",
+ "_scale": "Authored at 145 px/m so that at anchor scale 0.72 they match the human 3D render (~104.7 px/m in the 180 frame).",
+ "iron_sword": {
+  "file": "iron_sword.png",
+  "w": 36,
+  "h": 131,
+  "pivotX": 18,
+  "pivotY": 112,
+  "baseAngle": -90,
+  "hands": 1,
+  "slot": "weapon",
+  "note": "arming sword ~0.95 m; pivot = centre of leather grip"
+ },
+ "dagger": {
+  "file": "dagger.png",
+  "w": 20,
+  "h": 50,
+  "pivotX": 10,
+  "pivotY": 38,
+  "baseAngle": -90,
+  "hands": 1,
+  "slot": "weapon",
+  "note": "~0.38 m; pivot = centre of grip"
+ },
+ "mace": {
+  "file": "mace.png",
+  "w": 27,
+  "h": 115,
+  "pivotX": 14,
+  "pivotY": 90,
+  "baseAngle": -90,
+  "hands": 1,
+  "slot": "weapon",
+  "note": "flanged iron head on oak haft ~0.78 m; pivot = centre of leather wrap"
+ },
+ "oak_staff": {
+  "file": "oak_staff.png",
+  "w": 19,
+  "h": 232,
+  "pivotX": 9,
+  "pivotY": 140,
+  "baseAngle": -90,
+  "hands": 1,
+  "slot": "weapon",
+  "note": "gnarled oak staff ~1.55 m, brass ring + iron ferrule; pivot = leather wrap ~40% up"
+ },
+ "round_shield": {
+  "file": "round_shield.png",
+  "w": 94,
+  "h": 96,
+  "pivotX": 47,
+  "pivotY": 48,
+  "baseAngle": 0,
+  "hands": 1,
+  "slot": "offhand",
+  "note": "0.62 m planked round shield, red face, iron rim/boss; pivot = boss centre (hand on the rear grip). Use offHand anchor, no rotation (baseAngle 0, offHand.angle 0).",
+  "facings": {
+   "S": {
+    "file": "round_shield-S.png",
+    "w": 94,
+    "h": 96,
+    "pivotX": 47,
+    "pivotY": 48
+   },
+   "W": {
+    "file": "round_shield-W.png",
+    "w": 40,
+    "h": 96,
+    "pivotX": 20,
+    "pivotY": 48
+   },
+   "E": {
+    "file": "round_shield-E.png",
+    "w": 40,
+    "h": 96,
+    "pivotX": 20,
+    "pivotY": 48,
+    "mirrored": true
+   },
+   "N": {
+    "file": "round_shield-N.png",
+    "w": 94,
+    "h": 96,
+    "pivotX": 47,
+    "pivotY": 48
+   }
+  }
+ }
+}

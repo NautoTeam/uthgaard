@@ -1,0 +1,153 @@
+{
+ "version": 1,
+ "proposed": true,
+ "source": "computed from the same 3D attack poses (hand_l grip point, between wrist and knuckles), same transform as mainHand (x/4, y/4+feet shift, W = mirror of E)",
+ "use": "offhand slot (round_shield). Shield is not rotated: angle 0 with the shield baseAngle 0. Pick the per-facing file round_shield-{S,W,E,N}.png by frame facing. behind=true -> draw before the body.",
+ "note": "E/W: off hand is the far arm, so the shield draws behind the body; N: shield is in front of the character (away from camera) so it draws behind the body; S: in front except strike (step 1) where the off arm swings back.",
+ "offHand": [
+  {
+   "x": 123,
+   "y": 103,
+   "angle": 0,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 0,
+   "facingFile": "S"
+  },
+  {
+   "x": 119,
+   "y": 85,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 1,
+   "facingFile": "S"
+  },
+  {
+   "x": 118,
+   "y": 99,
+   "angle": 0,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 2,
+   "facingFile": "S"
+  },
+  {
+   "x": 117,
+   "y": 104,
+   "angle": 0,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 3,
+   "facingFile": "S"
+  },
+  {
+   "x": 59,
+   "y": 71,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 4,
+   "facingFile": "W"
+  },
+  {
+   "x": 106,
+   "y": 79,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 5,
+   "facingFile": "W"
+  },
+  {
+   "x": 83,
+   "y": 81,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 6,
+   "facingFile": "W"
+  },
+  {
+   "x": 68,
+   "y": 80,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 7,
+   "facingFile": "W"
+  },
+  {
+   "x": 121,
+   "y": 71,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 8,
+   "facingFile": "E"
+  },
+  {
+   "x": 74,
+   "y": 79,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 9,
+   "facingFile": "E"
+  },
+  {
+   "x": 97,
+   "y": 81,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 10,
+   "facingFile": "E"
+  },
+  {
+   "x": 112,
+   "y": 80,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 11,
+   "facingFile": "E"
+  },
+  {
+   "x": 57,
+   "y": 72,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 12,
+   "facingFile": "N"
+  },
+  {
+   "x": 61,
+   "y": 101,
+   "angle": 0,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 13,
+   "facingFile": "N"
+  },
+  {
+   "x": 62,
+   "y": 91,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 14,
+   "facingFile": "N"
+  },
+  {
+   "x": 63,
+   "y": 82,
+   "angle": 0,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 15,
+   "facingFile": "N"
+  }
+ ]
+}
