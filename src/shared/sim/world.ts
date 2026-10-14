@@ -96,7 +96,12 @@ function levelUp(p: PlayerState) {
   }
 }
 
-export function createWorld() {
+/** Walk pace in tiles per second. The server rejects anything faster than one tick of this. */
+export const MAX_SPEED = 6.5;
+
+export function createWorld(opts: { now?: () => number; rand?: () => number } = {}) {
+  const now = opts.now ?? Date.now;
+  const rand = opts.rand ?? Math.random;
   const players = new Map<string, PlayerState>();
   const monsters = new Map<string, MonsterState>();
   const graves = new Map<string, GraveState>();
@@ -436,7 +441,7 @@ export function createWorld() {
 
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
     if (m.respawnAt) return 0;
-    m.respawnAt = Date.now() + 15000;
+    m.respawnAt = now() + 15000;
     const def = mobByType(m.type);
     const xp = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
     p.xp += xp;
@@ -444,7 +449,7 @@ export function createWorld() {
     if (!p.inventory) p.inventory = {};
     for (const drop of DROPS) {
       if (drop.mob !== m.type) continue;
-      if (Math.random() > dropChance(drop)) continue;
+      if (rand() > dropChance(drop)) continue;
       const item = itemById(drop.itemId);
       if (!item) continue;
       p.inventory[item.id] = (p.inventory[item.id] ?? 0) + 1;
@@ -474,7 +479,7 @@ export function createWorld() {
     if (now < readyAt) return { ok: false, reason: "Not ready yet." };
     if (power.mana > 0 && p.mana < power.mana) return { ok: false, reason: "Not enough mana." };
     if (power.stamina > 0 && p.stamina < power.stamina) return { ok: false, reason: "Not enough stamina." };
-    if (power.mana === 0 && Math.random() * 100 >= hitChance(p)) {
+    if (power.mana === 0 && rand() * 100 >= hitChance(p)) {
       const cd = now + power.cooldown;
       p.cooldowns[power.id] = cd;
       if (powerId === "attack") p.nextSwing = cd;
@@ -519,7 +524,7 @@ export function createWorld() {
     const p = players.get(id);
     const m = targetId ? monsters.get(targetId) : undefined;
     if (!p || p.hp <= 0 || !m || m.hp <= 0) return { ok: false, reason: "Nothing in reach." };
-    return strike(p, m, "attack", Date.now());
+    return strike(p, m, "attack", now());
   }
 
   function beginPower(p: PlayerState, powerId: string, now: number): ActionResult | null {
@@ -548,8 +553,8 @@ export function createWorld() {
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot act." };
     const power = powerById(name);
     if (!power) return { ok: false, reason: "That path cannot use this." };
-    const now = Date.now();
-    const blockedPower = beginPower(p, name, now);
+    const at = now();
+    const blockedPower = beginPower(p, name, at);
     if (blockedPower) return blockedPower;
     if (power.id === "succor") {
       let ally = targetId ? players.get(targetId) : undefined;
@@ -557,7 +562,7 @@ export function createWorld() {
         let best: PlayerState | null = null;
         let bestD = power.range;
         for (const other of players.values()) {
-          if (other.hp <= 0 || other.shroudUntil <= now) continue;
+          if (other.hp <= 0 || other.shroudUntil <= at) continue;
           const d = Math.hypot(other.x - p.x, other.z - p.z);
           if (d <= bestD) {
             best = other;
@@ -567,9 +572,9 @@ export function createWorld() {
         ally = best ?? p;
       }
       if (Math.hypot(ally.x - p.x, ally.z - p.z) > power.range) return { ok: false, reason: "Too far." };
-      const shrouded = ally.shroudUntil > now;
+      const shrouded = ally.shroudUntil > at;
       if (!shrouded && ally.hp >= ally.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
-      payPower(p, name, now);
+      payPower(p, name, at);
       const gain = Math.min(ally.maxHp - ally.hp, power.heal + p.level * power.healPerLevel);
       ally.hp += gain;
       if (shrouded) {
@@ -580,17 +585,17 @@ export function createWorld() {
     }
     if (power.kind === "heal") {
       if (p.hp >= p.maxHp - 0.5) return { ok: false, reason: "Already at full health." };
-      payPower(p, name, now);
+      payPower(p, name, at);
       const gain = Math.min(p.maxHp - p.hp, power.heal + p.level * power.healPerLevel);
       p.hp += gain;
       return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
     }
     if (power.kind === "buff" || power.kind === "stealth") {
-      payPower(p, name, now);
-      if (power.id === "wall") p.wallUntil = now + 6000;
-      else if (power.kind === "stealth") p.stealthUntil = now + 10000;
+      payPower(p, name, at);
+      if (power.id === "wall") p.wallUntil = at + 6000;
+      else if (power.kind === "stealth") p.stealthUntil = at + 10000;
       else {
-        p.guardUntil = now + 8000;
+        p.guardUntil = at + 8000;
         if (power.heal > 0) p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
       }
       if (power.kind === "stealth") return { ok: true, reason: "You slip into stealth." };
@@ -598,7 +603,7 @@ export function createWorld() {
     }
     const m = targetId ? monsters.get(targetId) : undefined;
     if (!m || m.hp <= 0) return { ok: false, reason: "Nothing in reach." };
-    return strike(p, m, power.id, now);
+    return strike(p, m, power.id, at);
   }
 
   function promote(id: string, cls: string): ActionResult {
@@ -793,7 +798,7 @@ export function createWorld() {
     p.mana = p.maxMana;
     p.stamina = p.maxStamina;
     p.graveDropped = false;
-    p.shroudUntil = Date.now() + DEATH_SHROUD_MS;
+    p.shroudUntil = now() + DEATH_SHROUD_MS;
     log(`${p.username} returned to ${home.name} under Grave Chill.`);
     return { ok: true, reason: "Grave Chill for 60s." };
   }
@@ -806,8 +811,8 @@ export function createWorld() {
     const xpLost = Math.max(0, Math.floor(Math.max(0, p.xp) * 0.1));
     p.gold = Math.max(0, p.gold - gold);
     p.xp = Math.max(0, p.xp - xpLost);
-    const id = "g" + Math.floor(Math.random() * 1e9).toString(36);
-    graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {}, born: Date.now() });
+    const id = "g" + Math.floor(rand() * 1e9).toString(36);
+    graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {}, born: now() });
     log(`${p.username} fell. A tombstone holds ${gold} gold. ${xpLost} XP is gone.`);
   }
 

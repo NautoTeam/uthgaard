@@ -1,0 +1,52 @@
+import { blocked } from "../../src/shared/sim/geo";
+import { MAX_SPEED, type World } from "../../src/shared/sim/world";
+import type { ActionResult } from "../../src/shared/sim/types";
+import type { Intent } from "../../src/shared/net/protocol";
+
+/** One authoritative tick. 20 Hz, matching the server loop. */
+export const TICK_DT = 1 / 20;
+
+/**
+ * Apply one client intent. `move` is rejected when it jumps farther than
+ * 1.5 ticks of walk speed, or when the destination tile is not walkable.
+ */
+export function applyIntent(world: World, playerId: string, intent: Intent): ActionResult {
+  switch (intent.op) {
+    case "move": {
+      const p = world.players.get(playerId);
+      if (!p || p.hp <= 0) return { ok: false, reason: "You cannot move." };
+      const dist = Math.hypot(intent.x - p.x, intent.z - p.z);
+      if (dist > MAX_SPEED * TICK_DT * 1.5) return { ok: false, reason: "Too fast." };
+      if (blocked(intent.x, intent.z)) return { ok: false, reason: "Blocked." };
+      return world.move(playerId, intent.x, intent.z, intent.rotation);
+    }
+    case "attack":
+      return world.attack(playerId, intent.targetId);
+    case "skill":
+      return world.skill(playerId, intent.name, intent.targetId);
+    case "travel":
+      return world.travel(playerId, intent.cityId);
+    case "buy":
+      return world.buy(playerId, intent.itemId);
+    case "sell":
+      return world.sell(playerId, intent.itemId);
+    case "useItem":
+      return world.useItem(playerId, intent.itemId);
+    case "equip":
+      return world.equip(playerId, intent.itemId);
+    case "unequip":
+      return world.unequip(playerId, intent.slot);
+    case "train":
+      return world.train(playerId, intent.skillId);
+    case "promote":
+      return world.promote(playerId, intent.cls);
+    case "chat":
+      return world.chat(playerId, intent.msg);
+    case "respawn":
+      return world.respawn(playerId);
+    case "loot":
+      return world.loot(playerId, intent.graveId);
+    default:
+      return { ok: false, reason: "unknown op" };
+  }
+}

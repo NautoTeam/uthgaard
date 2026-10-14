@@ -10,8 +10,8 @@ import type { PublicState } from "../shared/sim/types";
  * process can import `createAuthority` and feed it client inputs later
  * without rewriting combat.
  */
-export function createAuthority() {
-  const world: World = createWorld();
+export function createAuthority(opts: { now?: () => number; rand?: () => number } = {}) {
+  const world: World = createWorld(opts);
   return {
     world,
     step(now: number) {
