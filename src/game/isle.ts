@@ -17,7 +17,6 @@ import {
   clearLine,
   nearestOpen,
   nearestTrainer,
-  nearestVendor,
   nearestRegistrar,
   routeTo,
   screenGap,
@@ -67,7 +66,7 @@ import {
   worldToScreen as isoWorldToScreen,
 } from "./iso";
 import { createAuthority } from "../server/authority";
-import type { JoinInput, World } from "../shared/sim/world";
+import { MAX_SPEED, type JoinInput, type World } from "../shared/sim/world";
 import {
   CHARTER_GOLD,
   CITY_PLOTS,
@@ -105,8 +104,13 @@ export interface IsleProfile {
 
 const TW = 48;
 const TH = 24;
-const MOVE = 6.5;
+/** Tiles per second. WASD, the stick, and click-to-walk all use this. */
+const MOVE = MAX_SPEED;
 const SWING_MS = 900;
+function walkVelocity(dx: number, dz: number) {
+  const d = Math.hypot(dx, dz) || 1;
+  return { x: (dx / d) * MOVE, z: (dz / d) * MOVE };
+}
 const NAMES = [
   ...new Set([
     ...RACES.map((r) => r.toLowerCase()),
@@ -1106,6 +1110,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     };
   }
 
+  function weaponRead(file: string) {
+    if (file.startsWith("dagger")) return 2.2;
+    if (file.startsWith("mace")) return 1.65;
+    if (file.startsWith("oak_staff")) return 1.45;
+    return 1;
+  }
+
   function drawHeld(
     file: string,
     anchor: HandAnchor,
@@ -1119,14 +1130,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   ) {
     const img = weaponImages[file];
     if (!img) return;
-    const sc = Math.max(anchor.scale || 0.72, 0.9) * drawScale;
+    const read = weaponRead(file);
+    const sc = Math.max(anchor.scale || 0.72, 0.9) * drawScale * read;
     ctx.save();
     ctx.globalAlpha = 1;
-    ctx.imageSmoothingEnabled = false;
-    ctx.filter = "none";
+    ctx.imageSmoothingEnabled = read > 1;
+    ctx.filter = filter === "none" ? "none" : filter;
     ctx.translate(originX + anchor.x * drawScale, originY + anchor.y * drawScale);
     ctx.rotate(((anchor.angle - baseAngle) * Math.PI) / 180);
     ctx.scale(sc, sc);
+    if (read > 1) {
+      const ink = Math.max(1.1, 1.6 / sc);
+      ctx.save();
+      ctx.filter = "brightness(0)";
+      ctx.globalAlpha = 0.95;
+      ctx.drawImage(img, -pivotX + ink, -pivotY);
+      ctx.drawImage(img, -pivotX - ink, -pivotY);
+      ctx.drawImage(img, -pivotX, -pivotY + ink);
+      ctx.drawImage(img, -pivotX, -pivotY - ink);
+      ctx.restore();
+      ctx.filter = "none";
+    }
     ctx.drawImage(img, -pivotX, -pivotY);
     ctx.restore();
   }
@@ -1810,9 +1834,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       lootGrave = null;
       chaseId = null;
       repaths = 0;
-      const len = Math.hypot(ix, iz) || 1;
-      vx = (ix / len) * MOVE;
-      vz = (iz / len) * MOVE;
+      const v = walkVelocity(ix, iz);
+      vx = v.x;
+      vz = v.z;
     } else if (dest) {
       if (talkNpc) {
         const npc = NPCS.find((n) => n.id === talkNpc);
@@ -1888,8 +1912,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           persist();
           if (npcId) openNpc(npcId);
         } else if (d > 0.05) {
-          vx = (dx / d) * MOVE;
-          vz = (dz / d) * MOVE;
+          const v = walkVelocity(dx, dz);
+          vx = v.x;
+          vz = v.z;
         }
       }
     }
@@ -3855,7 +3880,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = worldToScreen(x, z);
     const above = p.y - sy;
     const dx = Math.abs(sx - p.x);
-    if (dx <= 70 && above >= -16 && above <= 176) return true;
+    if (above >= 108 && above <= 156 && dx <= 66) return true;
+    if (above >= -12 && above <= 112 && dx <= 44) return true;
     return false;
   }
   let pendingMove: { x: number; z: number } | null = null;
@@ -3902,11 +3928,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     let pickedNpc: (typeof NPCS)[number] | null = null;
     let npcBest = 1e9;
     for (const npc of NPCS) {
-      const screen = npcHit(sx, sy, npc.x, npc.z);
-      const near = Math.hypot(npc.x - w.x, npc.z - w.z) <= 2.4;
-      if (!screen && !near) continue;
+      if (!npcHit(sx, sy, npc.x, npc.z)) continue;
       const sp = worldToScreen(npc.x, npc.z);
-      const d = Math.hypot(sx - sp.x, sy - sp.y);
+      const d = Math.hypot(sx - sp.x, sy - (sp.y - 64));
       if (d < npcBest) {
         npcBest = d;
         pickedNpc = npc;
@@ -4071,17 +4095,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!npc) return;
     const p = me();
     if (!p || Math.hypot(npc.x - p.x, npc.z - p.z) > 8) return;
-    if (npc.role === "vendor" || npc.role === "smith") openShop();
-    else if (npc.role === "trainer") openTrain();
+    if (npc.role === "vendor" || npc.role === "smith") openShop(npc);
+    else if (npc.role === "trainer") openTrain(npc);
     else if (npc.role === "registrar") openRegistrar();
     else openTravel(npc.city);
   }
 
-  function openTrain() {
+  function openTrain(npc: (typeof NPCS)[number]) {
     const p = me();
-    const trainer = p ? nearestTrainer(p.x, p.z, 8) : null;
-    if (!p || !trainer) return;
-    if (trainTitle) trainTitle.textContent = trainer.name;
+    if (!p || npc.role !== "trainer" || Math.hypot(npc.x - p.x, npc.z - p.z) > 8) return;
+    if (trainTitle) trainTitle.textContent = npc.name;
     trainSig = "";
     setOpen(trainPanel, true);
     paintTrain();
@@ -4108,11 +4131,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }).join("");
   }
 
-  function openShop() {
+  function openShop(npc: (typeof NPCS)[number]) {
     const p = me();
-    const vendor = p ? nearestVendor(p.x, p.z, 8) : null;
-    if (!p || !vendor) return;
-    if (shopTitle) shopTitle.textContent = vendor.name;
+    if (!p || (npc.role !== "vendor" && npc.role !== "smith")) return;
+    if (Math.hypot(npc.x - p.x, npc.z - p.z) > 8) return;
+    if (shopTitle) shopTitle.textContent = npc.name;
     shopSig = "";
     setOpen(shop, true);
     paintShop();

@@ -245,24 +245,28 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   function stepOffTile(m: MonsterState, tx: number, tz: number) {
     let best: { x: number; z: number } | null = null;
     let bestD = 1e9;
-    for (const [dx, dz] of [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-      [1, 1],
-      [1, -1],
-      [-1, 1],
-      [-1, -1],
-    ] as const) {
-      const pos = resolveMove(m.x, m.z, m.x + dx * 1.25, m.z + dz * 1.25);
-      if (sameTile(pos.x, pos.z, tx, tz)) continue;
-      if (!mobCanOccupy(m, pos.x, pos.z)) continue;
-      const d = Math.hypot(pos.x - tx, pos.z - tz);
-      if (d < bestD) {
-        bestD = d;
-        best = pos;
+    for (const dist of [1.15, 1.7, 2.3]) {
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+      ] as const) {
+        const len = Math.hypot(dx, dz) || 1;
+        const pos = resolveMove(m.x, m.z, m.x + (dx / len) * dist, m.z + (dz / len) * dist);
+        if (sameTile(pos.x, pos.z, tx, tz) || blocked(pos.x, pos.z)) continue;
+        if (!mobCanOccupy(m, pos.x, pos.z)) continue;
+        const d = Math.hypot(pos.x - tx, pos.z - tz);
+        if (d < bestD) {
+          bestD = d;
+          best = pos;
+        }
       }
+      if (best) break;
     }
     if (!best) return;
     m.x = best.x;
@@ -1084,14 +1088,56 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     graves.delete(graveId);
   }
 
+  /** Nearest open point 2–3 tiles out, clear of the hero's sprite. */
+  function testFoeSpot(px: number, pz: number) {
+    let best: { x: number; z: number } | null = null;
+    let bestD = 99;
+    let bestGap = -1;
+    const consider = (x: number, z: number) => {
+      if (blocked(x, z) || sameTile(x, z, px, pz)) return;
+      const d = Math.hypot(x - px, z - pz);
+      if (d < 2 || d > 3.05) return;
+      const gap = screenGap(x, z, px, pz);
+      const clears = gap >= 96;
+      const bestClears = best != null && bestGap >= 96;
+      if (
+        !best ||
+        (clears && !bestClears) ||
+        (clears === bestClears && (d < bestD - 0.04 || (Math.abs(d - bestD) <= 0.04 && gap > bestGap)))
+      ) {
+        best = { x, z };
+        bestD = d;
+        bestGap = gap;
+      }
+    };
+    for (let r = 2; r <= 3.001; r += 0.25) {
+      for (let i = 0; i < 16; i++) {
+        const ang = (i / 16) * Math.PI * 2;
+        consider(px + Math.cos(ang) * r, pz + Math.sin(ang) * r);
+      }
+    }
+    if (best) return best;
+    for (let i = 0; i < 12; i++) {
+      const ang = (i / 12) * Math.PI * 2;
+      const raw = nearestOpen(px + Math.cos(ang) * 2.5, pz + Math.sin(ang) * 2.5, 2);
+      const d = Math.hypot(raw.x - px, raw.z - pz);
+      if (blocked(raw.x, raw.z) || sameTile(raw.x, raw.z, px, pz) || d < 1.85) continue;
+      return raw;
+    }
+    return nearestOpen(px + 2.6, pz - 2.6, 5);
+  }
+
   function spawnTest(id: string): ActionResult {
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
     const level = Math.max(1, p.level);
     const type = "Spider";
-    let spot = nearestOpen(p.x + 2.1, p.z + 0.6, 5);
-    if (Math.hypot(spot.x - p.x, spot.z - p.z) < 1.25) spot = nearestOpen(p.x - 1.6, p.z + 1.8, 5);
-    const hp = mobHp(type, level);
+    let spot = testFoeSpot(p.x, p.z);
+    if (sameTile(spot.x, spot.z, p.x, p.z) || Math.hypot(spot.x - p.x, spot.z - p.z) < 1.85) {
+      spot = nearestOpen(p.x + 3, p.z - 3, 6);
+    }
+    // Nine swings at the basic-attack cooldown is about twenty seconds.
+    const hp = Math.max(72, trainedDamage(p) * 9);
     const mobId = "t" + mid++;
     monsters.set(mobId, {
       id: mobId,
@@ -1107,9 +1153,11 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       slotZ: spot.z,
       targetId: p.id,
       respawnAt: 0,
-      nextHit: 0,
+      nextHit: now() + 800,
       snareUntil: 0,
     });
+    const mob = monsters.get(mobId)!;
+    if (sameTile(mob.x, mob.z, p.x, p.z)) stepOffTile(mob, p.x, p.z);
     return { ok: true, reason: "A test foe appears." };
   }
 
