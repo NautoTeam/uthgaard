@@ -96,8 +96,8 @@ function levelUp(p: PlayerState) {
   }
 }
 
-/** Walk pace in tiles per second. The server rejects anything faster than one tick of this. */
-export const MAX_SPEED = 6.5;
+/** Walk pace in tiles per second. Keys, the stick, and click-to-walk all use this. */
+export const MAX_SPEED = 3.5;
 
 export function createWorld(opts: { now?: () => number; rand?: () => number } = {}) {
   const now = opts.now ?? Date.now;
@@ -140,14 +140,6 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     return slots;
   }
 
-  function clearOfMobs(x: number, z: number, exceptId?: string) {
-    for (const m of monsters.values()) {
-      if (m.hp <= 0 || m.id === exceptId) continue;
-      if (screenGap(x, z, m.x, m.z) < 58) return false;
-    }
-    return true;
-  }
-
   function sameTile(ax: number, az: number, bx: number, bz: number) {
     // A crack on the .5 boundary rounds to two tiles but is the same spot.
     // A full step to the next tile (distance 1) must still be allowed.
@@ -155,10 +147,10 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     return Math.round(ax) === Math.round(bx) && Math.round(az) === Math.round(bz);
   }
 
-  function combatTile(p: PlayerState, x: number, z: number) {
-    for (const m of monsters.values()) {
-      if (m.hp <= 0 || m.targetId !== p.id) continue;
-      if (sameTile(x, z, m.x, m.z)) return true;
+  function mobSharesTile(x: number, z: number, exceptId?: string) {
+    for (const o of monsters.values()) {
+      if (o.hp <= 0 || o.id === exceptId) continue;
+      if (sameTile(x, z, o.x, o.z)) return true;
     }
     return false;
   }
@@ -183,13 +175,20 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     return screenGap(ax, az, bx, bz) <= 130 || Math.hypot(ax - bx, az - bz) <= 6.4;
   }
 
-  /** Closest walkable point still inside melee range and not the target's tile. */
+  /** Free tile inside melee range, nearest to the fighter. Never the hero's tile. */
   function nearestMeleeStand(m: MonsterState, tx: number, tz: number) {
+    if (
+      inMeleeRange(m.x, m.z, tx, tz) &&
+      !sameTile(m.x, m.z, tx, tz) &&
+      !blocked(m.x, m.z) &&
+      mobCanOccupy(m, m.x, m.z)
+    ) {
+      return { x: m.x, z: m.z };
+    }
     let best: { x: number; z: number } | null = null;
     let bestMob = 1e9;
     for (let r = 1; r <= 6.45; r += 0.5) {
       const steps = Math.max(8, Math.ceil((Math.PI * 2 * r) / 0.55));
-      let found = false;
       for (let i = 0; i < steps; i++) {
         const ang = (i / steps) * Math.PI * 2;
         const x = tx + Math.cos(ang) * r;
@@ -197,14 +196,12 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         if (blocked(x, z) || sameTile(x, z, tx, tz)) continue;
         if (!inMeleeRange(x, z, tx, tz)) continue;
         if (!mobCanOccupy(m, x, z)) continue;
-        found = true;
         const toM = Math.hypot(x - m.x, z - m.z);
         if (toM < bestMob) {
           bestMob = toM;
           best = { x, z };
         }
       }
-      if (found) return best;
     }
     return best;
   }
@@ -230,6 +227,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     }
     const foe = foeOf(m);
     if (foe && sameTile(x, z, foe.x, foe.z)) return false;
+    if (mobSharesTile(x, z, m.id)) return false;
     return true;
   }
 
@@ -445,18 +443,8 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false };
     const next = resolveMove(p.x, p.z, x, z);
-    let nx = next.x;
-    let nz = next.z;
-    if (!clearOfMobs(nx, nz) || combatTile(p, nx, nz)) {
-      if (clearOfMobs(nx, p.z) && !combatTile(p, nx, p.z) && !blocked(nx, p.z)) nz = p.z;
-      else if (clearOfMobs(p.x, nz) && !combatTile(p, p.x, nz) && !blocked(p.x, nz)) nx = p.x;
-      else {
-        nx = p.x;
-        nz = p.z;
-      }
-    }
-    p.x = nx;
-    p.z = nz;
+    p.x = next.x;
+    p.z = next.z;
     p.rotation = rotation || 0;
     attuneNearby(p);
     return { ok: true };
@@ -990,31 +978,23 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         } else {
           if (sameTile(m.x, m.z, t.x, t.z)) stepOffTile(m, t.x, t.z);
           const spot = nearestMeleeStand(m, t.x, t.z);
-          const here = Math.hypot(m.x - t.x, m.z - t.z);
-          const spotD = spot ? Math.hypot(spot.x - t.x, spot.z - t.z) : here;
           const sharing = sameTile(m.x, m.z, t.x, t.z);
-          let hold = inMeleeRange(m.x, m.z, t.x, t.z) && !sharing && here <= spotD + 0.35;
-          if (!hold && !sharing) {
-            const goal = spot ?? { x: t.x, z: t.z };
-            const gap = Math.hypot(goal.x - m.x, goal.z - m.z);
-            const stop = spot ? 0 : 1.25;
-            const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, Math.max(0, gap - stop));
-            let moved = false;
-            if (stepLen > 0 && gap > 0.05) {
+          const gap = spot ? Math.hypot(spot.x - m.x, spot.z - m.z) : 0;
+          if (spot && gap > 0.4 && !sharing) {
+            const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, gap);
+            if (stepLen > 0.001) {
               const ox = m.x;
               const oz = m.z;
-              if (applyMobStep(m, m.x + ((goal.x - m.x) / gap) * stepLen, m.z + ((goal.z - m.z) / gap) * stepLen)) {
-                const after = Math.hypot(m.x - goal.x, m.z - goal.z);
-                if (after < gap - 0.01) moved = true;
-                else {
+              if (applyMobStep(m, m.x + ((spot.x - m.x) / gap) * stepLen, m.z + ((spot.z - m.z) / gap) * stepLen)) {
+                const after = Math.hypot(m.x - spot.x, m.z - spot.z);
+                if (after >= gap - 0.01) {
                   m.x = ox;
                   m.z = oz;
                 }
               }
             }
-            if (!moved && inMeleeRange(m.x, m.z, t.x, t.z)) hold = true;
           }
-          if (hold && !sameTile(m.x, m.z, t.x, t.z) && now >= m.nextHit) {
+          if (!sameTile(m.x, m.z, t.x, t.z) && inMeleeRange(m.x, m.z, t.x, t.z) && now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
             let dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
@@ -1043,24 +1023,8 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     const alive = [...monsters.values()].filter((o) => o.hp > 0);
     for (let i = 0; i < alive.length; i++) {
       for (let j = i + 1; j < alive.length; j++) {
-        const a = alive[i];
-        const b = alive[j];
-        const d = Math.hypot(a.x - b.x, a.z - b.z);
-        if (screenGap(a.x, a.z, b.x, b.z) >= 70 || d < 0.001) continue;
-        if (a.targetId || b.targetId) continue;
-        const push = 0.25;
-        const ux = (a.x - b.x) / d;
-        const uz = (a.z - b.z) / d;
-        const na = resolveMove(a.x, a.z, a.x + ux * push, a.z + uz * push);
-        const nb = resolveMove(b.x, b.z, b.x - ux * push, b.z - uz * push);
-        if (mobCanOccupy(a, na.x, na.z)) {
-          a.x = na.x;
-          a.z = na.z;
-        }
-        if (mobCanOccupy(b, nb.x, nb.z)) {
-          b.x = nb.x;
-          b.z = nb.z;
-        }
+        if (!sameTile(alive[i].x, alive[i].z, alive[j].x, alive[j].z)) continue;
+        stepOffTile(alive[j], alive[i].x, alive[i].z);
       }
     }
     for (const p of players.values()) {
@@ -1088,43 +1052,34 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     graves.delete(graveId);
   }
 
-  /** Nearest open point 2–3 tiles out, clear of the hero's sprite. */
+  /** Open ground 2–3 tiles out, not on the hero and not on another fighter. */
   function testFoeSpot(px: number, pz: number) {
     let best: { x: number; z: number } | null = null;
-    let bestD = 99;
     let bestGap = -1;
-    const consider = (x: number, z: number) => {
-      if (blocked(x, z) || sameTile(x, z, px, pz)) return;
+    const consider = (x: number, z: number, minD: number, maxD: number) => {
+      if (blocked(x, z) || sameTile(x, z, px, pz) || mobSharesTile(x, z)) return;
       const d = Math.hypot(x - px, z - pz);
-      if (d < 2 || d > 3.05) return;
+      if (d < minD || d > maxD) return;
       const gap = screenGap(x, z, px, pz);
-      const clears = gap >= 96;
-      const bestClears = best != null && bestGap >= 96;
-      if (
-        !best ||
-        (clears && !bestClears) ||
-        (clears === bestClears && (d < bestD - 0.04 || (Math.abs(d - bestD) <= 0.04 && gap > bestGap)))
-      ) {
+      if (!best || gap > bestGap) {
         best = { x, z };
-        bestD = d;
         bestGap = gap;
       }
     };
-    for (let r = 2; r <= 3.001; r += 0.25) {
-      for (let i = 0; i < 16; i++) {
-        const ang = (i / 16) * Math.PI * 2;
-        consider(px + Math.cos(ang) * r, pz + Math.sin(ang) * r);
+    for (let r = 2; r <= 3.001; r += 0.2) {
+      for (let i = 0; i < 24; i++) {
+        const ang = (i / 24) * Math.PI * 2;
+        consider(px + Math.cos(ang) * r, pz + Math.sin(ang) * r, 2, 3.05);
       }
     }
     if (best) return best;
-    for (let i = 0; i < 12; i++) {
-      const ang = (i / 12) * Math.PI * 2;
-      const raw = nearestOpen(px + Math.cos(ang) * 2.5, pz + Math.sin(ang) * 2.5, 2);
-      const d = Math.hypot(raw.x - px, raw.z - pz);
-      if (blocked(raw.x, raw.z) || sameTile(raw.x, raw.z, px, pz) || d < 1.85) continue;
-      return raw;
+    for (let r = 3.2; r <= 6; r += 0.35) {
+      for (let i = 0; i < 24; i++) {
+        const ang = (i / 24) * Math.PI * 2;
+        consider(px + Math.cos(ang) * r, pz + Math.sin(ang) * r, 2, 6.05);
+      }
     }
-    return nearestOpen(px + 2.6, pz - 2.6, 5);
+    return best;
   }
 
   function spawnTest(id: string): ActionResult {
@@ -1132,10 +1087,8 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
     const level = Math.max(1, p.level);
     const type = "Spider";
-    let spot = testFoeSpot(p.x, p.z);
-    if (sameTile(spot.x, spot.z, p.x, p.z) || Math.hypot(spot.x - p.x, spot.z - p.z) < 1.85) {
-      spot = nearestOpen(p.x + 3, p.z - 3, 6);
-    }
+    const spot = testFoeSpot(p.x, p.z);
+    if (!spot) return { ok: false, reason: "No open ground." };
     // Nine swings at the basic-attack cooldown is about twenty seconds.
     const hp = Math.max(72, trainedDamage(p) * 9);
     const mobId = "t" + mid++;
@@ -1157,7 +1110,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       snareUntil: 0,
     });
     const mob = monsters.get(mobId)!;
-    if (sameTile(mob.x, mob.z, p.x, p.z)) stepOffTile(mob, p.x, p.z);
+    if (sameTile(mob.x, mob.z, p.x, p.z) || mobSharesTile(mob.x, mob.z, mob.id)) stepOffTile(mob, p.x, p.z);
     return { ok: true, reason: "A test foe appears." };
   }
 

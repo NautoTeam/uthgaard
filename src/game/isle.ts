@@ -19,7 +19,6 @@ import {
   nearestTrainer,
   nearestRegistrar,
   routeTo,
-  screenGap,
   underHall,
 } from "./geo";
 import {
@@ -1111,7 +1110,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function weaponRead(file: string) {
-    if (file.startsWith("dagger")) return 2.2;
+    if (file.startsWith("dagger")) return 1.45;
     if (file.startsWith("mace")) return 1.65;
     if (file.startsWith("oak_staff")) return 1.45;
     return 1;
@@ -1919,27 +1918,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
     }
     const next = resolveMove(p.x, p.z, p.x + vx * dt, p.z + vz * dt);
-    let nx = next.x;
-    let nz = next.z;
-    const foeTile = (x: number, z: number) =>
-      view().monsters.some((m) => {
-        if (m.hp <= 0 || (m.id !== chaseId && m.targetId !== myId)) return false;
-        return (
-          Math.hypot(m.x - x, m.z - z) < 0.85 ||
-          (Math.round(m.x) === Math.round(x) && Math.round(m.z) === Math.round(z))
-        );
-      });
-    const crowded = (x: number, z: number) =>
-      foeTile(x, z) ||
-      view().monsters.some((m) => m.hp > 0 && m.id !== chaseId && screenGap(m.x, m.z, x, z) < 58);
-    if (crowded(nx, nz)) {
-      if (!crowded(nx, p.z) && !blocked(nx, p.z)) nz = p.z;
-      else if (!crowded(p.x, nz) && !blocked(p.x, nz)) nx = p.x;
-      else {
-        nx = p.x;
-        nz = p.z;
-      }
-    }
+    const nx = next.x;
+    const nz = next.z;
     const stuck = Math.hypot(nx - p.x, nz - p.z) < 0.001;
     if (stuck && dest) {
       stuckFor += dt;
