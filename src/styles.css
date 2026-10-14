@@ -1007,8 +1007,42 @@ body {
 
 #messages[hidden],
 #pvpMessages[hidden],
-#guildMessages[hidden] {
+#guildMessages[hidden],
+#netStatus[hidden] {
   display: none !important;
+}
+
+#netStatus {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  background: rgba(80, 50, 10, 0.92);
+  color: #f6e7b2;
+  font-size: 13px;
+}
+
+#importOffer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 10, 8, 0.72);
+}
+
+#importOffer .card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  padding: 16px;
+  background: #1a221c;
+  border: 1px solid #6a5a38;
+  color: #f0e2b0;
+}
+
+#importOffer button {
+  min-height: 36px;
 }
 
 #chatInput {

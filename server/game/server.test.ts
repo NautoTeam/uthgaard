@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { WebSocket } from "ws";
-import { answerNeedCreate, helloAfterNeedCreate } from "../../src/game/net";
+import { answerNeedCreate, helloAfterNeedCreate, toServerIntent } from "../../src/game/net";
+import { backoffMs, interpolateXZ, reconnectPlan, snapAlpha } from "../../src/game/remote";
 import { signGameToken } from "../../src/shared/net/token";
 import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protocol";
 import type { CharacterRecord } from "../../src/shared/persist/store";
-import { blocked, TREES } from "../../src/shared/sim/geo";
+import { blocked, cityAt, TREES } from "../../src/shared/sim/geo";
 import { attrsFor } from "../../src/shared/sim/types";
 import { createWorld, MAX_SPEED } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
 import { applyIntent, TICK_DT } from "./dispatch";
-import { startServer } from "./server";
+import { clampImport } from "./persist";
+import { originAllowed, startServer } from "./server";
 
 const maxStep = MAX_SPEED * TICK_DT * 1.5;
 /** A legal walk. Must stay under one tick of MAX_SPEED. */
@@ -96,7 +98,19 @@ type Msg = {
   seq?: number;
   result?: { ok: boolean };
   state?: {
-    players?: Array<{ id: string; username: string; x: number; z: number; gold?: number; hp?: number }>;
+    players?: Array<{
+      id: string;
+      username: string;
+      x: number;
+      z: number;
+      gold?: number;
+      hp?: number;
+      maxHp?: number;
+      level?: number;
+      xp?: number;
+      inventory?: Record<string, number>;
+      equipment?: Record<string, string>;
+    }>;
     graves?: Array<{ id: string; owner: string; gold: number }>;
   };
 };
@@ -123,9 +137,19 @@ async function connect(port: number) {
 
 test("protocol rejects unknown ops, debug ops, and an extra id", () => {
   assert.equal(IntentSchema.safeParse({ op: "dance" }).success, false);
-  assert.equal(IntentSchema.safeParse({ op: "setLevel", level: 20 }).success, false);
-  assert.equal(IntentSchema.safeParse({ op: "spawnTest" }).success, false);
-  assert.equal(IntentSchema.safeParse({ op: "grantXp", amount: 10 }).success, false);
+  for (const intent of [
+    { op: "setLevel", level: 20 },
+    { op: "setHp", hp: 1 },
+    { op: "spawnTest" },
+    { op: "spawn" },
+    { op: "grantXp", amount: 10 },
+    { op: "adoptGraves" },
+    { op: "note", msg: "x" },
+    { op: "removeGrave", id: "g" },
+  ]) {
+    assert.equal(IntentSchema.safeParse(intent).success, false, intent.op);
+    assert.equal(toServerIntent(intent), null, intent.op);
+  }
   assert.equal(
     ClientMsg.safeParse({
       t: "intent",
@@ -155,6 +179,33 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
       t: "hello",
       token: "x".repeat(20),
       create: { name: "A", race: "Human", baseClass: "Fighter" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "hello",
+      token: "x".repeat(20),
+      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+      import: { level: 40, gold: 9999, inventory: { "spider-silk": 2 }, x: 12 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "hello",
+      token: "x".repeat(20),
+      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+      import: { level: 40, gold: 9999, inventory: { "spider-silk": 2 } },
+    }).success,
+    true,
+  );
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "intent",
+      seq: 1,
+      intent: { op: "move", x: 1, z: 2, rotation: 0 },
+      import: { level: 2, gold: 1 },
     }).success,
     false,
   );
@@ -806,5 +857,280 @@ test("a 30s tick saves dirty players and close saves everyone online", async () 
     await pg.close();
   }
 });
+
+test("interpolation delays other bodies and reconnect backoff is capped", () => {
+  assert.equal(snapAlpha(0, 100, 150), 0.5);
+  assert.equal(snapAlpha(0, 100, 1000), 1);
+  const rows = interpolateXZ(
+    [{ id: "a", x: 0, z: 0 }],
+    [{ id: "a", x: 10, z: 4 }],
+    0.5,
+  );
+  assert.equal(rows[0].x, 5);
+  assert.equal(rows[0].z, 2);
+  const own = interpolateXZ([{ id: "me", x: 0, z: 0 }], [{ id: "me", x: 10, z: 0 }], 0.5, "me");
+  assert.equal(own[0].x, 10);
+  assert.equal(backoffMs(0, () => 0), 400);
+  assert.equal(backoffMs(0, () => 1), 600);
+  assert.equal(backoffMs(9, () => 0), 6400);
+  assert.equal(reconnectPlan(4409, 0).reconnect, false);
+  assert.equal(reconnectPlan(4409, 0).notice, "Signed in elsewhere");
+  assert.equal(reconnectPlan(4401, 0).reconnect, true);
+  assert.equal(reconnectPlan(4401, 1).notice, "sign in again");
+  assert.equal(reconnectPlan(4401, 1).reconnect, false);
+  assert.equal(reconnectPlan(1006, 0).reconnect, true);
+  assert.equal(reconnectPlan(1001, 0).reconnect, true);
+  const clamped = clampImport({
+    level: 40,
+    gold: 9999,
+    inventory: { "spider-silk": 3, "not-real": 4, "minor-potion": 150 },
+    equipment: { weapon: "iron-sword", chest: "iron-sword" },
+  }, 1234);
+  assert.equal(clamped.level, 5);
+  assert.equal(clamped.gold, 500);
+  assert.equal(clamped.xp, 0);
+  assert.equal(clamped.inventory["spider-silk"], 3);
+  assert.equal(clamped.inventory["minor-potion"], 99);
+  assert.equal(clamped.inventory["not-real"], undefined);
+  assert.equal(clamped.equipment.weapon, "iron-sword");
+  assert.equal(clamped.equipment.chest, undefined);
+  assert.equal(clamped.importedAt, 1234);
+});
+
+test("origins are open in dev, denied in production, and matched from the list", () => {
+  assert.equal(originAllowed("https://evil.test", "", "production"), false);
+  assert.equal(originAllowed("https://evil.test", undefined, "development"), true);
+  assert.equal(originAllowed(undefined, undefined, "test"), true);
+  assert.equal(
+    originAllowed("http://localhost:3000", "http://localhost:3000, https://app.vercel.app", "production"),
+    true,
+  );
+  assert.equal(originAllowed("https://nope", "http://localhost:3000", "production"), false);
+  assert.equal(originAllowed("", "http://localhost:3000", "test"), false);
+});
+
+test("more than 30 intents a second are dropped and a flood closes 4429", async () => {
+  const game = startServer({ ...gameOpts(), now: () => 80_000, rand: mulberry32(30) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    await hello(ws, "user-fast", "Fast");
+    await until(() => msgs.find((m) => m.t === "welcome"));
+    const placed = await until(() => {
+      const snap = [...msgs].reverse().find((m) => m.t === "snap");
+      return snap?.state?.players?.find((p) => p.id === "user-fast");
+    });
+    const closed = closeCode(ws, 3000);
+    for (let i = 0; i < 200; i++) {
+      ws.send(
+        JSON.stringify({
+          t: "intent",
+          seq: i + 1,
+          intent: { op: "move", x: placed.x, z: placed.z, rotation: 0 },
+        }),
+      );
+    }
+    assert.equal(await closed, 4429);
+    const acks = msgs.filter((m) => m.t === "ack").length;
+    assert.ok(acks < 200, `expected throttling, got ${acks} acks`);
+    assert.ok(acks <= 80, `burst should stay near 60, got ${acks}`);
+    assert.ok(acks >= 1);
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
+test("twenty malformed frames close 4400", async () => {
+  const game = startServer({ port: 0, rand: mulberry32(31) });
+  const port = await game.ready;
+  const { ws } = await connect(port);
+  try {
+    for (let i = 0; i < 19; i++) ws.send("{");
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    const closed = closeCode(ws, 2000);
+    ws.send("{");
+    assert.equal(await closed, 4400);
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
+test("a 5kb frame is rejected", async () => {
+  const game = startServer({ port: 0, rand: mulberry32(32) });
+  const port = await game.ready;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  ws.on("error", () => undefined);
+  try {
+    await opened(ws);
+    const closed = closeCode(ws, 2000);
+    ws.send("x".repeat(5 * 1024));
+    const code = await closed;
+    assert.ok(code === 1009 || code === 1006, `close ${code}`);
+    assert.notEqual(ws.readyState, WebSocket.OPEN);
+    const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+    assert.equal(res.status, 200);
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
+test("a bad Origin is 403 and a listed origin connects", async () => {
+  const game = startServer({
+    ...gameOpts(),
+    now: () => 81_000,
+    rand: mulberry32(33),
+    allowedOrigins: "http://localhost:3000",
+  });
+  const port = await game.ready;
+  const url = `ws://127.0.0.1:${port}`;
+  try {
+    const status = await new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(url, { headers: { Origin: "https://evil.example" } });
+      const timer = setTimeout(() => reject(new Error("origin check hung")), 2000);
+      ws.on("unexpected-response", (_req, res) => {
+        clearTimeout(timer);
+        resolve(res.statusCode ?? 0);
+        res.resume();
+      });
+      ws.on("open", () => {
+        clearTimeout(timer);
+        ws.close();
+        resolve(101);
+      });
+      ws.on("error", () => undefined);
+    });
+    assert.equal(status, 403);
+
+    const good = new WebSocket(url, { headers: { Origin: "http://localhost:3000" } });
+    good.on("error", () => undefined);
+    await opened(good);
+    assert.equal(good.readyState, WebSocket.OPEN);
+    good.close();
+  } finally {
+    await game.close();
+  }
+});
+
+test("a debug-op intent is rejected and does not change the hero", async () => {
+  const game = startServer({ ...gameOpts(), now: () => 82_000, rand: mulberry32(34) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    await hello(ws, "user-ada", "Ada");
+    await until(() => msgs.find((m) => m.t === "welcome"));
+    const before = game.world.players.get("user-ada");
+    assert.ok(before);
+    const level = before.level;
+    const gold = before.gold;
+    const mobs = game.world.snapshot().monsters.length;
+    for (const intent of [
+      { op: "setLevel", level: 20 },
+      { op: "setHp", hp: 1 },
+      { op: "spawn" },
+      { op: "spawnTest" },
+      { op: "grantXp", amount: 50 },
+    ]) {
+      ws.send(JSON.stringify({ t: "intent", seq: 1, intent }));
+    }
+    await new Promise((r) => setTimeout(r, 80));
+    const after = game.world.players.get("user-ada");
+    assert.equal(after?.level, level);
+    assert.equal(after?.gold, gold);
+    assert.equal(after?.hp, before.hp);
+    assert.equal(game.world.snapshot().monsters.length, mobs);
+    assert.equal(msgs.some((m) => m.t === "ack" && m.result?.ok), false);
+    assert.equal(ws.readyState, WebSocket.OPEN);
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
+test("an import is clamped once and a second import is ignored", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 90_000, rand: mulberry32(35) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  const city = cityAt("uthgaard");
+  assert.ok(city);
+  try {
+    const token = await signGameToken(SECRET, { id: "user-imp", name: "Imp" });
+    ws.send(
+      JSON.stringify({
+        t: "hello",
+        token,
+        create: { name: "Imp", race: "Human", baseClass: "Fighter" },
+        import: {
+          level: 40,
+          gold: 9999,
+          inventory: { "spider-silk": 3, "not-real": 4, "minor-potion": 150 },
+          equipment: { weapon: "iron-sword", chest: "iron-sword" },
+        },
+      }),
+    );
+    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-imp");
+    const hero = await until(() => {
+      const snap = [...msgs].reverse().find((m) => m.t === "snap");
+      return snap?.state?.players?.find((p) => p.id === "user-imp");
+    });
+    assert.equal(hero.level, 5);
+    assert.equal(hero.gold, 500);
+    assert.equal(hero.xp, 0);
+    assert.equal(hero.inventory?.["not-real"], undefined);
+    assert.equal(hero.inventory?.["spider-silk"], 3);
+    assert.equal(hero.inventory?.["minor-potion"], 99);
+    assert.equal(hero.equipment?.weapon, "iron-sword");
+    assert.equal(hero.equipment?.chest, undefined);
+    assert.equal(hero.hp, hero.maxHp);
+    assert.ok(Math.hypot(hero.x - city.x, hero.z - city.z) < 8);
+    const row = await characters.load("user-imp");
+    assert.equal(row?.save.level, 5);
+    assert.equal(row?.save.gold, 500);
+    assert.equal(typeof row?.save.importedAt, "number");
+    const stamped = row?.save.importedAt;
+
+    const closed = closeCode(ws, 2000);
+    ws.close();
+    await closed;
+
+    const next = await connect(port);
+    try {
+      const again = await signGameToken(SECRET, { id: "user-imp", name: "Imp" });
+      next.ws.send(
+        JSON.stringify({
+          t: "hello",
+          token: again,
+          create: { name: "Imp", race: "Human", baseClass: "Fighter" },
+          import: { level: 1, gold: 1, inventory: { "not-real": 9 } },
+        }),
+      );
+      await until(() => next.msgs.find((m) => m.t === "welcome"));
+      const hero2 = await until(() => {
+        const live = game.world.players.get("user-imp");
+        if (!live) return undefined;
+        return live;
+      });
+      assert.equal(hero2.level, 5);
+      assert.equal(hero2.gold, 500);
+      assert.equal(hero2.inventory["not-real"], undefined);
+      const row2 = await characters.load("user-imp");
+      assert.equal(row2?.save.importedAt, stamped);
+      assert.equal(row2?.save.level, 5);
+      assert.equal(row2?.save.gold, 500);
+    } finally {
+      next.ws.close();
+    }
+  } finally {
+    ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
 
 

@@ -6,12 +6,39 @@ import { ClientMsg, type ServerMsg } from "../../src/shared/net/protocol";
 import type { World } from "../../src/shared/sim/world";
 import type { GameDb } from "./db";
 import { applyIntent } from "./dispatch";
-import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
+import { clampImport, joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
 
 const HELLO_MS = 5000;
+const CREATE_MS = 120_000;
 const TICK_MS = 50;
 const SAVE_MS = 30_000;
+const INTENT_RATE = 30;
+const INTENT_BURST = 60;
+const ABUSE_WINDOW_MS = 10_000;
+
+/** Empty allow-list permits every origin outside production and none inside it. */
+export function originAllowed(origin: string | undefined, allowed: string | undefined, nodeEnv: string | undefined): boolean {
+  const list = String(allowed ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (list.length === 0) return nodeEnv !== "production";
+  if (!origin) return false;
+  return list.includes(origin);
+}
+
+let originWarningLogged = false;
+function warnIfOriginsUnset() {
+  if (originWarningLogged || process.env.NODE_ENV !== "production") return;
+  const list = String(process.env.ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (list.length > 0) return;
+  originWarningLogged = true;
+  console.warn("ALLOWED_ORIGINS is unset; refusing every WebSocket origin");
+}
 
 export interface GameServer {
   close: () => Promise<void>;
@@ -46,6 +73,11 @@ type Conn = {
   savedHash: string;
   alive: boolean;
   saveChain: Promise<void>;
+  tokens: number;
+  bucketAt: number;
+  drops: number[];
+  bads: number[];
+  importedAt?: number;
 };
 
 /**
@@ -58,12 +90,18 @@ export function startServer(opts: {
   rand?: () => number;
   characters?: GameDb;
   tokenSecret?: string;
+  /** Test override. Production reads ALLOWED_ORIGINS. */
+  allowedOrigins?: string;
+  nodeEnv?: string;
 }): GameServer {
   const now = opts.now ?? Date.now;
   const rand = opts.rand;
   const characters = opts.characters;
   const tokenSecret = opts.tokenSecret?.trim() || "";
+  const allowedOrigins = opts.allowedOrigins ?? process.env.ALLOWED_ORIGINS;
+  const nodeEnv = opts.nodeEnv ?? process.env.NODE_ENV;
   const authority = createAuthority({ now, rand });
+  warnIfOriginsUnset();
   let tick = 0;
   let dropped = 0;
   let closed = false;
@@ -74,11 +112,6 @@ export function startServer(opts: {
   const byUser = new Map<string, Conn>();
   const userLock = new Map<string, Promise<void>>();
   const pending = new Set<Promise<void>>();
-
-  function digest(userId: string) {
-    const player = authority.world.players.get(userId);
-    return player ? JSON.stringify(recordFromPlayer(player)) : "";
-  }
 
   async function withUser<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     const prev = userLock.get(userId) ?? Promise.resolve();
@@ -107,6 +140,7 @@ export function startServer(opts: {
     const player = authority.world.players.get(conn.playerId);
     if (!player) return;
     const record = recordFromPlayer(player);
+    if (conn.importedAt != null) record.importedAt = conn.importedAt;
     const hash = JSON.stringify(record);
     if (!force && hash === conn.savedHash) return;
     const next = await characters.save(conn.userId, record, conn.rev);
@@ -191,7 +225,18 @@ export function startServer(opts: {
     socket.destroy();
   });
 
-  const wss = new WebSocketServer({ server: httpServer, maxPayload: 4096 });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    maxPayload: 4096,
+    verifyClient: (info, done) => {
+      if (originAllowed(info.origin, allowedOrigins, nodeEnv)) {
+        done(true);
+        return;
+      }
+      if (nodeEnv === "production") warnIfOriginsUnset();
+      done(false, 403, "Forbidden");
+    },
+  });
   wss.on("error", () => {
     dropped++;
   });
@@ -211,6 +256,7 @@ export function startServer(opts: {
     if (!left || !userId || !characters) return;
     const db = characters;
     const record = recordFromPlayer(left);
+    if (conn.importedAt != null) record.importedAt = conn.importedAt;
     const run = conn.saveChain.then(async () => {
       const next = await db.save(userId, record, conn.rev);
       if (next == null) {
@@ -244,12 +290,22 @@ export function startServer(opts: {
       savedHash: "",
       alive: true,
       saveChain: Promise.resolve(),
+      tokens: INTENT_BURST,
+      bucketAt: Date.now(),
+      drops: [],
+      bads: [],
     };
-    const helloTimer = setTimeout(() => {
+    let helloTimer: ReturnType<typeof setTimeout>;
+    function armHello(ms: number) {
+      clearTimeout(helloTimer);
       helloTimers.delete(helloTimer);
-      if (!conn.playerId && socket.readyState === WebSocket.OPEN) socket.close(4401, "hello required");
-    }, HELLO_MS);
-    helloTimers.add(helloTimer);
+      helloTimer = setTimeout(() => {
+        helloTimers.delete(helloTimer);
+        if (!conn.playerId && socket.readyState === WebSocket.OPEN) socket.close(4401, "hello required");
+      }, ms);
+      helloTimers.add(helloTimer);
+    }
+    armHello(HELLO_MS);
 
     const forget = async () => {
       clearTimeout(helloTimer);
@@ -275,6 +331,37 @@ export function startServer(opts: {
       socket.close(4401, reason);
     }
 
+    function noteBad() {
+      dropped++;
+      const t = Date.now();
+      conn.bads.push(t);
+      conn.bads = conn.bads.filter((ts) => t - ts <= ABUSE_WINDOW_MS);
+      if (conn.bads.length >= 20 && !conn.dead) {
+        conn.dead = true;
+        socket.close(4400, "bad message");
+      }
+    }
+
+    function noteDrop() {
+      const t = Date.now();
+      conn.drops.push(t);
+      conn.drops = conn.drops.filter((ts) => t - ts <= ABUSE_WINDOW_MS);
+      if (conn.drops.length > 100 && !conn.dead) {
+        conn.dead = true;
+        socket.close(4429, "slow down");
+      }
+    }
+
+    function allowIntent() {
+      const t = Date.now();
+      const elapsed = Math.max(0, (t - conn.bucketAt) / 1000);
+      conn.tokens = Math.min(INTENT_BURST, conn.tokens + elapsed * INTENT_RATE);
+      conn.bucketAt = t;
+      if (conn.tokens < 1) return false;
+      conn.tokens -= 1;
+      return true;
+    }
+
     let chain = Promise.resolve();
     socket.on("message", (data) => {
       chain = chain.then(() => onMessage(data)).catch(() => {
@@ -289,11 +376,11 @@ export function startServer(opts: {
       try {
         parsed = ClientMsg.safeParse(JSON.parse(rawText(data)));
       } catch {
-        dropped++;
+        noteBad();
         return;
       }
       if (!parsed.success) {
-        dropped++;
+        noteBad();
         return;
       }
       if (parsed.data.t === "hello") {
@@ -330,19 +417,23 @@ export function startServer(opts: {
             const choice = validateCreate(hello.create);
             if (!hello.create) {
               send(socket, { t: "error", reason: "need_create" });
+              armHello(CREATE_MS);
               return;
             }
             if (!choice) {
               send(socket, { t: "error", reason: "bad_create" });
               return;
             }
-            input = joinInputFor(claims.userId, null, choice);
+            const imported =
+              hello.import && loaded == null ? clampImport(hello.import, now()) : null;
+            input = joinInputFor(claims.userId, null, choice, imported);
             if (!input) {
               send(socket, { t: "error", reason: "bad_create" });
               return;
             }
             const player = authority.world.join(input);
             const record = recordFromPlayer(player);
+            if (imported) record.importedAt = imported.importedAt;
             let created: Awaited<ReturnType<NonNullable<typeof characters>["create"]>>;
             try {
               created = await characters.create(claims.userId, record.username, record);
@@ -356,10 +447,12 @@ export function startServer(opts: {
               return;
             }
             rev = created;
+            conn.importedAt = record.importedAt;
             conn.savedHash = JSON.stringify(record);
           }
           if (!input) {
             send(socket, { t: "error", reason: "need_create" });
+            armHello(CREATE_MS);
             return;
           }
           if (conn.dead || conn.replaced) {
@@ -368,7 +461,12 @@ export function startServer(opts: {
           }
           const player = loaded ? authority.world.join(input) : authority.world.players.get(claims.userId);
           if (!player) return;
-          if (loaded) conn.savedHash = digest(player.id);
+          if (loaded) {
+            conn.importedAt = loaded.save.importedAt;
+            const record = recordFromPlayer(player);
+            if (conn.importedAt != null) record.importedAt = conn.importedAt;
+            conn.savedHash = JSON.stringify(record);
+          }
           clearTimeout(helloTimer);
           helloTimers.delete(helloTimer);
           conn.userId = claims.userId;
@@ -381,6 +479,10 @@ export function startServer(opts: {
         return;
       }
       if (!conn.playerId) return;
+      if (!allowIntent()) {
+        noteDrop();
+        return;
+      }
       const result = applyIntent(authority.world, conn.playerId, parsed.data.intent);
       send(socket, { t: "ack", seq: parsed.data.seq, result });
       if (parsed.data.intent.op === "respawn" && result.ok) {

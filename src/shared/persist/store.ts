@@ -29,6 +29,8 @@ export interface CharacterRecord {
   rev?: number;
   /** Last time this tab handled player input. Newer input wins over a stale tab. */
   inputAt?: number;
+  /** Set once, when a local save is imported into a new row. A later import is ignored. */
+  importedAt?: number;
 }
 
 export interface CharacterStore {

@@ -1,5 +1,10 @@
 import type { BaseClass, Race } from "../shared/content/catalog";
 
+const metaEnv = (import.meta as { env?: { VITE_GAME_SERVER_URL?: string } }).env;
+
+/** WebSocket URL of the authoritative game server. Empty means local play. */
+export const SERVER = String(metaEnv?.VITE_GAME_SERVER_URL ?? "").trim();
+
 /** The creation screen's choice. Piece 3 sends this only after `need_create`. */
 export interface HelloChoice {
   username: string;
@@ -7,10 +12,23 @@ export interface HelloChoice {
   baseClass: BaseClass;
 }
 
-export function gameHello(token: string, choice?: HelloChoice) {
+/** Local save offered once, inside hello. The server clamps it. */
+export interface HelloImport {
+  level: number;
+  gold: number;
+  inventory?: Record<string, number>;
+  equipment?: Record<string, string>;
+}
+
+export function gameHello(token: string, choice?: HelloChoice, imported?: HelloImport | null) {
   if (!choice) return { t: "hello" as const, token };
-  return {
-    t: "hello" as const,
+  const body: {
+    t: "hello";
+    token: string;
+    create: { name: string; race: Race; baseClass: BaseClass };
+    import?: HelloImport;
+  } = {
+    t: "hello",
     token,
     create: {
       name: choice.username.trim().slice(0, 16),
@@ -18,6 +36,8 @@ export function gameHello(token: string, choice?: HelloChoice) {
       baseClass: choice.baseClass,
     },
   };
+  if (imported) body.import = imported;
+  return body;
 }
 
 /**
@@ -28,11 +48,12 @@ export function helloAfterNeedCreate(
   token: string,
   reason: string,
   choice: HelloChoice,
+  imported?: HelloImport | null,
 ): ReturnType<typeof gameHello> | null {
   if (reason !== "need_create") return null;
   const name = choice.username.trim();
   if (name.length < 2) return null;
-  return gameHello(token, { ...choice, username: name });
+  return gameHello(token, { ...choice, username: name }, imported);
 }
 
 /** Socket hook: on `need_create`, write the creation-screen hello back to the server. */
@@ -41,8 +62,72 @@ export function answerNeedCreate(
   token: string,
   choice: HelloChoice,
   send: (body: ReturnType<typeof gameHello>) => void,
+  imported?: HelloImport | null,
 ) {
   if (msg.t !== "error") return;
-  const next = helloAfterNeedCreate(token, msg.reason ?? "", choice);
+  const next = helloAfterNeedCreate(token, msg.reason ?? "", choice, imported);
   if (next) send(next);
+}
+
+/** Map a local isle intent onto the wire. Debug ops and ids never leave the browser. */
+export function toServerIntent(intent: {
+  op: string;
+  x?: number;
+  z?: number;
+  rotation?: number;
+  targetId?: string | null;
+  skill?: string;
+  cityId?: string;
+  itemId?: string;
+  slot?: string;
+  skillId?: string;
+  cls?: string;
+  msg?: string;
+  graveId?: string;
+}): Record<string, unknown> | null {
+  switch (intent.op) {
+    case "move":
+      if (typeof intent.x !== "number" || typeof intent.z !== "number" || typeof intent.rotation !== "number")
+        return null;
+      return { op: "move", x: intent.x, z: intent.z, rotation: intent.rotation };
+    case "attack":
+      return { op: "attack", targetId: intent.targetId ?? null };
+    case "skill":
+      if (!intent.skill) return null;
+      return { op: "skill", name: intent.skill, targetId: intent.targetId ?? null };
+    case "travel":
+      if (!intent.cityId) return null;
+      return { op: "travel", cityId: intent.cityId };
+    case "buy":
+      if (!intent.itemId) return null;
+      return { op: "buy", itemId: intent.itemId };
+    case "sell":
+      if (!intent.itemId) return null;
+      return { op: "sell", itemId: intent.itemId };
+    case "use":
+    case "useItem":
+      if (!intent.itemId) return null;
+      return { op: "useItem", itemId: intent.itemId };
+    case "equip":
+      if (!intent.itemId) return null;
+      return { op: "equip", itemId: intent.itemId };
+    case "unequip":
+      if (!intent.slot) return null;
+      return { op: "unequip", slot: intent.slot };
+    case "train":
+      if (!intent.skillId) return null;
+      return { op: "train", skillId: intent.skillId };
+    case "promote":
+      if (!intent.cls) return null;
+      return { op: "promote", cls: intent.cls };
+    case "chat":
+      return { op: "chat", msg: intent.msg ?? "" };
+    case "respawn":
+      return { op: "respawn" };
+    case "loot":
+      if (!intent.graveId) return null;
+      return { op: "loot", graveId: intent.graveId };
+    default:
+      return null;
+  }
 }

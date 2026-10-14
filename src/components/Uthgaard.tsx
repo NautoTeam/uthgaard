@@ -5,11 +5,34 @@ import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClas
 
 export function Uthgaard() {
   const [run, setRun] = useState<IsleProfile | null>(null);
-  if (!run) return <Gate onEnter={setRun} />;
+  const [createError, setCreateError] = useState("");
+  if (!run) {
+    return (
+      <Gate
+        error={createError}
+        onEnter={(profile) => {
+          setCreateError("");
+          setRun({
+            ...profile,
+            onCreateError: (reason) => {
+              setCreateError(createErrorText(reason));
+              setRun(null);
+            },
+          });
+        }}
+      />
+    );
+  }
   return <Isle profile={run} />;
 }
 
-function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
+function createErrorText(reason: string) {
+  if (reason === "name_taken") return "That name is taken.";
+  if (reason === "bad_create") return "That hero cannot be created.";
+  return reason;
+}
+
+function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; error?: string }) {
   const [name, setName] = useState("Hero");
   const [race, setRace] = useState<Race>("Human");
   const [path, setPath] = useState<BaseClass>("Fighter");
@@ -87,6 +110,11 @@ function Gate({ onEnter }: { onEnter: (profile: IsleProfile) => void }) {
         </select>
       </label>
       {(locked || block) && <p className="path-block">{block || classDenied(race, path)}</p>}
+      {error && (
+        <p className="path-block" id="createError">
+          {error}
+        </p>
+      )}
       <button id="joinBtn" type="submit" disabled={locked}>
         Enter the Village
       </button>
@@ -333,6 +361,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
           </button>
         </div>
         <p id="bindLine" />
+        <p id="netStatus" hidden />
         <div id="messages" />
         <div id="pvpMessages" hidden />
         <div id="guildMessages" hidden />
