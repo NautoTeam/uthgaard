@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src/shared ./src/shared
 COPY src/server ./src/server
 COPY server ./server
-# piece 2: COPY migrations ./migrations
+COPY migrations ./migrations
 EXPOSE 2567
 USER node
 CMD ["npx", "tsx", "server/game/index.ts"]

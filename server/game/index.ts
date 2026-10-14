@@ -1,7 +1,15 @@
+import { openGameDb } from "./db";
 import { startServer } from "./server";
 
 const port = Number(process.env.PORT ?? 2567);
-const game = startServer({ port });
+const databaseUrl = process.env.DATABASE_URL?.trim() || "";
+const tokenSecret = process.env.GAME_TOKEN_SECRET?.trim() || "";
+const db = databaseUrl ? await openGameDb(databaseUrl) : null;
+const game = startServer({
+  port,
+  characters: db ?? undefined,
+  tokenSecret: tokenSecret || undefined,
+});
 console.log(`listening :${port}`);
 
 let shuttingDown = false;
@@ -10,7 +18,10 @@ function shutdown() {
   shuttingDown = true;
   const force = setTimeout(() => process.exit(0), 2000);
   force.unref();
-  void game.close().then(() => process.exit(0));
+  void game.close().then(async () => {
+    await db?.close();
+    process.exit(0);
+  });
 }
 
 process.on("SIGTERM", shutdown);

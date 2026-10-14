@@ -1,13 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WebSocket } from "ws";
+import { signGameToken } from "../../src/shared/net/token";
 import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protocol";
 import { blocked, TREES } from "../../src/shared/sim/geo";
 import { createWorld, MAX_SPEED } from "../../src/shared/sim/world";
+import { memoryCharacters } from "./db";
 import { applyIntent, TICK_DT } from "./dispatch";
 import { startServer } from "./server";
 
 const maxStep = MAX_SPEED * TICK_DT * 1.5;
+const SECRET = "test-secret-test-secret-test-secret";
+
+function gameOpts(extra: { characters?: ReturnType<typeof memoryCharacters> } = {}) {
+  return {
+    port: 0,
+    tokenSecret: SECRET,
+    characters: extra.characters ?? memoryCharacters(),
+  };
+}
+
+async function hello(ws: WebSocket, userId: string, name: string) {
+  const token = await signGameToken(SECRET, { id: userId, name });
+  ws.send(JSON.stringify({ t: "hello", token }));
+}
 
 function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -27,10 +43,10 @@ function opened(ws: WebSocket) {
   });
 }
 
-async function until<T>(read: () => T | undefined, ms = 2500): Promise<T> {
+async function until<T>(read: () => T | undefined | Promise<T | undefined>, ms = 2500): Promise<T> {
   const start = Date.now();
   for (;;) {
-    const value = read();
+    const value = await read();
     if (value !== undefined) return value;
     if (Date.now() - start > ms) throw new Error("timed out");
     await new Promise((r) => setTimeout(r, 20));
@@ -54,7 +70,9 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
     ClientMsg.safeParse({ t: "intent", seq: 1, id: "p1", intent: { op: "respawn" } }).success,
     false,
   );
-  assert.equal(ClientMsg.safeParse({ t: "hello", name: "Ada" }).success, true);
+  assert.equal(ClientMsg.safeParse({ t: "hello", name: "Ada" }).success, false);
+  assert.equal(ClientMsg.safeParse({ t: "hello", token: "x".repeat(20) }).success, true);
+  assert.equal(ClientMsg.safeParse({ t: "hello", token: "short" }).success, false);
 });
 
 test("move rejects a jump past max speed and a blocked tile", () => {
@@ -204,7 +222,7 @@ test("garbage and oversize frames do not kill /healthz", async () => {
 });
 
 test("two clients both receive a snap that contains both heroes", async () => {
-  const game = startServer({ port: 0, now: () => 5_000, rand: mulberry32(5) });
+  const game = startServer({ ...gameOpts(), now: () => 5_000, rand: mulberry32(5) });
   const port = await game.ready;
   const ada = new WebSocket(`ws://127.0.0.1:${port}`);
   const bea = new WebSocket(`ws://127.0.0.1:${port}`);
@@ -217,8 +235,8 @@ test("two clients both receive a snap that contains both heroes", async () => {
   try {
     await Promise.all([opened(ada), opened(bea)]);
     ada.send(JSON.stringify({ t: "intent", seq: 0, intent: { op: "respawn" } }));
-    ada.send(JSON.stringify({ t: "hello", name: "Ada" }));
-    bea.send(JSON.stringify({ t: "hello", name: "Bea" }));
+    await hello(ada, "user-ada", "Ada");
+    await hello(bea, "user-bea", "Bea");
     const welcome = await until(
       () =>
         adaMsgs.find((m) => (m as { t?: string }).t === "welcome") as
@@ -265,3 +283,74 @@ test("two clients both receive a snap that contains both heroes", async () => {
     await game.close();
   }
 });
+
+test("hello verifies the game token and reloads the saved character", async () => {
+  const characters = memoryCharacters();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 8_000, rand: mulberry32(6) });
+  const port = await game.ready;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const msgs: Array<{ t?: string; reason?: string; playerId?: string; seq?: number; result?: { ok: boolean }; state?: { players?: Array<{ id: string; x: number; z: number }> } }> = [];
+  ws.on("message", (data) => msgs.push(JSON.parse(data.toString())));
+  ws.on("error", () => undefined);
+  let movedX = 0;
+  try {
+    await opened(ws);
+    ws.send(JSON.stringify({ t: "hello", token: "x".repeat(40) }));
+    const err = await until(() => msgs.find((m) => m.t === "error"));
+    assert.equal(err.reason, "bad token");
+    const early = (await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()) as { players: number };
+    assert.equal(early.players, 0);
+
+    await hello(ws, "user-ada", "Ada");
+    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-ada");
+    const placed = await until(() => {
+      const snap = [...msgs].reverse().find((m) => m.t === "snap");
+      return snap?.state?.players?.find((p) => p.id === "user-ada");
+    });
+    const dest = { x: placed.x + 0.3, z: placed.z };
+    ws.send(JSON.stringify({ t: "intent", seq: 1, intent: { op: "move", ...dest, rotation: 1 } }));
+    const ack = await until(() => msgs.find((m) => m.t === "ack" && m.seq === 1));
+    assert.equal(ack.result?.ok, true);
+    const after = await until(() => {
+      const snap = [...msgs].reverse().find((m) => m.t === "snap");
+      const hero = snap?.state?.players?.find((p) => p.id === "user-ada");
+      if (!hero || Math.abs(hero.x - placed.x) < 0.01) return undefined;
+      return hero;
+    });
+    movedX = after.x;
+    ws.close();
+    const saved = await until(async () => {
+      const row = await characters.load("user-ada");
+      if (!row || Math.abs((row.x ?? 0) - movedX) > 0.05) return undefined;
+      return row;
+    });
+    assert.equal(saved.username, "Ada");
+    assert.equal(saved.equipment?.weapon, "iron-sword");
+  } finally {
+    ws.close();
+    await game.close();
+  }
+
+  const again = startServer({ ...gameOpts({ characters }), now: () => 9_000, rand: mulberry32(7) });
+  const port2 = await again.ready;
+  const ws2 = new WebSocket(`ws://127.0.0.1:${port2}`);
+  const msgs2: Array<{ t?: string; state?: { players?: Array<{ username: string; x: number }> } }> = [];
+  ws2.on("message", (data) => msgs2.push(JSON.parse(data.toString())));
+  ws2.on("error", () => undefined);
+  try {
+    await opened(ws2);
+    await hello(ws2, "user-ada", "Someone Else");
+    const back = await until(() => {
+      const snap = [...msgs2].reverse().find((m) => m.t === "snap");
+      return snap?.state?.players?.find((p) => p.username === "Ada");
+    });
+    assert.ok(Math.abs(back.x - movedX) < 0.05);
+    const row = await characters.load("user-ada");
+    assert.equal(row?.username, "Ada");
+  } finally {
+    ws2.close();
+    await again.close();
+  }
+});
+

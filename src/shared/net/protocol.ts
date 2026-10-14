@@ -127,7 +127,7 @@ export const ClientMsg = z.discriminatedUnion("t", [
   z
     .object({
       t: z.literal("hello"),
-      name: z.string().min(1).max(24),
+      token: z.string().min(20).max(2048),
     })
     .strict(),
   z
