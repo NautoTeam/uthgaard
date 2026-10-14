@@ -33,6 +33,7 @@ import {
   LINKS,
   TERRAIN_PALETTE,
   WORLD_CITIES,
+  ZONES,
   gateHop,
   insideIsland,
   islandAt,
@@ -1237,6 +1238,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return zoneAt(x, z)?.name ?? townNear(x, z)?.name ?? islandAt(x, z)?.name ?? "the wild";
   }
 
+  function zoneRecord(x: number, z: number) {
+    const town = townNear(x, z);
+    if (town?.zone) {
+      const declared = ZONES.find((zone) => zone.id === town.zone);
+      if (declared) return declared;
+    }
+    return zoneAt(x, z);
+  }
+
   function hud() {
     const p = me();
     if (!p) return;
@@ -1268,7 +1278,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const need = xpNeed(p.level);
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
-    const zone = zoneAt(p.x, p.z);
+    const zone = zoneRecord(p.x, p.z);
     const town = townNear(p.x, p.z);
     const pvp = zone?.pvp ? " · PvP area" : "";
     const where = showDebugHud ? ` · ${Math.round(p.x)},${Math.round(p.z)}` : "";
@@ -4388,13 +4398,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else if (equipId) send({ op: "equip", id: myId, itemId: equipId });
     else if (slot) send({ op: "unequip", id: myId, slot });
   }
-  function onShopClick(e: Event) {
-    if (blockPanelClicks) return;
-    const btn = (e.target as HTMLElement).closest("button[data-buy], button[data-sell]");
-    if (!btn) return;
+  function onShopPointerDown(e: PointerEvent) {
+    // Capture on the overlay, before the click can reach the map.
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    const raw = e.target;
+    const el = raw instanceof Element ? raw : raw instanceof Node ? raw.parentElement : null;
+    const btn = (el?.closest("button[data-buy], button[data-sell]") ?? null) as HTMLButtonElement | null;
+    if (!btn || !shop.contains(btn)) return;
     e.preventDefault();
-    const buyId = (btn as HTMLElement).dataset.buy;
-    const sellId = (btn as HTMLElement).dataset.sell;
+    const buyId = btn.dataset.buy;
+    const sellId = btn.dataset.sell;
     if (buyId) send({ op: "buy", id: myId, itemId: buyId });
     else if (sellId) send({ op: "sell", id: myId, itemId: sellId });
   }
@@ -4583,8 +4598,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   bagBtn.addEventListener("pointerup", onBagToggle);
   bagClose.addEventListener("pointerup", onBagClose);
   bag.addEventListener("pointerup", onBagClick);
-  shopStock.addEventListener("pointerup", onShopClick);
-  shopBag.addEventListener("pointerup", onShopClick);
+  shop.addEventListener("pointerdown", onShopPointerDown, true);
   shopClose.addEventListener("pointerup", onShopClose);
   trainList.addEventListener("pointerup", onTrainClick);
   trainClose.addEventListener("pointerup", onTrainClose);
@@ -4817,8 +4831,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     bagBtn.removeEventListener("pointerup", onBagToggle);
     bagClose.removeEventListener("pointerup", onBagClose);
     bag.removeEventListener("pointerup", onBagClick);
-    shopStock.removeEventListener("pointerup", onShopClick);
-    shopBag.removeEventListener("pointerup", onShopClick);
+    shop.removeEventListener("pointerdown", onShopPointerDown, true);
     shopClose.removeEventListener("pointerup", onShopClose);
     trainList.removeEventListener("pointerup", onTrainClick);
     trainClose.removeEventListener("pointerup", onTrainClose);

@@ -179,6 +179,36 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     };
   }
 
+  function inMeleeRange(ax: number, az: number, bx: number, bz: number) {
+    return screenGap(ax, az, bx, bz) <= 130 || Math.hypot(ax - bx, az - bz) <= 6.4;
+  }
+
+  /** Closest walkable point still inside melee range and not the target's tile. */
+  function nearestMeleeStand(m: MonsterState, tx: number, tz: number) {
+    let best: { x: number; z: number } | null = null;
+    let bestMob = 1e9;
+    for (let r = 1; r <= 6.45; r += 0.5) {
+      const steps = Math.max(8, Math.ceil((Math.PI * 2 * r) / 0.55));
+      let found = false;
+      for (let i = 0; i < steps; i++) {
+        const ang = (i / steps) * Math.PI * 2;
+        const x = tx + Math.cos(ang) * r;
+        const z = tz + Math.sin(ang) * r;
+        if (blocked(x, z) || sameTile(x, z, tx, tz)) continue;
+        if (!inMeleeRange(x, z, tx, tz)) continue;
+        if (!mobCanOccupy(m, x, z)) continue;
+        found = true;
+        const toM = Math.hypot(x - m.x, z - m.z);
+        if (toM < bestMob) {
+          bestMob = toM;
+          best = { x, z };
+        }
+      }
+      if (found) return best;
+    }
+    return best;
+  }
+
   function foeOf(m: MonsterState) {
     if (!m.targetId) return null;
     const t = players.get(m.targetId);
@@ -953,9 +983,34 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         const d = t && t.hp > 0 ? Math.hypot(t.x - m.x, t.z - m.z) : 99;
         if (!t || t.hp <= 0 || d > def.leash || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
           m.targetId = null;
-        } else if (screenGap(t.x, t.z, m.x, m.z) <= 130 || d <= 6.4) {
+        } else {
           if (sameTile(m.x, m.z, t.x, t.z)) stepOffTile(m, t.x, t.z);
-          if (now >= m.nextHit) {
+          const spot = nearestMeleeStand(m, t.x, t.z);
+          const here = Math.hypot(m.x - t.x, m.z - t.z);
+          const spotD = spot ? Math.hypot(spot.x - t.x, spot.z - t.z) : here;
+          const sharing = sameTile(m.x, m.z, t.x, t.z);
+          let hold = inMeleeRange(m.x, m.z, t.x, t.z) && !sharing && here <= spotD + 0.35;
+          if (!hold && !sharing) {
+            const goal = spot ?? { x: t.x, z: t.z };
+            const gap = Math.hypot(goal.x - m.x, goal.z - m.z);
+            const stop = spot ? 0 : 1.25;
+            const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, Math.max(0, gap - stop));
+            let moved = false;
+            if (stepLen > 0 && gap > 0.05) {
+              const ox = m.x;
+              const oz = m.z;
+              if (applyMobStep(m, m.x + ((goal.x - m.x) / gap) * stepLen, m.z + ((goal.z - m.z) / gap) * stepLen)) {
+                const after = Math.hypot(m.x - goal.x, m.z - goal.z);
+                if (after < gap - 0.01) moved = true;
+                else {
+                  m.x = ox;
+                  m.z = oz;
+                }
+              }
+            }
+            if (!moved && inMeleeRange(m.x, m.z, t.x, t.z)) hold = true;
+          }
+          if (hold && !sameTile(m.x, m.z, t.x, t.z) && now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
             let dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
@@ -966,13 +1021,6 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
               log(`${t.username} was slain by a ${mobLabel(m.type)}.`);
               m.targetId = null;
             }
-          }
-        } else {
-          const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, Math.max(0, d - 5.6));
-          if (stepLen > 0) {
-            const nx = m.x + ((t.x - m.x) / d) * stepLen;
-            const nz = m.z + ((t.z - m.z) / d) * stepLen;
-            applyMobStep(m, nx, nz);
           }
         }
       }

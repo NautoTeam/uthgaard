@@ -329,6 +329,12 @@ body {
   pointer-events: none;
 }
 
+/* The open shop sits above the hotbar and skills, and it eats every click. */
+#shop {
+  z-index: 11;
+  pointer-events: auto;
+}
+
 #sheet[hidden],
 #bag[hidden],
 #shop[hidden],
@@ -732,6 +738,13 @@ body {
   background: #243024;
   color: #efe6c8;
   border: 1px solid #6a5a38;
+}
+
+#shopStock button,
+#shopBag button {
+  width: 100%;
+  text-align: left;
+  touch-action: manipulation;
 }
 
 #shopStock,
