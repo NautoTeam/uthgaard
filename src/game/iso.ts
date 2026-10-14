@@ -157,3 +157,63 @@ export function resolveClick(input: ClickResolveInput): ClickResolve {
   }
   return { sx, sy, x, z, camX: input.camX, camZ: input.camZ, heroX, heroZ };
 }
+
+const TILE_NEIGHBORS: Array<[number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+/**
+ * The integer tile whose diamond contains this screen point.
+ * A seed from a bad inverse (common at the camera edge) is ignored unless it
+ * is actually closer. The search starts from the same projection the diamonds
+ * are drawn with, so the click cannot walk to a tile off the cursor.
+ */
+export function tileAtScreen(
+  sx: number,
+  sy: number,
+  camX: number,
+  camZ: number,
+  viewW: number,
+  viewH: number,
+  seedX: number,
+  seedZ: number,
+): { x: number; z: number } | null {
+  const abs = screenToWorld(sx, sy, camX, camZ, viewW, viewH);
+  const dist = (tx: number, tz: number) =>
+    diamondDistance(sx, sy, worldToScreen(tx, tz, camX, camZ, viewW, viewH));
+  let x = Math.round(Number.isFinite(abs.x) ? abs.x : seedX);
+  let z = Math.round(Number.isFinite(abs.z) ? abs.z : seedZ);
+  let best = dist(x, z);
+  const seedD = dist(Math.round(seedX), Math.round(seedZ));
+  if (seedD + 1e-9 < best) {
+    x = Math.round(seedX);
+    z = Math.round(seedZ);
+    best = seedD;
+  }
+  for (let step = 0; step < 8; step++) {
+    let nx = x;
+    let nz = z;
+    let nd = best;
+    for (const [dx, dz] of TILE_NEIGHBORS) {
+      const d = dist(x + dx, z + dz);
+      if (d + 1e-9 < nd) {
+        nd = d;
+        nx = x + dx;
+        nz = z + dz;
+      }
+    }
+    if (nx === x && nz === z) break;
+    x = nx;
+    z = nz;
+    best = nd;
+  }
+  if (best > 1.02) return null;
+  return { x, z };
+}

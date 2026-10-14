@@ -59,6 +59,7 @@ import {
 import {
   diamondDistance,
   resolveClick,
+  tileAtScreen,
   screenToWorld as isoScreenToWorld,
   worldToScreen as isoWorldToScreen,
 } from "./iso";
@@ -67,16 +68,23 @@ import type { JoinInput, World } from "../shared/sim/world";
 import {
   CHARTER_GOLD,
   CRESTS,
+  GUILD_CHAT_KEY,
   GUILD_KEY,
   GUILD_KINDS,
   LEADER_LEAVE,
   admit,
+  demoteMember,
   depart,
   foundGuild,
+  guildChat,
   guildOf,
   guildTag,
+  invalidateGuildChat,
   invalidateGuilds,
+  kickMember,
   memberRank,
+  postGuildChat,
+  promoteMember,
   type CrestId,
   type GuildKind,
 } from "./guilds";
@@ -265,6 +273,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const statsEl = root.querySelector<HTMLElement>("#stats")!;
   const messages = root.querySelector<HTMLElement>("#messages")!;
   const pvpBox = root.querySelector<HTMLElement>("#pvpMessages");
+  const guildBox = root.querySelector<HTMLElement>("#guildMessages");
   const promoteBtn = root.querySelector<HTMLButtonElement>("#promoteBtn")!;
   const mapOverlay = root.querySelector<HTMLElement>("#mapOverlay")!;
   const mapCanvas = root.querySelector<HTMLCanvasElement>("#mapCanvas")!;
@@ -491,7 +500,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let lastLogs = "";
   const pvpLines: string[] = [];
   let lastPvp = "";
-  let chatTab: "say" | "pvp" = "say";
+  let chatTab: "say" | "pvp" | "guild" = "say";
   let viewW = 1;
   let viewH = 1;
   type GroupPeer = {
@@ -641,6 +650,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         paintBag();
         paintShop();
         paintTrain();
+      }
+      if (
+        result &&
+        "ok" in result &&
+        result.ok &&
+        (intent.op === "buy" ||
+          intent.op === "sell" ||
+          intent.op === "use" ||
+          intent.op === "equip" ||
+          intent.op === "unequip" ||
+          intent.op === "train" ||
+          intent.op === "promote" ||
+          intent.op === "loot" ||
+          intent.op === "travel" ||
+          intent.op === "respawn" ||
+          intent.op === "setLevel" ||
+          intent.op === "setHp")
+      ) {
+        commitPurse();
       }
       return result;
     }
@@ -1070,6 +1098,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       setOpen(guildPanel, false);
     paintTarget();
     paintGuild();
+    paintGuildChat();
+    watchPurse();
     const state = view();
     const lines = [...state.logs, ...notes];
     const graveKey = JSON.stringify(state.graves ?? []);
@@ -1778,14 +1808,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.fillStyle = "#e6c56a";
           ctx.font = "12px Georgia";
           ctx.textAlign = "center";
-          ctx.fillText(
-            pl.prestigeClass || pl.baseClass,
-            pt.x,
-            pt.y - (race === "minotaur" ? 152 : 136),
-          );
-          ctx.fillStyle = pl.id === myId ? "#f0e2b0" : "#ddd";
-          ctx.font = "13px Georgia";
-          ctx.fillText(plateName(pl.username), pt.x, pt.y - (race === "minotaur" ? 136 : 120));
+          const lift = race === "minotaur" ? 152 : 136;
+          drawOverhead(pt.x, pt.y, pl.username, pl.prestigeClass || pl.baseClass, lift, pl.id === myId ? "#f0e2b0" : "#ddd");
         },
       });
     }
@@ -1799,8 +1823,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           const pt = worldToScreen(peer.x, peer.z);
           ctx.font = "13px Georgia";
           ctx.textAlign = "center";
-          ctx.fillStyle = "#d5e6ff";
-          ctx.fillText(plateName(peer.name), pt.x, pt.y - 120);
+          drawOverhead(pt.x, pt.y, peer.name, "", 136, "#d5e6ff");
         },
       });
     }
@@ -1931,9 +1954,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let appliedAt = saved?.inputAt ?? 0;
   let dirty = false;
   let notedDeath = false;
+  let purse = "";
+
+  function purseSig(p: NonNullable<ReturnType<typeof localPlayer>>) {
+    return [
+      p.gold,
+      p.xp,
+      p.level,
+      p.trainPoints ?? 0,
+      charterHeld ? 1 : 0,
+      JSON.stringify(p.inventory ?? {}),
+      JSON.stringify(p.equipment ?? {}),
+      JSON.stringify(p.skills ?? {}),
+    ].join("|");
+  }
 
   function saveIsNewer(disk: NonNullable<ReturnType<typeof loadSave>>) {
-    return (disk.inputAt ?? 0) > appliedAt;
+    if ((disk.inputAt ?? 0) > appliedAt) return true;
+    if ((disk.rev ?? 0) > saveRev) return true;
+    return false;
   }
 
   function adoptSave(disk: NonNullable<ReturnType<typeof loadSave>>) {
@@ -1979,6 +2018,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     path = [];
     talkNpc = null;
     chaseId = null;
+    purse = "";
   }
 
   function mayWriteSave() {
@@ -1993,6 +2033,24 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     dirty = true;
   }
 
+  function commitPurse() {
+    touchInput();
+    persist();
+    const p = localPlayer();
+    if (p) purse = purseSig(p);
+  }
+
+  function watchPurse() {
+    const p = localPlayer();
+    if (!p) return;
+    const next = purseSig(p);
+    if (purse === "" || next === purse) {
+      purse = next;
+      return;
+    }
+    commitPurse();
+  }
+
   function persist() {
     const p = localPlayer();
     if (!p) return;
@@ -2001,8 +2059,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       adoptSave(disk);
       return;
     }
-    if (disk && !dirty) return;
-    const nextRev = saveRev + 1;
+    if (!dirty) return;
+    const base = Math.max(saveRev, disk?.rev ?? 0);
+    const nextRev = base + 1;
     const wrote = writeSave({
       version: 1,
       username: p.username,
@@ -2027,11 +2086,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       rev: nextRev,
       inputAt: lastInput,
     });
-    if (wrote !== false) {
-      saveRev = wrote;
-      appliedAt = lastInput;
-      dirty = false;
+    if (wrote === false) {
+      const again = loadSave(profile.username);
+      if (again) adoptSave(again);
+      return;
     }
+    saveRev = wrote;
+    appliedAt = lastInput;
+    dirty = false;
   }
 
   type GroupWire = {
@@ -2528,6 +2590,31 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (act === "leave") leaveGroup();
   }
 
+  function drawOverhead(
+    x: number,
+    y: number,
+    name: string,
+    sub: string,
+    lift: number,
+    nameColor: string,
+  ) {
+    const tag = guildTag(name);
+    ctx.textAlign = "center";
+    if (tag) {
+      ctx.font = "bold 12px Georgia";
+      ctx.fillStyle = "#e2b15a";
+      ctx.fillText(`[${tag}]`, x, y - lift - 16);
+    }
+    if (sub) {
+      ctx.font = "12px Georgia";
+      ctx.fillStyle = "#e6c56a";
+      ctx.fillText(sub, x, y - lift);
+    }
+    ctx.font = "13px Georgia";
+    ctx.fillStyle = nameColor;
+    ctx.fillText(name, x, y - (sub ? lift - 16 : lift));
+  }
+
   function plateName(name: string) {
     const tag = guildTag(name);
     return tag ? `[${tag}] ${name}` : name;
@@ -2555,8 +2642,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function rosterHtml(name: string) {
     const guild = guildOf(name);
     if (!guild) return `<p>You belong to no guild.</p>`;
+    const actor = memberRank(name);
     const rows = guild.members
-      .map((member) => `<li>${escapeHtml(member.name)} — ${member.rank}</li>`)
+      .map((member) => {
+        const self = member.name.toLowerCase() === name.toLowerCase();
+        const who = escapeHtml(member.name);
+        const buttons: string[] = [];
+        if (!self && actor === "Leader" && member.rank === "Member") {
+          buttons.push(`<button type="button" data-act="promote" data-who="${who}">Promote</button>`);
+        }
+        if (!self && actor === "Leader" && member.rank === "Officer") {
+          buttons.push(`<button type="button" data-act="demote" data-who="${who}">Demote</button>`);
+        }
+        if (
+          !self &&
+          member.rank !== "Leader" &&
+          (actor === "Leader" || (actor === "Officer" && member.rank === "Member"))
+        ) {
+          buttons.push(`<button type="button" data-act="kick" data-who="${who}">Kick</button>`);
+        }
+        return `<li><span>${who} — ${member.rank}</span>${buttons.join("")}</li>`;
+      })
       .join("");
     return (
       `<p><i class="crest crest-${guild.crest}"></i><b>${escapeHtml(guild.name)}</b></p>` +
@@ -2678,7 +2784,104 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     touchInput();
     persist();
     note(`You found [${result.guild.tag}] ${result.guild.name}. You are Leader.`);
+    seenGuild = result.guild.id;
+    seenRank = "Leader";
     guildSig = "";
+  }
+
+  let seenGuild = "";
+  let seenRank = "";
+  let guildChatSig = "";
+
+  function syncGuildNote() {
+    const beforeId = seenGuild;
+    const beforeRank = seenRank;
+    invalidateGuilds();
+    const after = guildOf(myName());
+    const afterId = after?.id ?? "";
+    const afterRank = after ? (memberRank(myName()) ?? "") : "";
+    if (beforeId && !afterId) note("You were removed from the guild. Your tag is cleared.");
+    else if (beforeRank && afterRank && beforeRank !== afterRank) note(`You are now ${afterRank}.`);
+    seenGuild = afterId;
+    seenRank = afterRank;
+    guildSig = "";
+    paintGuild();
+  }
+
+  function paintGuildChat() {
+    if (!guildBox) return;
+    const guild = guildOf(myName());
+    if (!guild) {
+      if (guildChatSig !== "none") {
+        guildBox.innerHTML = `<div>You are not in a guild.</div>`;
+        guildChatSig = "none";
+      }
+      return;
+    }
+    const lines = guildChat(guild.id);
+    const sig = lines.map((line) => `${line.at}|${line.from}|${line.text}`).join("\n");
+    if (sig === guildChatSig) return;
+    guildChatSig = sig;
+    guildBox.innerHTML = lines.length
+      ? lines
+          .map(
+            (line) =>
+              `<div>[${escapeHtml(guild.tag)}] ${escapeHtml(line.from)}: ${escapeHtml(line.text)}</div>`,
+          )
+          .join("")
+      : `<div>Guild chat is quiet. /g message</div>`;
+    guildBox.scrollTop = guildBox.scrollHeight;
+  }
+
+  function sayGuild(text: string) {
+    const guild = guildOf(myName());
+    if (!guild) {
+      note("You are not in a guild.");
+      return;
+    }
+    const line = postGuildChat(guild.id, myName(), text);
+    if (!line) return;
+    postGuild({ t: "gchat", guildId: guild.id });
+    guildChatSig = "";
+    showChatTab("guild");
+    chat.classList.add("open");
+    paintGuildChat();
+  }
+
+  function rankMember(act: "promote" | "demote" | "kick", who: string) {
+    if (act === "promote") {
+      const result = promoteMember(myName(), who);
+      if (!result.ok) {
+        note(result.reason);
+        return;
+      }
+      note(`${who} is now an Officer.`);
+      postGuild({ t: "grank", name: who, rank: "Officer", guildId: result.guild.id });
+      seenGuild = result.guild.id;
+    } else if (act === "demote") {
+      const result = demoteMember(myName(), who);
+      if (!result.ok) {
+        note(result.reason);
+        return;
+      }
+      note(`${who} is now a Member.`);
+      postGuild({ t: "grank", name: who, rank: "Member", guildId: result.guild.id });
+      seenGuild = result.guild.id;
+    } else {
+      const result = kickMember(myName(), who);
+      if (!result.ok) {
+        note(result.reason);
+        return;
+      }
+      note(`${result.name} was removed from the guild.`);
+      postGuild({ t: "gkick", name: result.name, guildId: result.guild.id });
+      seenGuild = result.guild.id;
+    }
+    seenRank = memberRank(myName()) ?? "";
+    guildSig = "";
+    touchInput();
+    persist();
+    paintGuild();
   }
 
   function postGuild(msg: {
@@ -2689,6 +2892,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     name?: string;
     guildName?: string;
     tag?: string;
+    rank?: string;
   }) {
     guildChannel?.postMessage(msg);
   }
@@ -2738,6 +2942,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     touchInput();
     persist();
     note(`You join [${result.guild.tag}] ${result.guild.name}.`);
+    seenGuild = result.guild.id;
+    seenRank = "Member";
     postGuild({ t: "gjoin", name: myName(), guildId: result.guild.id, tag: result.guild.tag });
     hideGuildToast();
     guildSig = "";
@@ -2763,6 +2969,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         : `You leave the guild. Your tag is cleared. ${LEADER_LEAVE}`,
     );
     postGuild({ t: "gleave", name: myName(), tag: result.tag });
+    seenGuild = "";
+    seenRank = "";
+    touchInput();
+    persist();
     guildSig = "";
     paintGuild();
   }
@@ -2776,6 +2986,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       name?: string;
       guildName?: string;
       tag?: string;
+      rank?: string;
     };
     if (!msg || typeof msg.t !== "string") return;
     if (
@@ -2809,20 +3020,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       note(`${msg.name} declines.`);
       return;
     }
-    if (msg.t === "gjoin" || msg.t === "gleave") {
-      invalidateGuilds();
-      guildSig = "";
+    if (msg.t === "gjoin" || msg.t === "gleave" || msg.t === "gkick" || msg.t === "grank") {
+      syncGuildNote();
       if (msg.t === "gjoin" && msg.name && msg.tag && guildOf(myName())?.tag === msg.tag)
         note(`${msg.name} joins [${msg.tag}].`);
-      paintGuild();
+      return;
+    }
+    if (msg.t === "gchat") {
+      invalidateGuildChat();
+      guildChatSig = "";
+      paintGuildChat();
     }
   }
 
   function onGuildStorage(e: StorageEvent) {
-    if (e.key && e.key !== GUILD_KEY) return;
-    invalidateGuilds();
-    guildSig = "";
-    paintGuild();
+    if (e.key && e.key !== GUILD_KEY && e.key !== GUILD_CHAT_KEY) return;
+    if (!e.key || e.key === GUILD_KEY) syncGuildNote();
+    if (!e.key || e.key === GUILD_CHAT_KEY) {
+      invalidateGuildChat();
+      guildChatSig = "";
+      paintGuildChat();
+    }
   }
 
   function onGuildClick(e: Event) {
@@ -2836,7 +3054,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     captureDraft();
     const act = btn.dataset.act;
     if (act === "charter") buyCharter();
-    else if (
+    else if (act === "promote" || act === "demote" || act === "kick") {
+      const who = btn.dataset.who || "";
+      if (who) rankMember(act, who);
+    } else if (
       act === "kind" &&
       btn.dataset.kind &&
       GUILD_KINDS.includes(btn.dataset.kind as GuildKind)
@@ -2883,6 +3104,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else if (cmd === "gleave") leaveGuild();
     else if (cmd === "gaccept") acceptGuild();
     else if (cmd === "gdecline") declineGuild();
+    else if (cmd === "g" || cmd === "gsay") {
+      if (!arg) note("Usage: /g message");
+      else sayGuild(arg);
+    } else if (cmd === "gpromote" && arg) rankMember("promote", arg);
+    else if (cmd === "gdemote" && arg) rankMember("demote", arg);
+    else if (cmd === "gkick" && arg) rankMember("kick", arg);
     else note("Unknown command.");
   }
 
@@ -3046,45 +3273,31 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function pickTile(sx: number, sy: number, roughX: number, roughZ: number) {
-    const hero = localPlayer();
-    const cx = Math.round(roughX);
-    const cz = Math.round(roughZ);
-    let bestX = cx;
-    let bestZ = cz;
-    let best = Infinity;
-    for (let z = cz - 3; z <= cz + 3; z++) {
-      for (let x = cx - 3; x <= cx + 3; x++) {
-        const d = diamondDistance(sx, sy, worldToScreen(x, z));
-        if (d < best) {
-          best = d;
-          bestX = x;
-          bestZ = z;
-        }
+    const hit = tileAtScreen(sx, sy, cam.x, cam.z, viewW, viewH, roughX, roughZ);
+    if (!hit) return null;
+    if (!blocked(hit.x, hit.z)) return hit;
+    let best: { x: number; z: number } | null = null;
+    let bestD = 1.65;
+    for (const [dx, dz] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ]) {
+      const x = hit.x + dx;
+      const z = hit.z + dz;
+      if (blocked(x, z)) continue;
+      const d = diamondDistance(sx, sy, worldToScreen(x, z));
+      if (d < bestD) {
+        bestD = d;
+        best = { x, z };
       }
     }
-    if (blocked(bestX, bestZ)) {
-      let openD = Infinity;
-      let openX = bestX;
-      let openZ = bestZ;
-      for (let z = cz - 8; z <= cz + 8; z++) {
-        for (let x = cx - 8; x <= cx + 8; x++) {
-          if (blocked(x, z)) continue;
-          const d = diamondDistance(sx, sy, worldToScreen(x, z));
-          if (d < openD) {
-            openD = d;
-            openX = x;
-            openZ = z;
-          }
-        }
-      }
-      if (openD <= 6) return { x: openX, z: openZ };
-      return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
-    }
-    const projected = worldToScreen(bestX, bestZ);
-    if (best > 1.35 || Math.hypot(projected.x - sx, projected.y - sy) > 52) {
-      return { x: hero?.x ?? roughX, z: hero?.z ?? roughZ };
-    }
-    return { x: bestX, z: bestZ };
+    return best;
   }
 
   function goTo(x: number, z: number, talk: string | null, keepChase = false, quiet = false) {
@@ -3094,8 +3307,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!keepChase) chaseId = null;
     repaths = 0;
     path = p ? routeTo(p.x, p.z, x, z) : [];
-    const besideNpc = NPCS.some((npc) => Math.hypot(npc.x - x, npc.z - z) < 3.4);
-    if (!quiet && !besideNpc) note(`walk → (${Math.round(x)},${Math.round(z)})`);
+    if (showDebugHud && !quiet) floatAt(x, z, `walk → (${Math.round(x)},${Math.round(z)})`, "#d7c28a", 70);
   }
 
   function spriteHit(sx: number, sy: number, x: number, z: number, height: number) {
@@ -3269,6 +3481,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     pvpId = null;
     lootGrave = null;
     const tile = pickTile(sx, sy, w.x, w.z);
+    if (!tile) {
+      pendingMove = null;
+      consumeClick = true;
+      return;
+    }
     rememberClick(e, hit, tile);
     pendingMove = { x: tile.x, z: tile.z };
   }
@@ -3674,18 +3891,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     send({ op: "spawn", id: myId });
   }
 
-  function showChatTab(tab: "say" | "pvp") {
+  function showChatTab(tab: "say" | "pvp" | "guild") {
     chatTab = tab;
     root.querySelector("#chatTabSay")?.classList.toggle("on", tab === "say");
     root.querySelector("#chatTabPvp")?.classList.toggle("on", tab === "pvp");
+    root.querySelector("#chatTabGuild")?.classList.toggle("on", tab === "guild");
     messages.hidden = tab !== "say";
     if (pvpBox) pvpBox.hidden = tab !== "pvp";
+    if (guildBox) guildBox.hidden = tab !== "guild";
+    if (tab === "guild") paintGuildChat();
   }
 
   function onChatTab(e: Event) {
     e.preventDefault();
     const id = (e.currentTarget as HTMLElement).id;
-    showChatTab(id === "chatTabPvp" ? "pvp" : "say");
+    showChatTab(id === "chatTabPvp" ? "pvp" : id === "chatTabGuild" ? "guild" : "say");
   }
 
   function onDebugLevel(e: Event) {
@@ -3754,6 +3974,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     chatInput.value = "";
     if (text.startsWith("/")) {
       handleSlash(text);
+      return;
+    }
+    if (chatTab === "guild") {
+      sayGuild(text);
       return;
     }
     send({ op: "chat", id: myId, msg: text });
@@ -3830,6 +4054,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#chatToggle")!.addEventListener("pointerup", onChatToggle);
   root.querySelector("#chatTabSay")?.addEventListener("pointerup", onChatTab);
   root.querySelector("#chatTabPvp")?.addEventListener("pointerup", onChatTab);
+  root.querySelector("#chatTabGuild")?.addEventListener("pointerup", onChatTab);
   root.querySelector("#debugSpawnBtn")?.addEventListener("pointerup", onSpawnMob);
   root.querySelector("#guildBtn")?.addEventListener("pointerup", onGuildButton);
   root.querySelector("#guildClose")?.addEventListener("pointerup", onGuildClose);
@@ -3866,6 +4091,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   } catch {
     groupChannel = null;
   }
+  seenGuild = guildOf(profile.username)?.id ?? "";
+  seenRank = memberRank(profile.username) ?? "";
   try {
     guildChannel = new BroadcastChannel("caldrenmoor-guild-v1");
     guildChannel.onmessage = (ev) => onGuildMessage(ev);
@@ -3876,11 +4103,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   const stepTimer = window.setInterval(() => {
     if (host && mapOverlay.hidden) authority.step(Date.now());
+    watchPurse();
   }, 400);
   const saveTimer = window.setInterval(persist, 2000);
   const groupTimer = window.setInterval(pulseGroup, 400);
 
   function onLeave() {
+    watchPurse();
     persist();
     send({ op: "leave", id: myId });
   }
@@ -4009,6 +4238,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     root.querySelector("#chatToggle")?.removeEventListener("pointerup", onChatToggle);
     root.querySelector("#chatTabSay")?.removeEventListener("pointerup", onChatTab);
     root.querySelector("#chatTabPvp")?.removeEventListener("pointerup", onChatTab);
+    root.querySelector("#chatTabGuild")?.removeEventListener("pointerup", onChatTab);
     root.querySelector("#debugSpawnBtn")?.removeEventListener("pointerup", onSpawnMob);
     root.querySelector("#guildBtn")?.removeEventListener("pointerup", onGuildButton);
     root.querySelector("#guildClose")?.removeEventListener("pointerup", onGuildClose);

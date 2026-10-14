@@ -31,8 +31,10 @@ export function writeSave(save: CharacterSave): number | false {
   if (prev) {
     const prevAt = prev.inputAt ?? 0;
     const prevRev = prev.rev ?? 0;
+    // A newer click must not roll the purse back. The writer has to base its
+    // rev on the record it actually read; a stale tab loses the race.
     if (inputAt < prevAt) return false;
-    if (inputAt === prevAt && rev <= prevRev) return false;
+    if ((save.rev ?? 0) <= prevRev) return false;
   }
   const storedRev = prev ? Math.max(rev, (prev.rev ?? 0) + 1) : Math.max(1, rev);
   map[save.username] = {

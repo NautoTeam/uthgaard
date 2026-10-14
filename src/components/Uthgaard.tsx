@@ -319,9 +319,13 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <button id="chatTabPvp" type="button">
             PvP
           </button>
+          <button id="chatTabGuild" type="button">
+            Guild
+          </button>
         </div>
         <div id="messages" />
         <div id="pvpMessages" hidden />
+        <div id="guildMessages" hidden />
         <input id="chatInput" placeholder="Say something…" enterKeyHint="send" />
       </div>
     </div>

@@ -898,7 +898,7 @@ export function createWorld() {
   function spawnTest(id: string): ActionResult {
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
-    const level = Math.max(12, p.level + 8);
+    const level = Math.max(1, p.level);
     const type = "Cullhound";
     const spot = nearestOpen(p.x + 3, p.z);
     const hp = mobHp(type, level);

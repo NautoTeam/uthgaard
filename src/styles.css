@@ -625,6 +625,10 @@ body {
 }
 
 .guild-roster li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
   padding: 4px 0;
   border-bottom: 1px solid #3a3224;
 }
@@ -946,7 +950,8 @@ body {
 }
 
 #messages,
-#pvpMessages {
+#pvpMessages,
+#guildMessages {
   height: 128px;
   box-sizing: border-box;
   overflow-y: auto;
@@ -958,7 +963,8 @@ body {
 }
 
 #messages[hidden],
-#pvpMessages[hidden] {
+#pvpMessages[hidden],
+#guildMessages[hidden] {
   display: none !important;
 }
 

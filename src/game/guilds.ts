@@ -1,6 +1,7 @@
-/** Same-browser guild roster. No server, no guild chat. */
+/** Same-browser guild roster and guild chat. No server. */
 
 export const GUILD_KEY = "uthgaard-guilds-v1";
+export const GUILD_CHAT_KEY = "uthgaard-guild-chat-v1";
 export const CHARTER_GOLD = 80;
 export const LEADER_LEAVE =
   "A Leader leaves only when they are the last member. The guild then closes.";
@@ -16,9 +17,11 @@ export const CRESTS = [
 ] as const;
 export type CrestId = (typeof CRESTS)[number]["id"];
 
+export type GuildRank = "Leader" | "Officer" | "Member";
+
 export interface GuildMember {
   name: string;
-  rank: "Leader" | "Member";
+  rank: GuildRank;
 }
 
 export interface GuildRecord {
@@ -192,4 +195,156 @@ export function depart(
       );
   write({ guilds });
   return { ok: true, closed, tag: guild.tag };
+}
+
+function findMembership(name: string) {
+  const who = name.trim().toLowerCase();
+  const store = read();
+  const guild = store.guilds.find((row) =>
+    row.members.some((member) => member.name.toLowerCase() === who),
+  );
+  const member = guild?.members.find((row) => row.name.toLowerCase() === who) ?? null;
+  return { store, guild: guild ?? null, member };
+}
+
+function replaceGuild(store: GuildStore, guild: GuildRecord) {
+  write({ guilds: store.guilds.map((row) => (row.id === guild.id ? guild : row)) });
+}
+
+export function promoteMember(
+  actor: string,
+  target: string,
+): { ok: true; guild: GuildRecord } | { ok: false; reason: string } {
+  const mine = findMembership(actor);
+  const theirs = findMembership(target);
+  if (!mine.guild || !mine.member) return { ok: false, reason: "You are not in a guild." };
+  if (mine.member.rank !== "Leader") return { ok: false, reason: "Only the Leader can promote." };
+  if (!theirs.guild || theirs.guild.id !== mine.guild.id || !theirs.member) {
+    return { ok: false, reason: "They are not in your guild." };
+  }
+  if (theirs.member.rank !== "Member")
+    return { ok: false, reason: "Only a Member can be promoted to Officer." };
+  const next: GuildRecord = {
+    ...mine.guild,
+    members: mine.guild.members.map((row) =>
+      row.name.toLowerCase() === theirs.member!.name.toLowerCase()
+        ? { ...row, rank: "Officer" }
+        : row,
+    ),
+  };
+  replaceGuild(mine.store, next);
+  return { ok: true, guild: next };
+}
+
+export function demoteMember(
+  actor: string,
+  target: string,
+): { ok: true; guild: GuildRecord } | { ok: false; reason: string } {
+  const mine = findMembership(actor);
+  const theirs = findMembership(target);
+  if (!mine.guild || !mine.member) return { ok: false, reason: "You are not in a guild." };
+  if (mine.member.rank !== "Leader") return { ok: false, reason: "Only the Leader can demote." };
+  if (!theirs.guild || theirs.guild.id !== mine.guild.id || !theirs.member) {
+    return { ok: false, reason: "They are not in your guild." };
+  }
+  if (theirs.member.rank !== "Officer")
+    return { ok: false, reason: "Only an Officer can be demoted to Member." };
+  const next: GuildRecord = {
+    ...mine.guild,
+    members: mine.guild.members.map((row) =>
+      row.name.toLowerCase() === theirs.member!.name.toLowerCase()
+        ? { ...row, rank: "Member" }
+        : row,
+    ),
+  };
+  replaceGuild(mine.store, next);
+  return { ok: true, guild: next };
+}
+
+export function kickMember(
+  actor: string,
+  target: string,
+): { ok: true; guild: GuildRecord; name: string } | { ok: false; reason: string } {
+  const mine = findMembership(actor);
+  const theirs = findMembership(target);
+  if (!mine.guild || !mine.member) return { ok: false, reason: "You are not in a guild." };
+  if (!theirs.guild || theirs.guild.id !== mine.guild.id || !theirs.member) {
+    return { ok: false, reason: "They are not in your guild." };
+  }
+  if (theirs.member.name.toLowerCase() === mine.member.name.toLowerCase()) {
+    return { ok: false, reason: "Use /gleave to leave." };
+  }
+  if (theirs.member.rank === "Leader") return { ok: false, reason: "The Leader cannot be kicked." };
+  if (mine.member.rank === "Member") return { ok: false, reason: "Members cannot kick." };
+  if (mine.member.rank === "Officer" && theirs.member.rank !== "Member") {
+    return { ok: false, reason: "Officers can only kick Members." };
+  }
+  const next: GuildRecord = {
+    ...mine.guild,
+    members: mine.guild.members.filter(
+      (row) => row.name.toLowerCase() !== theirs.member!.name.toLowerCase(),
+    ),
+  };
+  replaceGuild(mine.store, next);
+  return { ok: true, guild: next, name: theirs.member.name };
+}
+
+export interface GuildChatLine {
+  guildId: string;
+  from: string;
+  text: string;
+  at: number;
+}
+
+let chatCache: GuildChatLine[] | null = null;
+
+function readChat(): GuildChatLine[] {
+  if (chatCache) return chatCache;
+  const store = browserStore();
+  if (!store) {
+    chatCache = [];
+    return chatCache;
+  }
+  try {
+    const raw = store.getItem(GUILD_CHAT_KEY);
+    const parsed = raw ? (JSON.parse(raw) as GuildChatLine[]) : [];
+    chatCache = Array.isArray(parsed)
+      ? parsed.filter(
+          (line) =>
+            !!line &&
+            typeof line.guildId === "string" &&
+            typeof line.from === "string" &&
+            typeof line.text === "string",
+        )
+      : [];
+  } catch {
+    chatCache = [];
+  }
+  return chatCache;
+}
+
+function writeChat(lines: GuildChatLine[]) {
+  chatCache = lines.slice(-80);
+  browserStore()?.setItem(GUILD_CHAT_KEY, JSON.stringify(chatCache));
+}
+
+export function invalidateGuildChat() {
+  chatCache = null;
+}
+
+export function guildChat(guildId: string) {
+  return readChat()
+    .filter((line) => line.guildId === guildId)
+    .slice(-40);
+}
+
+export function postGuildChat(guildId: string, from: string, text: string) {
+  const clean = text.trim().slice(0, 120);
+  const speaker = from.trim().slice(0, 16);
+  if (!guildId || !speaker || !clean) return null;
+  const line: GuildChatLine = { guildId, from: speaker, text: clean, at: Date.now() };
+  const kept = readChat().filter((row) => row.guildId !== guildId).slice(-40);
+  const mine = [...readChat().filter((row) => row.guildId === guildId), line].slice(-40);
+  writeChat([...kept, ...mine]);
+  return line;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pointerToView, resolveClick, screenToWorld, worldToScreen } from "./iso.ts";
+import { pointerToView, resolveClick, screenToWorld, tileAtScreen, worldToScreen } from "./iso.ts";
 
 const viewW = 1280;
 const viewH = 720;
@@ -268,4 +268,26 @@ test("a healthy 2× transform matches the CSS click, including a backing-store r
     transformD: 2,
   });
   assert.ok(Math.abs(backing.x - plain.x) < 1e-6, `backing x ${backing.x} vs ${plain.x}`);
+});
+
+test("a click at the camera edge snaps to the diamond under the cursor, even from a bad seed", () => {
+  const w = 1280;
+  const h = 720;
+  const camX = -400;
+  const camZ = 900;
+  const tile = { x: 70, z: 20 };
+  const center = worldToScreen(tile.x, tile.z, camX, camZ, w, h);
+  assert.ok(center.x > w * 0.75 || center.y < h * 0.25 || center.x < w * 0.25, "fixture sits toward an edge");
+  const edge = { x: center.x + 12, y: center.y - 4 };
+  const hit = tileAtScreen(edge.x, edge.y, camX, camZ, w, h, tile.x - 40, tile.z + 35);
+  assert.ok(hit, "found a tile");
+  assert.equal(hit?.x, tile.x);
+  assert.equal(hit?.z, tile.z);
+  const back = worldToScreen(hit!.x, hit!.z, camX, camZ, w, h);
+  const diamond =
+    Math.abs(edge.x - back.x) / 24 + Math.abs(edge.y - back.y) / 12;
+  assert.ok(diamond <= 1, `cursor left the tile (${diamond.toFixed(2)})`);
+  const far = tileAtScreen(edge.x, edge.y, camX, camZ, w, h, 0, 0);
+  assert.equal(far?.x, tile.x);
+  assert.equal(far?.z, tile.z);
 });

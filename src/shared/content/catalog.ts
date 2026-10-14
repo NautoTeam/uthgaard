@@ -184,7 +184,7 @@ export const MOBS: MobDef[] = [
   { type: "ThunderElk", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.2 },
   { type: "FenCrawler", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
   { type: "MireWitch", hp: 0, xpBase: 14, xpPerLevel: 6, damage: 3, damagePerLevel: 0.45, attackMs: 1400, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.24 },
-  { type: "Cullhound", hp: 90, xpBase: 0, xpPerLevel: 0, damage: 18, damagePerLevel: 0, attackMs: 700, aggro: 8, leash: 16, campLeash: 40, scale: 0.22 },
+  { type: "Cullhound", hp: 0, xpBase: 0, xpPerLevel: 0, damage: 4, damagePerLevel: 0.45, attackMs: 1200, aggro: 8, leash: 16, campLeash: 40, scale: 0.22 },
 ];
 
 const FALLBACK_MOB: MobDef = {
