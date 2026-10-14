@@ -67,6 +67,8 @@ import { createAuthority } from "../server/authority";
 import type { JoinInput, World } from "../shared/sim/world";
 import {
   CHARTER_GOLD,
+  CITY_PLOTS,
+  CORNERSTONE_GOLD,
   CRESTS,
   GUILD_CHAT_KEY,
   GUILD_KEY,
@@ -76,6 +78,7 @@ import {
   demoteMember,
   depart,
   foundGuild,
+  guildAtPlot,
   guildChat,
   guildOf,
   guildTag,
@@ -83,8 +86,10 @@ import {
   invalidateGuilds,
   kickMember,
   memberRank,
+  plantCornerstone,
   postGuildChat,
   promoteMember,
+  removeCornerstone,
   type CrestId,
   type GuildKind,
 } from "./guilds";
@@ -118,7 +123,7 @@ type Intent =
   | { op: "promote"; id: string; cls: string }
   | { op: "chat"; id: string; msg: string }
   | { op: "travel"; id: string; cityId: string }
-  | { op: "respawn"; id: string }
+  | { op: "respawn"; id: string; place?: { x: number; z: number; name: string } }
   | { op: "loot"; id: string; graveId: string }
   | { op: "setLevel"; id: string; level: number }
   | { op: "setHp"; id: string; hp: number }
@@ -239,7 +244,7 @@ function applyIntent(world: World, intent: Intent) {
   if (intent.op === "promote") return world.promote(intent.id, intent.cls);
   if (intent.op === "chat") return world.chat(intent.id, intent.msg);
   if (intent.op === "travel") return world.travel(intent.id, intent.cityId);
-  if (intent.op === "respawn") return world.respawn(intent.id);
+  if (intent.op === "respawn") return world.respawn(intent.id, [], intent.place);
   if (intent.op === "loot") return world.loot(intent.id, intent.graveId);
   if (intent.op === "setLevel") return world.setLevel(intent.id, intent.level);
   if (intent.op === "setHp") return world.setHp(intent.id, intent.hp);
@@ -317,6 +322,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const guildTitle = root.querySelector<HTMLElement>("#guildTitle");
   const guildBody = root.querySelector<HTMLElement>("#guildBody")!;
   const guildToast = root.querySelector<HTMLElement>("#guildToast");
+  const plotPrompt = root.querySelector<HTMLElement>("#plotPrompt");
+  const plotPromptText = root.querySelector<HTMLElement>("#plotPromptText");
+  const plotPromptBtn = root.querySelector<HTMLButtonElement>("#plotPromptBtn");
+  const bindLine = root.querySelector<HTMLElement>("#bindLine");
   const guildToastText = root.querySelector<HTMLElement>("#guildToastText");
   const targetFrame = root.querySelector<HTMLElement>("#targetFrame");
 
@@ -410,6 +419,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   for (let i = 0; i < 16; i++) {
     loadFrame(`human-base-walk-${i}`, "8");
     loadFrame(`human-chest-cloth-${i}`, "8");
+    loadFrame(`human-chest-hauberk-${i}`, "8");
+    loadFrame(`human-weapon-iron-${i}`, "8");
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -911,15 +922,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
-  function wornClothChest(equipment?: Record<string, string>) {
-    const worn = equipment?.chest;
-    if (!worn) return false;
-    const item = itemById(worn);
-    if (!item || item.slot !== "chest" || item.weight === "heavy") return false;
-    const label = `${item.id} ${item.name}`.toLowerCase();
-    return label.includes("cloth") || label.includes("tunic") || label.includes("linen");
-  }
-
   const HUMAN_LAYERS = ["base", "legs", "feet", "chest", "weapon", "hands", "head"] as const;
 
   function humanLayerKey(
@@ -928,7 +930,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     equipment?: Record<string, string>,
   ) {
     if (layer === "base") return `human-base-walk-${frame}`;
-    if (layer === "chest" && wornClothChest(equipment)) return `human-chest-cloth-${frame}`;
+    if (layer === "chest") {
+      const item = itemById(equipment?.chest ?? "");
+      if (!item || item.slot !== "chest") return "";
+      if (item.id === "iron-hauberk" || item.weight === "heavy") return `human-chest-hauberk-${frame}`;
+      const label = `${item.id} ${item.name}`.toLowerCase();
+      if (label.includes("cloth") || label.includes("tunic") || label.includes("linen"))
+        return `human-chest-cloth-${frame}`;
+      return "";
+    }
+    if (layer === "weapon") {
+      const item = itemById(equipment?.weapon ?? "");
+      if (item?.id === "iron-sword") return `human-weapon-iron-${frame}`;
+      return "";
+    }
     return "";
   }
 
@@ -990,7 +1005,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (!drawFrame(`${drawn}-atk-${frame}`, x, z, cell, lift, filter))
         drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     } else {
-      const col = moving ? Math.floor(actor.phase) % 4 : 0;
+      const col = moving ? Math.floor(actor.phase) % 4 : 1;
       const row = actor.facing * 4;
       const frame = row + col;
       const drew =
@@ -1082,6 +1097,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       sheetBody.innerHTML =
         `<div class="sheet-who">${p.username} · ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}</div>` +
         `<div class="gold-line">Gold ${p.gold}</div>` +
+        `<div class="sheet-note">${escapeHtml(bindText(p.username))}</div>` +
         `<table class="sheet-attrs"><tbody>` +
         `<tr><th>STR</th><td>${a.str}</td><th>DEX</th><td>${a.dex}</td></tr>` +
         `<tr><th>CON</th><td>${a.con}</td><th>INT</th><td>${a.int}</td></tr>` +
@@ -1114,7 +1130,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (ready) promoteBtn.textContent = `Promote to ${PRESTIGE_OF[p.baseClass]}`;
     deathEl.hidden = p.hp > 0;
     const homeTown = p.race === "Marshwarden" ? "Fenhollow" : "Caldrenmoor";
-    respawnBtn.textContent = `Respawn in ${homeTown}`;
+    const bound = bindSpot();
+    const respawnWhere = bound ? bound.name : homeTown;
+    respawnBtn.textContent = bound ? `Respawn at ${respawnWhere}` : `Respawn in ${homeTown}`;
     if (p.hp <= 0) {
       if (!notedDeath) {
         notedDeath = true;
@@ -1126,8 +1144,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
       deathHint.textContent = stone
-        ? `A tombstone holds ${stone.gold} gold. A tenth of your XP is already gone. Respawn in ${homeTown} under Grave Chill for 60s. Spells stay sealed; melee still works.`
-        : `Respawn in ${homeTown} under Grave Chill. Spells stay sealed; melee still works.`;
+        ? `A tombstone holds ${stone.gold} gold. A tenth of your XP is already gone. Respawn at ${respawnWhere} under Grave Chill for 60s. Spells stay sealed; melee still works.`
+        : `Respawn at ${respawnWhere} under Grave Chill. Spells stay sealed; melee still works.`;
     } else {
       notedDeath = false;
     }
@@ -1145,6 +1163,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     paintTarget();
     paintGuild();
     paintGuildChat();
+    paintPlotPrompt();
+    watchBind();
+    const plotNow = CITY_PLOTS.map((plot) => `${plot.id}:${guildAtPlot(plot.id)?.tag ?? ""}`).join("|");
+    if (plotNow !== plotSig) {
+      plotSig = plotNow;
+      if (!mapOverlay.hidden) drawWorldMap();
+    }
     watchPurse();
     const state = view();
     const lines = [...state.logs, ...notes];
@@ -1256,6 +1281,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       g.fill();
       g.fillStyle = "#f0e2b0";
       g.fillText(city.name, pt.x, pt.y - 12);
+    }
+    g.font = "11px Georgia";
+    for (const plot of CITY_PLOTS) {
+      const pt = to(plot.x, plot.z);
+      const owner = guildAtPlot(plot.id);
+      g.fillStyle = owner ? "#e2b15a" : "#9fd0ff";
+      g.fillRect(pt.x - 4, pt.y - 4, 8, 8);
+      g.fillStyle = "#f4fbff";
+      g.fillText(owner ? `City plot ([${owner.tag}])` : "City plot (free)", pt.x, pt.y - 8);
     }
     g.font = "12px Georgia";
     g.fillStyle = "rgba(214, 226, 214, 0.92)";
@@ -1803,6 +1837,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           drawSprite("fire", x, z, 0.16);
         },
         key: x + z,
+      });
+    }
+    for (const plot of CITY_PLOTS) {
+      drawables.push({
+        key: plot.x + plot.z - 0.15,
+        draw: () => drawCityPlot(plot),
       });
     }
     const aimed = currentTarget();
@@ -2838,6 +2878,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let seenGuild = "";
   let seenRank = "";
   let guildChatSig = "";
+  let plotSig = "";
+  let seenBind = "";
 
   function syncGuildNote() {
     const beforeId = seenGuild;
@@ -3066,7 +3108,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       note(`${msg.name} declines.`);
       return;
     }
-    if (msg.t === "gjoin" || msg.t === "gleave" || msg.t === "gkick" || msg.t === "grank") {
+    if (msg.t === "gjoin" || msg.t === "gleave" || msg.t === "gkick" || msg.t === "grank" || msg.t === "gstone") {
       syncGuildNote();
       if (msg.t === "gjoin" && msg.name && msg.tag && guildOf(myName())?.tag === msg.tag)
         note(`${msg.name} joins [${msg.tag}].`);
@@ -3138,6 +3180,207 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else openRoster();
   }
 
+  function homeBindName(race?: string) {
+    return race === "Marshwarden" ? "Fenhollow" : "Caldrenmoor";
+  }
+
+  function bindText(username: string) {
+    const guild = guildOf(username);
+    if (guild?.cornerstone) return `Bound to [${guild.tag}] Cornerstone`;
+    const race = me()?.username === username ? me()?.race : profile.race;
+    return `Bound to ${homeBindName(race)}`;
+  }
+
+  function bindSpot() {
+    const guild = guildOf(myName());
+    const stone = guild?.cornerstone;
+    if (!guild || !stone) return undefined;
+    return { x: stone.x, z: stone.z, name: `[${guild.tag}] Cornerstone` };
+  }
+
+  function watchBind() {
+    const text = bindText(myName());
+    if (bindLine) bindLine.textContent = text;
+    if (text === seenBind) return;
+    const first = seenBind === "";
+    seenBind = text;
+    if (first && !text.includes("Cornerstone")) return;
+    note(text);
+  }
+
+  function plotUnder(x: number, z: number, range = 3.2) {
+    let best: (typeof CITY_PLOTS)[number] | null = null;
+    let bestD = range;
+    for (const plot of CITY_PLOTS) {
+      const d = Math.hypot(plot.x - x, plot.z - z);
+      if (d < bestD) {
+        best = plot;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function plotAtScreen(sx: number, sy: number) {
+    let best: (typeof CITY_PLOTS)[number] | null = null;
+    let bestD = 1e9;
+    for (const plot of CITY_PLOTS) {
+      const sp = worldToScreen(plot.x, plot.z);
+      const dx = Math.abs(sx - sp.x);
+      const above = sp.y - sy;
+      const near = Math.hypot(sx - sp.x, sy - sp.y);
+      const onMark = dx <= 78 && above >= -18 && above <= 108;
+      if (near > 54 && !onMark) continue;
+      const d = onMark ? Math.min(near, 20) : near;
+      if (d < bestD) {
+        best = plot;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  function drawCityPlot(plot: (typeof CITY_PLOTS)[number]) {
+    const owner = guildAtPlot(plot.id);
+    const p = worldToScreen(plot.x, plot.z);
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.textAlign = "center";
+    if (!owner) {
+      ctx.strokeStyle = "#9fd0ff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 22, 11, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(8,10,8,.75)";
+      ctx.fillRect(-46, -36, 92, 16);
+      ctx.font = "12px Georgia";
+      ctx.fillStyle = "#f4fbff";
+      ctx.fillText("City plot", 0, -24);
+    } else {
+      ctx.fillStyle = "#5c4e34";
+      ctx.fillRect(-10, -48, 20, 48);
+      ctx.fillStyle = "#c4b08a";
+      ctx.fillRect(-16, -56, 32, 12);
+      ctx.fillStyle = "#e2b15a";
+      ctx.beginPath();
+      ctx.moveTo(0, -78);
+      ctx.lineTo(8, -58);
+      ctx.lineTo(-8, -58);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "rgba(8,10,8,.82)";
+      ctx.fillRect(-78, -98, 156, 18);
+      ctx.font = "12px Georgia";
+      ctx.fillStyle = "#f4fbff";
+      ctx.fillText(`[${owner.tag}] Cornerstone`, 0, -85);
+    }
+    ctx.restore();
+  }
+
+  function paintPlotPrompt() {
+    if (!plotPrompt || !plotPromptText || !plotPromptBtn) return;
+    const p = me();
+    const plot = p && p.hp > 0 ? plotUnder(p.x, p.z) : null;
+    if (!p || !plot) {
+      plotPrompt.hidden = true;
+      return;
+    }
+    plotPrompt.hidden = false;
+    const owner = guildAtPlot(plot.id);
+    const mine = guildOf(p.username);
+    const leader = memberRank(p.username) === "Leader";
+    if (!owner) {
+      plotPromptText.textContent = `${plot.zone} city plot. Free.`;
+      plotPromptBtn.hidden = false;
+      plotPromptBtn.textContent = `Plant Cornerstone — ${CORNERSTONE_GOLD}g`;
+      plotPromptBtn.dataset.act = "plant";
+      plotPromptBtn.dataset.plot = plot.id;
+      return;
+    }
+    if (mine && owner.id === mine.id && leader) {
+      plotPromptText.textContent = `[${owner.tag}] Cornerstone.`;
+      plotPromptBtn.hidden = false;
+      plotPromptBtn.textContent = "Remove Cornerstone";
+      plotPromptBtn.dataset.act = "remove";
+      delete plotPromptBtn.dataset.plot;
+      return;
+    }
+    plotPromptBtn.hidden = true;
+    plotPromptText.textContent =
+      mine && owner.id === mine.id
+        ? `[${owner.tag}] Cornerstone.`
+        : `City plot taken by [${owner.tag}].`;
+  }
+
+  function tryPlant(plotId: string) {
+    const p = localPlayer();
+    if (!p || p.hp <= 0) return;
+    const plot = CITY_PLOTS.find((row) => row.id === plotId);
+    if (!plot) {
+      note("There is no city plot there.");
+      return;
+    }
+    if (Math.hypot(plot.x - p.x, plot.z - p.z) > 3.2) {
+      note("Stand on the city plot.");
+      return;
+    }
+    const guild = guildOf(p.username);
+    if (!guild) {
+      note("You are not in a guild.");
+      return;
+    }
+    if (memberRank(p.username) !== "Leader") {
+      note("Only the Leader can plant a Cornerstone.");
+      return;
+    }
+    if (guild.cornerstone) {
+      note("Your guild already has a Cornerstone.");
+      return;
+    }
+    const taken = guildAtPlot(plot.id);
+    if (taken) {
+      note(`That plot is taken by [${taken.tag}].`);
+      return;
+    }
+    if (p.gold < CORNERSTONE_GOLD) {
+      note(`Not enough gold. A Cornerstone costs ${CORNERSTONE_GOLD} gold.`);
+      return;
+    }
+    p.gold -= CORNERSTONE_GOLD;
+    const result = plantCornerstone(p.username, plot.id);
+    if (!result.ok) {
+      p.gold += CORNERSTONE_GOLD;
+      note(result.reason);
+      return;
+    }
+    commitPurse();
+    postGuild({ t: "gstone", guildId: result.guild.id, tag: result.guild.tag });
+    note(`[${result.guild.tag}] plants a Cornerstone on the ${plot.zone} plot.`);
+    guildSig = "";
+  }
+
+  function tryRemove() {
+    const result = removeCornerstone(myName());
+    if (!result.ok) {
+      note(result.reason);
+      return;
+    }
+    postGuild({ t: "gstone", guildId: result.guild.id, tag: result.guild.tag });
+    note("The Cornerstone is gone. The plot is free. No gold is returned.");
+    guildSig = "";
+  }
+
+  function onPlotPrompt(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    const btn = e.currentTarget as HTMLButtonElement;
+    if (btn.dataset.act === "remove") tryRemove();
+    else if (btn.dataset.plot) tryPlant(btn.dataset.plot);
+  }
+
   function handleSlash(text: string) {
     const body = text.slice(1).trim();
     const gap = body.indexOf(" ");
@@ -3156,7 +3399,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     } else if (cmd === "gpromote" && arg) rankMember("promote", arg);
     else if (cmd === "gdemote" && arg) rankMember("demote", arg);
     else if (cmd === "gkick" && arg) rankMember("kick", arg);
-    else note("Unknown command.");
+    else if (cmd === "cornerstone") {
+      const p = me();
+      const plot = p ? plotUnder(p.x, p.z) : null;
+      if (!plot) note("Stand on a free city plot.");
+      else tryPlant(plot.id);
+    } else note("Unknown command.");
   }
 
   let groupChannel: BroadcastChannel | null = null;
@@ -3522,6 +3770,30 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
+    const plot = plotAtScreen(sx, sy);
+    if (plot) {
+      pinnedId = null;
+      chaseId = null;
+      pvpId = null;
+      lootGrave = null;
+      pendingMove = null;
+      consumeClick = true;
+      rememberClick(e, hit, plot);
+      const dist = Math.hypot(plot.x - p.x, plot.z - p.z);
+      if (dist <= 3.2) {
+        dest = null;
+        path = [];
+        talkNpc = null;
+        const owner = guildAtPlot(plot.id);
+        const mine = guildOf(p.username);
+        if (owner && mine && owner.id === mine.id) {
+          if (memberRank(p.username) === "Leader") tryRemove();
+          else note("Only the Leader can remove the Cornerstone.");
+        } else if (owner) note(`City plot taken by [${owner.tag}].`);
+        else tryPlant(plot.id);
+      } else goTo(plot.x, plot.z, null);
+      return;
+    }
     pinnedId = null;
     chaseId = null;
     pvpId = null;
@@ -3777,7 +4049,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const crowd = freshPeers()
         .filter((peer) => peer.hp > 0)
         .map((peer) => ({ x: peer.x, z: peer.z }));
-      world.respawn(myId, crowd);
+      world.respawn(myId, crowd, bindSpot());
     }
     persist();
   }
@@ -3968,6 +4240,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     send({ op: "setLevel", id: myId, level: Number(input?.value || 20) });
     persist();
   }
+  function onDebugGold(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    const p = localPlayer();
+    if (!p || p.hp <= 0) return;
+    p.gold += 200;
+    commitPurse();
+    note("Debug: +200 gold.");
+  }
   function onDebugPlus(e: Event) {
     e.preventDefault();
     send({ op: "setLevel", id: myId, level: (me()?.level ?? 1) + 1 });
@@ -4087,6 +4370,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#trainPromote")?.addEventListener("pointerup", onPromote);
   root.querySelector("#debugLevelBtn")?.addEventListener("pointerup", onDebugLevel);
   root.querySelector("#debugHudLevelBtn")?.addEventListener("pointerup", onDebugHudLevel);
+  root.querySelector("#debugGoldBtn")?.addEventListener("pointerup", onDebugGold);
+  plotPromptBtn?.addEventListener("pointerup", onPlotPrompt);
   root.querySelector("#inviteAccept")?.addEventListener("pointerup", acceptInvite);
   root.querySelector("#inviteDecline")?.addEventListener("pointerup", declineInvite);
   ctxMenu?.addEventListener("pointerup", onCtxClick);
@@ -4294,6 +4579,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     guildBody.removeEventListener("input", captureDraft);
     root.querySelector("#debugLevelBtn")?.removeEventListener("pointerup", onDebugLevel);
     root.querySelector("#debugHudLevelBtn")?.removeEventListener("pointerup", onDebugHudLevel);
+    root.querySelector("#debugGoldBtn")?.removeEventListener("pointerup", onDebugGold);
+    plotPromptBtn?.removeEventListener("pointerup", onPlotPrompt);
     root.querySelector("#inviteAccept")?.removeEventListener("pointerup", acceptInvite);
     root.querySelector("#inviteDecline")?.removeEventListener("pointerup", declineInvite);
     ctxMenu?.removeEventListener("pointerup", onCtxClick);

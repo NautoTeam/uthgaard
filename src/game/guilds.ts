@@ -31,6 +31,8 @@ export interface GuildRecord {
   kind: GuildKind;
   crest: CrestId;
   members: GuildMember[];
+  /** Set when the Leader plants on a free city plot. One per guild. */
+  cornerstone?: { plotId: string; x: number; z: number } | null;
 }
 
 interface GuildStore {
@@ -209,6 +211,58 @@ function findMembership(name: string) {
 
 function replaceGuild(store: GuildStore, guild: GuildRecord) {
   write({ guilds: store.guilds.map((row) => (row.id === guild.id ? guild : row)) });
+}
+
+export const CORNERSTONE_GOLD = 150;
+
+/** Open ground outside a haven. Beastmarch is just south of Fenhollow's PvP line. */
+export const CITY_PLOTS = [
+  { id: "beastmarch-south", zone: "Beastmarch", x: 40, z: 140 },
+  { id: "reedrot-fen", zone: "Reedrot Fen", x: 10, z: 305 },
+] as const;
+
+export function plotById(id: string) {
+  return CITY_PLOTS.find((plot) => plot.id === id) ?? null;
+}
+
+export function guildAtPlot(plotId: string): GuildRecord | null {
+  return read().guilds.find((guild) => guild.cornerstone?.plotId === plotId) ?? null;
+}
+
+export function plantCornerstone(
+  actor: string,
+  plotId: string,
+): { ok: true; guild: GuildRecord } | { ok: false; reason: string } {
+  invalidateGuilds();
+  const plot = plotById(plotId);
+  if (!plot) return { ok: false, reason: "There is no city plot there." };
+  const mine = findMembership(actor);
+  if (!mine.guild || !mine.member) return { ok: false, reason: "You are not in a guild." };
+  if (mine.member.rank !== "Leader")
+    return { ok: false, reason: "Only the Leader can plant a Cornerstone." };
+  if (mine.guild.cornerstone) return { ok: false, reason: "Your guild already has a Cornerstone." };
+  const taken = guildAtPlot(plot.id);
+  if (taken) return { ok: false, reason: `That plot is taken by [${taken.tag}].` };
+  const next: GuildRecord = {
+    ...mine.guild,
+    cornerstone: { plotId: plot.id, x: plot.x, z: plot.z },
+  };
+  replaceGuild(mine.store, next);
+  return { ok: true, guild: next };
+}
+
+export function removeCornerstone(
+  actor: string,
+): { ok: true; guild: GuildRecord } | { ok: false; reason: string } {
+  invalidateGuilds();
+  const mine = findMembership(actor);
+  if (!mine.guild || !mine.member) return { ok: false, reason: "You are not in a guild." };
+  if (mine.member.rank !== "Leader")
+    return { ok: false, reason: "Only the Leader can remove the Cornerstone." };
+  if (!mine.guild.cornerstone) return { ok: false, reason: "Your guild has no Cornerstone." };
+  const next: GuildRecord = { ...mine.guild, cornerstone: null };
+  replaceGuild(mine.store, next);
+  return { ok: true, guild: next };
 }
 
 export function promoteMember(

@@ -489,6 +489,7 @@ body {
 #debugHud button,
 #inviteToast button,
 #guildToast button,
+#plotPrompt button,
 #ctxMenu button {
   min-height: 40px;
   padding: 8px 12px;
@@ -548,7 +549,8 @@ body {
 }
 
 #inviteToast[hidden],
-#guildToast[hidden] {
+#guildToast[hidden],
+#plotPrompt[hidden] {
   display: none !important;
 }
 
@@ -568,6 +570,34 @@ body {
 
 #guildToast p {
   margin: 0 0 8px;
+}
+
+#plotPrompt {
+  position: absolute;
+  left: 50%;
+  bottom: 120px;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: min(340px, calc(100vw - 24px));
+  background: #141812;
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+  padding: 12px;
+  text-align: center;
+}
+
+#plotPrompt p {
+  margin: 0 0 8px;
+}
+
+#bindLine {
+  margin: 0;
+  color: #e2b15a;
+  font-size: 13px;
+}
+
+#bindLine:empty {
+  display: none;
 }
 
 #targetFrame {

@@ -644,11 +644,16 @@ export function createWorld() {
     log(`${p.username}: ${msg}`);
   }
 
-  function respawn(id: string, extra: Array<{ x: number; z: number }> = []): ActionResult {
+  function respawn(
+    id: string,
+    extra: Array<{ x: number; z: number }> = [],
+    place?: { x: number; z: number; name: string },
+  ): ActionResult {
     const p = players.get(id);
     if (!p || p.hp > 0) return { ok: false, reason: "You are still standing." };
     dropGrave(p);
-    const home = hearthOf(p.race);
+    const home =
+      place && Number.isFinite(place.x) && Number.isFinite(place.z) ? place : hearthOf(p.race);
     const occupied = [
       ...[...players.values()].filter((o) => o.id !== p.id && o.hp > 0).map((o) => ({ x: o.x, z: o.z })),
       ...extra,

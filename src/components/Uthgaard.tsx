@@ -142,6 +142,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="debugHudLevelBtn" type="button">
           Set level
         </button>
+        <button id="debugGoldBtn" type="button">
+          Give 200 gold
+        </button>
         <button id="debugSpawnBtn" type="button">
           Spawn test mob
         </button>
@@ -167,6 +170,12 @@ function Isle({ profile }: { profile: IsleProfile }) {
         </button>
         <button id="guildDecline" type="button">
           Decline
+        </button>
+      </div>
+      <div id="plotPrompt" hidden>
+        <p id="plotPromptText" />
+        <button id="plotPromptBtn" type="button">
+          Plant Cornerstone
         </button>
       </div>
       <div id="ctxMenu" hidden />
@@ -323,6 +332,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
             Guild
           </button>
         </div>
+        <p id="bindLine" />
         <div id="messages" />
         <div id="pvpMessages" hidden />
         <div id="guildMessages" hidden />
