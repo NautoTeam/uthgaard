@@ -65,15 +65,24 @@ export interface RemoteHandle {
 }
 
 async function defaultFetchToken(): Promise<TokenResponse> {
-  const res = await fetch("/api/game/token", { method: "POST", credentials: "include" });
-  if (res.status === 401) {
-    if (typeof window !== "undefined") window.location.assign("/login");
-    return { ok: false, status: 401 };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch("/api/game/token", {
+      method: "POST",
+      credentials: "include",
+      signal: ctrl.signal,
+    });
+    if (res.status === 401) return { ok: false, status: 401 };
+    if (!res.ok) return { ok: false, status: res.status };
+    const body = (await res.json()) as { token?: string };
+    if (!body.token) return { ok: false, status: res.status };
+    return { ok: true, status: res.status, token: body.token };
+  } catch {
+    return { ok: false, status: 0 };
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) return { ok: false, status: res.status };
-  const body = (await res.json()) as { token?: string };
-  if (!body.token) return { ok: false, status: res.status };
-  return { ok: true, status: res.status, token: body.token };
 }
 
 function defaultOpen(url: string): SocketLike {
@@ -94,6 +103,8 @@ export function connectRemote(opts: {
   onAck?: (seq: number, result: { ok: boolean; reason?: string }) => void;
   onStatus?: (line: string | null) => void;
   onNeedCreate?: () => Promise<HelloImport | null>;
+  /** First connection failed: not signed in, or the socket never came up. */
+  onOffline?: (why: "signed-out" | "unreachable") => void;
   fetchToken?: () => Promise<TokenResponse>;
   openSocket?: (url: string) => SocketLike;
   sleep?: (ms: number) => Promise<void>;
@@ -126,11 +137,7 @@ export function connectRemote(opts: {
     const tok = await fetchToken();
     if (stopped) return 1000;
     if (!tok.ok || !tok.token) {
-      if (tok.status === 401) {
-        stopped = true;
-        opts.onError("sign in again");
-        return 4401;
-      }
+      if (tok.status === 401) return 4401;
       return 1006;
     }
     const token = tok.token;
@@ -138,14 +145,28 @@ export function connectRemote(opts: {
     socket = sock;
     return await new Promise<number>((resolve) => {
       let settled = false;
+      let opened = false;
       let createSent = false;
+      let openTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (code: number) => {
         if (settled) return;
         settled = true;
+        clearTimeout(openTimer);
         if (socket === sock) socket = null;
         resolve(code || 1006);
       };
+      openTimer = setTimeout(() => {
+        if (opened || settled) return;
+        try {
+          sock.close();
+        } catch {
+          /* already closed */
+        }
+        finish(1006);
+      }, 8000);
       sock.onopen = () => {
+        opened = true;
+        clearTimeout(openTimer);
         if (stopped) {
           sock.close(1000);
           return;
@@ -207,9 +228,19 @@ export function connectRemote(opts: {
     while (!stopped) {
       const code = await openOnce();
       if (stopped) return;
+      if (!welcomed) {
+        stopped = true;
+        opts.onOffline?.(code === 4401 ? "signed-out" : "unreachable");
+        return;
+      }
       const plan = reconnectPlan(code, tokenFailures);
       if (code === 4401) tokenFailures += 1;
       if (!plan.reconnect) {
+        if (plan.notice === "sign in again") {
+          stopped = true;
+          opts.onOffline?.("signed-out");
+          return;
+        }
         if (plan.notice) opts.onStatus?.(plan.notice);
         return;
       }
