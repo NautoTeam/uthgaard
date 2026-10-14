@@ -103,6 +103,10 @@ export interface IsleProfile {
   baseClass: BaseClass;
   /** Server mode: bounce name_taken / bad_create back to the creation screen. */
   onCreateError?: (reason: string) => void;
+  /** Join the live server. Signed-out, or a failed token, stays on the local world. */
+  online?: boolean;
+  /** One line when a signed-in player has to stay offline. */
+  offlineNote?: string;
 }
 
 const TW = 48;
@@ -321,7 +325,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const debugRow = root.querySelector<HTMLElement>("#debugLevel");
   const debugHud = root.querySelector<HTMLElement>("#debugHud");
   const showDebugHud = new URLSearchParams(window.location.search).get("debug") === "1";
-  let remotePlay = !!SERVER;
+  let remotePlay = !!SERVER && profile.online === true;
   function showLocalDebug() {
     if (DEBUG_SET_LEVEL && debugRow) debugRow.hidden = false;
     if (debugHud && showDebugHud) debugHud.hidden = false;
@@ -5014,7 +5018,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     );
   }
 
-  if (SERVER) {
+  if (remotePlay) {
     setNetStatus("Connecting…");
     remoteSession = connectRemote({
       url: SERVER,
@@ -5044,6 +5048,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         return offerImport(saves);
       },
     });
+  } else if (profile.offlineNote) {
+    setNetStatus(profile.offlineNote);
   }
 
   resize();

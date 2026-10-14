@@ -47,6 +47,7 @@ export interface TokenResponse {
   ok: boolean;
   status: number;
   token?: string;
+  error?: string;
 }
 
 type SocketLike = {
@@ -68,21 +69,77 @@ async function defaultFetchToken(): Promise<TokenResponse> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
+    const headers = new Headers();
+    const bearer = previewBearer();
+    if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
     const res = await fetch("/api/game/token", {
       method: "POST",
       credentials: "include",
+      headers,
       signal: ctrl.signal,
     });
     if (res.status === 401) return { ok: false, status: 401 };
-    if (!res.ok) return { ok: false, status: res.status };
-    const body = (await res.json()) as { token?: string };
-    if (!body.token) return { ok: false, status: res.status };
+    let body: { token?: string; error?: string } = {};
+    try {
+      body = (await res.json()) as { token?: string; error?: string };
+    } catch {
+      body = {};
+    }
+    if (!res.ok || !body.token) return { ok: false, status: res.status, error: body.error };
     return { ok: true, status: res.status, token: body.token };
   } catch {
     return { ok: false, status: 0 };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function previewBearer(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage.getItem("grok-auth.bearer-token");
+  } catch {
+    return null;
+  }
+}
+
+function tokenReason(tok: TokenResponse): string {
+  if (tok.status === 401) return "You're not signed in.";
+  if (tok.status === 503) return "The game token is not ready.";
+  const line = tok.error?.replace(/\s+/g, " ").trim();
+  if (line && line.length <= 90) return line;
+  return "The token request failed.";
+}
+
+/** Token, then a socket that closes as soon as it opens. No hello, so nothing is created. */
+export function probeGameLink(url: string): Promise<{ online: boolean; reason: string }> {
+  if (!url || typeof WebSocket === "undefined") return Promise.resolve({ online: false, reason: "" });
+  return defaultFetchToken().then(async (tok) => {
+    if (!tok.ok || !tok.token) return { online: false, reason: tokenReason(tok) };
+    const opened = await new Promise<boolean>((resolve) => {
+      let done = false;
+      let sock: WebSocket | null = null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try {
+          sock?.close();
+        } catch {
+          /* already closed */
+        }
+        resolve(ok);
+      };
+      sock = new WebSocket(url);
+      timer = setTimeout(() => finish(false), 8000);
+      sock.onopen = () => finish(true);
+      sock.onerror = () => finish(false);
+      sock.onclose = () => finish(false);
+    });
+    if (!opened) return { online: false, reason: "The game server can't be reached." };
+    return { online: true, reason: "" };
+  });
 }
 
 function defaultOpen(url: string): SocketLike {

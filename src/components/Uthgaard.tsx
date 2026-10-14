@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
 import { deleteSave, listSaves, type CharacterSave } from "@/client/localSave";
 import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClass, type Race } from "@/game/types";
+import { SERVER } from "@/game/net";
+import { probeGameLink } from "@/game/remote";
+import { authClient, signOut } from "@/lib/auth/client";
 
 export function Uthgaard() {
   const [run, setRun] = useState<IsleProfile | null>(null);
@@ -38,18 +41,100 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const [path, setPath] = useState<BaseClass>("Fighter");
   const [saves, setSaves] = useState<CharacterSave[]>([]);
   const [block, setBlock] = useState("");
+  const [accountEmail, setAccountEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState({ online: false, reason: "" });
+  const linkRef = useRef(link);
+  const probeRef = useRef<Promise<{ online: boolean; reason: string }> | null>(null);
+  const { data: session, isPending } = authClient.useSession();
+  const email = session?.user?.email ?? "";
   const locked = !classAllowed(race, path);
 
   useEffect(() => {
     setSaves(listSaves());
   }, []);
 
-  function enter(next?: CharacterSave) {
+  useEffect(() => {
+    if (isPending) return;
+    let stale = false;
+    if (!email || !SERVER) {
+      probeRef.current = null;
+      linkRef.current = { online: false, reason: "" };
+      setLink(linkRef.current);
+      return;
+    }
+    const pending = probeGameLink(SERVER);
+    probeRef.current = pending;
+    void pending.then((result) => {
+      if (stale) return;
+      linkRef.current = result;
+      if (probeRef.current === pending) probeRef.current = null;
+      setLink(result);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [email, isPending]);
+
+  async function enter(next?: CharacterSave) {
+    let online = false;
+    let offlineNote: string | undefined;
+    if (email && SERVER) {
+      const result = probeRef.current ? await probeRef.current : linkRef.current;
+      online = result.online;
+      if (!online && result.reason) offlineNote = `${result.reason} Playing offline.`;
+    }
     onEnter({
       username: (next?.username ?? name).trim().slice(0, 16) || "Hero",
       race: next?.race ?? race,
       baseClass: next?.baseClass ?? path,
+      online,
+      offlineNote,
     });
+  }
+
+  async function submitAccount(mode: "in" | "up") {
+    const mail = accountEmail.trim();
+    if (!mail || !password) {
+      setAuthError("Enter an email and a password.");
+      return;
+    }
+    setBusy(true);
+    setAuthError("");
+    try {
+      const result =
+        mode === "up"
+          ? await authClient.signUp.email({
+              email: mail,
+              password,
+              name: mail.split("@")[0]?.replace(/[^\w .'-]/g, "").slice(0, 24) || "Hero",
+            })
+          : await authClient.signIn.email({ email: mail, password });
+      if (result.error) {
+        const message = result.error.message?.trim() || "That didn't work.";
+        setAuthError(message.length > 140 ? `${message.slice(0, 137)}…` : message);
+        return;
+      }
+      setPassword("");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "That didn't work.";
+      setAuthError(message.length > 140 ? `${message.slice(0, 137)}…` : message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function leaveAccount() {
+    setBusy(true);
+    setAuthError("");
+    try {
+      await signOut("/");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Sign-out failed.");
+      setBusy(false);
+    }
   }
 
   return (
@@ -62,12 +147,71 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
           return;
         }
         setBlock("");
-        enter();
+        void enter();
       }}
     >
       <div className="login-create">
       <h1>Caldrenmoor</h1>
       <p className="sub">Havens of the Reach</p>
+      <div
+        className="account-panel"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.preventDefault();
+        }}
+      >
+        <h2>Sign in / Create account</h2>
+        {isPending ? (
+          <p className="account-net offline">Offline</p>
+        ) : email ? (
+          <>
+            <p className="account-who">Signed in as {email}</p>
+            <p className={link.online ? "account-net online" : "account-net offline"}>{link.online ? "Online" : "Offline"}</p>
+            {link.reason && !link.online && <p className="account-reason">{link.reason}</p>}
+            <button type="button" disabled={busy} onClick={() => void leaveAccount()}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <>
+            <label>
+              Email
+              <input
+                id="accountEmail"
+                type="email"
+                autoComplete="username"
+                value={accountEmail}
+                onChange={(e) => setAccountEmail(e.target.value)}
+              />
+            </label>
+            <label>
+              Password
+              <input
+                id="accountPassword"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void submitAccount("in");
+                  }
+                }}
+              />
+            </label>
+            <div className="account-actions">
+              <button type="button" disabled={busy} onClick={() => void submitAccount("in")}>
+                Sign in
+              </button>
+              <button type="button" disabled={busy} onClick={() => void submitAccount("up")}>
+                Create account
+              </button>
+            </div>
+            <p className="account-net offline">Offline</p>
+          </>
+        )}
+        {authError && <p className="account-reason">{authError}</p>}
+      </div>
       <label>
         Name
         <input id="username" value={name} maxLength={16} onChange={(e) => setName(e.target.value)} />

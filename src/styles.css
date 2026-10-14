@@ -76,6 +76,73 @@ body {
   text-align: center;
 }
 
+.account-panel {
+  width: min(280px, 90vw);
+  margin: 4px 0 8px;
+  padding: 8px 10px 10px;
+  box-sizing: border-box;
+  border: 1px solid #6a5a38;
+  background: rgba(12, 16, 14, 0.55);
+}
+
+.account-panel h2 {
+  margin: 0 0 6px;
+  font-family: Cinzel, Georgia, serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #d7c28a;
+  text-align: center;
+}
+
+#login .account-panel label {
+  width: 100%;
+  margin: 6px 0;
+}
+
+#login .account-panel input,
+#login .account-panel button {
+  font-size: 14px;
+  padding: 7px 8px;
+}
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+#login .account-actions button {
+  width: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+}
+
+.account-who,
+.account-net {
+  margin: 4px 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.account-who,
+.account-net.online {
+  color: #d7c28a;
+}
+
+.account-net.offline {
+  color: #a89880;
+}
+
+.account-reason {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  color: #e7b4a0;
+}
+
 #login label {
   display: block;
   margin: 8px;
