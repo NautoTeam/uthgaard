@@ -1,6 +1,6 @@
 import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
 import { HAVEN_ZONE_RADIUS, havenCity } from "./mask";
-import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
+import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, mobLabel, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
 import type { GraveState } from "./types";
 import {
@@ -15,6 +15,12 @@ import {
   type PublicState,
   type Race,
 } from "./types";
+
+function starterWeapon(base: string, prestige: string) {
+  if (base === "Rogue" || prestige === "Scout") return "dagger";
+  if (base === "Healer" || base === "Mage" || prestige === "Priest" || prestige === "Wizard") return "oak-staff";
+  return "iron-sword";
+}
 
 function hearthOf(race: Race): { x: number; z: number; name: string } {
   if (race === "Marshwarden") {
@@ -138,6 +144,9 @@ export function createWorld() {
   }
 
   function sameTile(ax: number, az: number, bx: number, bz: number) {
+    // A crack on the .5 boundary rounds to two tiles but is the same spot.
+    // A full step to the next tile (distance 1) must still be allowed.
+    if (Math.hypot(ax - bx, az - bz) < 0.85) return true;
     return Math.round(ax) === Math.round(bx) && Math.round(az) === Math.round(bz);
   }
 
@@ -173,13 +182,16 @@ export function createWorld() {
   }
 
   function mobCanOccupy(m: MonsterState, x: number, z: number) {
-    const inside = havenCity(x, z);
-    if (inside) {
-      const from = havenCity(m.x, m.z);
-      if (!from) return false;
-      const before = Math.hypot(m.x - from.x, m.z - from.z);
-      const after = Math.hypot(x - from.x, z - from.z);
-      if (after <= before + 0.001) return false;
+    // A debug foe is allowed to stand in town. Real camps still cannot enter a haven.
+    if (!m.id.startsWith("t")) {
+      const inside = havenCity(x, z);
+      if (inside) {
+        const from = havenCity(m.x, m.z);
+        if (!from) return false;
+        const before = Math.hypot(m.x - from.x, m.z - from.z);
+        const after = Math.hypot(x - from.x, z - from.z);
+        if (after <= before + 0.001) return false;
+      }
     }
     const foe = foeOf(m);
     if (foe && sameTile(x, z, foe.x, foe.z)) return false;
@@ -208,7 +220,7 @@ export function createWorld() {
       [-1, 1],
       [-1, -1],
     ] as const) {
-      const pos = resolveMove(m.x, m.z, m.x + dx * 1.1, m.z + dz * 1.1);
+      const pos = resolveMove(m.x, m.z, m.x + dx * 1.25, m.z + dz * 1.25);
       if (sameTile(pos.x, pos.z, tx, tz)) continue;
       if (!mobCanOccupy(m, pos.x, pos.z)) continue;
       const d = Math.hypot(pos.x - tx, pos.z - tz);
@@ -362,6 +374,12 @@ export function createWorld() {
       graveDropped: false,
       attunedGates: input.attunedGates?.length ? [...input.attunedGates] : [...DEFAULT_ATTUNED],
     };
+    const ownedWeapon = ["iron-sword", "dagger", "mace", "oak-staff"].some(
+      (id) => player.equipment.weapon === id || (player.inventory[id] ?? 0) > 0,
+    );
+    if (!player.equipment.weapon && !ownedWeapon) {
+      player.equipment.weapon = starterWeapon(player.baseClass, player.prestigeClass);
+    }
     applyStats(player);
     const savedHp = typeof input.hp === "number" ? input.hp : null;
     player.hp = savedHp == null ? player.maxHp : Math.max(0, Math.min(player.maxHp, savedHp));
@@ -485,10 +503,10 @@ export function createWorld() {
       const gold = powerId === "fireball" ? 2 : 1 + Math.floor(m.level / (powerId === "stab" ? 3 : 2));
       const verb =
         powerId === "fireball"
-          ? `${p.username}'s fireball destroyed a ${m.type} (+{xp} XP){ding}.`
+          ? `${p.username}'s fireball destroyed a ${mobLabel(m.type)} (+{xp} XP){ding}.`
           : powerId === "stab"
-            ? `${p.username} stabbed a ${m.type} (+{xp} XP){ding}.`
-            : `${p.username} slew a ${m.type} (+{xp} XP){ding}.`;
+            ? `${p.username} stabbed a ${mobLabel(m.type)} (+{xp} XP){ding}.`
+            : `${p.username} slew a ${mobLabel(m.type)} (+{xp} XP){ding}.`;
       const xp = finishKill(p, m, gold, verb);
       return { ok: true, dmg, reason: `+${xp} XP` };
     }
@@ -862,7 +880,7 @@ export function createWorld() {
         m.slotX = m.x;
         m.slotZ = m.z;
       }
-      if (havenCity(m.slotX, m.slotZ)) {
+      if (!m.id.startsWith("t") && havenCity(m.slotX, m.slotZ)) {
         const ex = outsideHaven(m.slotX, m.slotZ);
         m.slotX = ex.x;
         m.slotZ = ex.z;
@@ -876,10 +894,10 @@ export function createWorld() {
           }
           m.hp = m.maxHp;
           const placed = freeSlot(m);
-          const spot = havenCity(placed.x, placed.z) ? outsideHaven(placed.x, placed.z) : placed;
+          const spot = !m.id.startsWith("t") && havenCity(placed.x, placed.z) ? outsideHaven(placed.x, placed.z) : placed;
           m.x = spot.x;
           m.z = spot.z;
-          if (havenCity(m.slotX, m.slotZ)) {
+          if (!m.id.startsWith("t") && havenCity(m.slotX, m.slotZ)) {
             const ex = outsideHaven(m.slotX, m.slotZ);
             m.slotX = ex.x;
             m.slotZ = ex.z;
@@ -902,7 +920,7 @@ export function createWorld() {
         }
       }
       if (!campHot) continue;
-      if (fleeHaven(m)) continue;
+      if (!m.id.startsWith("t") && fleeHaven(m)) continue;
       const leashFrom = havenCity(m.homeX, m.homeZ) ? { x: m.slotX, z: m.slotZ } : { x: m.homeX, z: m.homeZ };
       const homeD = Math.hypot(m.x - leashFrom.x, m.z - leashFrom.z);
       const def = mobByType(m.type);
@@ -940,7 +958,7 @@ export function createWorld() {
             else if (t.guardUntil > now) dmg = Math.max(1, Math.floor(dmg * 0.5));
             t.hp = Math.max(0, t.hp - dmg);
             if (t.hp <= 0) {
-              log(`${t.username} was slain by a ${m.type}.`);
+              log(`${t.username} was slain by a ${mobLabel(m.type)}.`);
               m.targetId = null;
             }
           }
@@ -972,6 +990,7 @@ export function createWorld() {
         const b = alive[j];
         const d = Math.hypot(a.x - b.x, a.z - b.z);
         if (screenGap(a.x, a.z, b.x, b.z) >= 70 || d < 0.001) continue;
+        if (a.targetId || b.targetId) continue;
         const push = 0.25;
         const ux = (a.x - b.x) / d;
         const uz = (a.z - b.z) / d;
@@ -1016,9 +1035,9 @@ export function createWorld() {
     const p = players.get(id);
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
     const level = Math.max(1, p.level);
-    const type = "Cullhound";
-    const spot0 = nearestOpen(p.x + 3, p.z);
-    const spot = havenCity(spot0.x, spot0.z) ? outsideHaven(spot0.x, spot0.z) : spot0;
+    const type = "Spider";
+    let spot = nearestOpen(p.x + 2.1, p.z + 0.6, 5);
+    if (Math.hypot(spot.x - p.x, spot.z - p.z) < 1.25) spot = nearestOpen(p.x - 1.6, p.z + 1.8, 5);
     const hp = mobHp(type, level);
     const mobId = "t" + mid++;
     monsters.set(mobId, {

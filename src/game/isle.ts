@@ -21,6 +21,7 @@ import {
   nearestRegistrar,
   routeTo,
   screenGap,
+  underHall,
 } from "./geo";
 import {
   BOUNDS,
@@ -53,6 +54,7 @@ import {
   poolsFor,
   trainedDamage,
   mobByType,
+  mobLabel,
   powerById,
   DEBUG_SET_LEVEL,
 } from "../shared/content/catalog";
@@ -102,7 +104,7 @@ export interface IsleProfile {
 
 const TW = 48;
 const TH = 24;
-const MOVE = 13;
+const MOVE = 6.5;
 const SWING_MS = 900;
 const NAMES = [
   ...new Set([
@@ -950,13 +952,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let attackMain: HandAnchor[] = [];
   let attackOff: HandAnchor[] = [];
   let weaponBook: Record<string, WeaponDef> = {};
-  const weaponImages: Record<string, HTMLImageElement> = {};
+  const weaponImages: Record<string, HTMLImageElement | HTMLCanvasElement> = {};
 
   function loadWeaponFile(file: string) {
     if (weaponImages[file]) return;
     const img = new Image();
     img.onload = () => {
-      weaponImages[file] = img;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const g = canvas.getContext("2d");
+      if (!g || !canvas.width) {
+        weaponImages[file] = img;
+        return;
+      }
+      g.drawImage(img, 0, 0);
+      const data = g.getImageData(0, 0, canvas.width, canvas.height);
+      const px = data.data;
+      for (let i = 3; i < px.length; i += 4) {
+        if (px[i] < 24) px[i] = 0;
+        else px[i] = 255;
+      }
+      g.putImageData(data, 0, 0);
+      weaponImages[file] = canvas;
     };
     img.src = `/sprites/weapons/${file}?v=1`;
   }
@@ -976,19 +994,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function walkMain(frame: number): HandAnchor {
     const grips: Array<[number, number, number]> = [
       [67, 104, -112],
-      [69, 110, -108],
+      [69, 110, -128],
       [68, 104, -110],
       [69, 108, -108],
       [58, 96, -120],
-      [74, 102, -96],
+      [74, 102, -140],
       [64, 108, -108],
       [72, 106, -96],
       [80, 102, -124],
-      [84, 106, -118],
+      [84, 106, -150],
       [72, 98, -126],
       [84, 104, -116],
       [110, 100, -70],
-      [108, 102, -74],
+      [108, 102, -48],
       [112, 104, -68],
       [108, 100, -74],
     ];
@@ -1100,10 +1118,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   ) {
     const img = weaponImages[file];
     if (!img) return;
-    const sc = (anchor.scale || 0.72) * drawScale;
+    const sc = Math.max(anchor.scale || 0.72, 0.9) * drawScale;
     ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.filter = filter;
+    ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.filter = "none";
     ctx.translate(originX + anchor.x * drawScale, originY + anchor.y * drawScale);
     ctx.rotate(((anchor.angle - baseAngle) * Math.PI) / 180);
     ctx.scale(sc, sc);
@@ -1121,36 +1140,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     filter: string,
     equipment?: Record<string, string>,
   ) {
-    const main = kind === "atk" ? attackMain[frame] : walkMain(frame);
-    const off = kind === "atk" ? attackOff[frame] : walkOff(frame);
+    const main = (kind === "atk" ? attackMain[frame] : undefined) ?? walkMain(frame);
+    const off = (kind === "atk" ? attackOff[frame] : undefined) ?? walkOff(frame);
     const weapon = heldWeapon(equipment?.weapon ?? "");
     const shield = heldShield(equipment?.offhand ?? "", off?.facingFile);
     const foot = worldToScreen(x, z);
     const originX = foot.x - cell / 2;
     const originY = foot.y - cell + 16 - lift;
     const drawScale = cell / 180;
-    const props = (behind: boolean) => {
-      if (shield && off && off.behind === behind)
-        drawHeld(shield.file, off, shield.pivotX, shield.pivotY, shield.baseAngle, originX, originY, drawScale, filter);
-      if (weapon && main && main.behind === behind)
-        drawHeld(
-          weapon.file,
-          main,
-          weapon.pivotX,
-          weapon.pivotY,
-          weapon.baseAngle,
-          originX,
-          originY,
-          drawScale,
-          filter,
-        );
-    };
-    props(true);
     const baseKey = kind === "atk" ? `human-base-atk-${frame}` : `human-base-walk-${frame}`;
     if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
     const chest = humanChestKey(kind, frame, equipment);
     if (chest) drawFrame(chest, x, z, cell, lift, filter);
-    props(false);
+    if (shield && off)
+      drawHeld(shield.file, { ...off, behind: false }, shield.pivotX, shield.pivotY, shield.baseAngle, originX, originY, drawScale, "none");
+    if (weapon && main)
+      drawHeld(weapon.file, { ...main, behind: false }, weapon.pivotX, weapon.pivotY, weapon.baseAngle, originX, originY, drawScale, "none");
     return true;
   }
 
@@ -1164,7 +1169,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     actor.moving = moving;
     if (moving) {
       const rate = id === myId ? Math.max(0.45, Math.min(1.4, lastSpeed / MOVE)) : 1;
-      actor.phase += dt * 6.5 * rate;
+      actor.phase += dt * 3.25 * rate;
     }
     const kind = classKind(cls);
     const filter = classFilter[kind];
@@ -1264,7 +1269,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const xpPct = p.level >= 25 ? 100 : Math.max(0, Math.min(100, (p.xp / need) * 100));
     const xpLabel = p.level >= 25 ? `XP ${p.xp}` : `XP ${p.xp}/${need}`;
     const zone = zoneAt(p.x, p.z);
-    const town = havenCity(p.x, p.z) ?? townNear(p.x, p.z);
+    const town = townNear(p.x, p.z);
     const pvp = zone?.pvp ? " · PvP area" : "";
     const where = showDebugHud ? ` · ${Math.round(p.x)},${Math.round(p.z)}` : "";
     const zoneLabel =
@@ -1583,6 +1588,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return view().monsters.find((m) => m.id === id && m.hp > 0) ?? null;
   }
 
+  function standBeside(nx: number, nz: number, px: number, pz: number) {
+    let best: { x: number; z: number } | null = null;
+    let bestScore = Infinity;
+    for (let ring = 1.6; ring <= 3.2; ring += 0.35) {
+      for (let i = 0; i < 16; i++) {
+        const ang = (i / 16) * Math.PI * 2;
+        const x = Math.round(nx + Math.cos(ang) * ring);
+        const z = Math.round(nz + Math.sin(ang) * ring);
+        if (blocked(x, z) || underHall(x, z)) continue;
+        const fromNpc = Math.hypot(x - nx, z - nz);
+        if (fromNpc < 1.35 || fromNpc > 3.4) continue;
+        const score = Math.hypot(x - px, z - pz) + fromNpc * 0.2;
+        if (score < bestScore) {
+          bestScore = score;
+          best = { x, z };
+        }
+      }
+    }
+    return best ?? nearestOpen(nx + 2.2, nz, 6);
+  }
+
   function adjacentStand(mx: number, mz: number, px: number, pz: number) {
     const have = Math.hypot(px - mx, pz - mz) || 1;
     if (have <= 2.65) return { x: Math.round(px), z: Math.round(pz) };
@@ -1807,6 +1833,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         if (clearLine(p.x, p.z, dest.x, dest.z)) {
           path = [];
         } else if (path.length) {
+          while (path.length > 1) {
+            const wx = path[0].x - p.x;
+            const wz = path[0].z - p.z;
+            const tx = dest.x - p.x;
+            const tz = dest.z - p.z;
+            if (wx * tx + wz * tz >= 0) break;
+            path.shift();
+          }
           let idx = 0;
           const far = Math.min(path.length - 1, 12);
           for (let i = far; i >= 0; i--) {
@@ -1853,13 +1887,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     let nx = next.x;
     let nz = next.z;
     const foeTile = (x: number, z: number) =>
-      view().monsters.some(
-        (m) =>
-          m.hp > 0 &&
-          (m.id === chaseId || m.targetId === myId) &&
-          Math.round(m.x) === Math.round(x) &&
-          Math.round(m.z) === Math.round(z),
-      );
+      view().monsters.some((m) => {
+        if (m.hp <= 0 || (m.id !== chaseId && m.targetId !== myId)) return false;
+        return (
+          Math.hypot(m.x - x, m.z - z) < 0.85 ||
+          (Math.round(m.x) === Math.round(x) && Math.round(m.z) === Math.round(z))
+        );
+      });
     const crowded = (x: number, z: number) =>
       foeTile(x, z) ||
       view().monsters.some((m) => m.hp > 0 && m.id !== chaseId && screenGap(m.x, m.z, x, z) < 58);
@@ -2072,7 +2106,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.font = "13px Georgia";
           ctx.textAlign = "center";
           ctx.fillStyle = conFor(m.level, myLevel).color;
-          ctx.fillText(m.type, pt.x, barY - 16);
+          ctx.fillText(mobLabel(m.type), pt.x, barY - 16);
           ctx.font = "12px Georgia";
           ctx.fillStyle = "#fff6d8";
           ctx.fillText(`HP ${Math.ceil(m.hp)}/${m.maxHp}`, pt.x, barY - 3);
@@ -3880,18 +3914,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         talkNpc = null;
         openNpc(pickedNpc.id);
       } else {
-        const ang = Math.atan2(p.z - pickedNpc.z, p.x - pickedNpc.x);
-        const rawX = pickedNpc.x + Math.cos(ang) * 2.3;
-        const rawZ = pickedNpc.z + Math.sin(ang) * 2.3;
-        let spot = nearestOpen(rawX, rawZ, 4);
-        if (Math.hypot(spot.x - pickedNpc.x, spot.z - pickedNpc.z) > dist - 0.4) {
-          const step = Math.min(4, Math.max(1.2, dist - 2.3));
-          const sx = p.x + ((pickedNpc.x - p.x) / dist) * step;
-          const sz = p.z + ((pickedNpc.z - p.z) / dist) * step;
-          spot = nearestOpen(sx, sz, 4);
-          if (Math.hypot(spot.x - pickedNpc.x, spot.z - pickedNpc.z) > dist - 0.2)
-            spot = { x: sx, z: sz };
-        }
+        const spot = standBeside(pickedNpc.x, pickedNpc.z, p.x, p.z);
         goTo(spot.x, spot.z, pickedNpc.id, false, true);
       }
       return;

@@ -266,6 +266,21 @@
    }
   },
   {
+   "id": "wardstone_key",
+   "name": "Wardstone Key",
+   "island": "wardstone",
+   "seed": [
+    228,
+    -196
+   ],
+   "levels": [
+    1,
+    25
+   ],
+   "pvp": false,
+   "terrain": "hub"
+  },
+  {
    "id": "thornwood",
    "name": "Thornwood",
    "island": "reach",
@@ -748,7 +763,7 @@
    "stone": "#77728a",
    "stoneAlt": "#68637a",
    "island": "wardstone",
-   "zone": null,
+   "zone": "wardstone_key",
    "kind": "haven",
    "phase": 1
   },

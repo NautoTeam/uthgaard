@@ -205,6 +205,11 @@ export function mobByType(type: string): MobDef {
   return MOBS.find((m) => m.type === type) ?? { ...FALLBACK_MOB, type };
 }
 
+/** Plate and log name. The type id stays CamelCase for sprites and saves. */
+export function mobLabel(type: string) {
+  return type.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 export function mobHp(type: string, level: number) {
   const def = mobByType(type);
   return def.hp > 0 ? def.hp : 36 + level * 11;
