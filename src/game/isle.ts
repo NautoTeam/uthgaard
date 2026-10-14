@@ -102,7 +102,8 @@ export interface IsleProfile {
 
 const TW = 48;
 const TH = 24;
-const MOVE = 20;
+const MOVE = 13;
+const SWING_MS = 900;
 const NAMES = [
   ...new Set([
     ...RACES.map((r) => r.toLowerCase()),
@@ -640,7 +641,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (result && "ok" in result && result.reason) {
         if (result.ok === false && result.reason === "Nothing in reach.") {
           const live = localPlayer();
-          if (live) live.nextSwing = Date.now() + 900;
+          if (live) live.nextSwing = Date.now() + 1500;
           note(result.reason);
         } else if (result.ok === false) note(result.reason);
         else if (result.reason.startsWith("+")) {
@@ -719,6 +720,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function worldToScreen(x: number, z: number) {
     return isoWorldToScreen(x, z, cam.x, cam.z, viewW, viewH);
+  }
+
+  function depthOf(x: number, z: number) {
+    return worldToScreen(x, z).y;
   }
 
   function screenToWorld(sx: number, sy: number) {
@@ -969,34 +974,49 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   };
 
   function walkMain(frame: number): HandAnchor {
-    const facing = Math.floor(frame / 4);
-    const table = [
-      { x: 70, y: 108, angle: -100 },
-      { x: 76, y: 100, angle: -70 },
-      { x: 104, y: 100, angle: -110 },
-      { x: 110, y: 100, angle: -80 },
+    const grips: Array<[number, number, number]> = [
+      [67, 104, -112],
+      [69, 110, -108],
+      [68, 104, -110],
+      [69, 108, -108],
+      [58, 96, -120],
+      [74, 102, -96],
+      [64, 108, -108],
+      [72, 106, -96],
+      [80, 102, -124],
+      [84, 106, -118],
+      [72, 98, -126],
+      [84, 104, -116],
+      [110, 100, -70],
+      [108, 102, -74],
+      [112, 104, -68],
+      [108, 100, -74],
     ];
-    const row = table[facing] ?? table[0];
-    return { x: row.x, y: row.y, angle: row.angle, behind: false, scale: 0.72 };
+    const row = grips[frame] ?? grips[1];
+    return { x: row[0], y: row[1], angle: row[2], behind: false, scale: 0.72 };
   }
 
   function walkOff(frame: number): HandAnchor {
-    const facing = Math.floor(frame / 4);
-    const table = [
-      { x: 112, y: 108, behind: false, facingFile: "S" },
-      { x: 98, y: 102, behind: true, facingFile: "W" },
-      { x: 82, y: 102, behind: true, facingFile: "E" },
-      { x: 70, y: 100, behind: true, facingFile: "N" },
+    const grips: Array<[number, number, boolean, string]> = [
+      [108, 100, false, "S"],
+      [110, 108, false, "S"],
+      [112, 108, false, "S"],
+      [108, 106, false, "S"],
+      [100, 110, true, "W"],
+      [92, 104, true, "W"],
+      [98, 102, true, "W"],
+      [92, 108, true, "W"],
+      [114, 104, false, "E"],
+      [106, 108, false, "E"],
+      [110, 100, false, "E"],
+      [106, 108, false, "E"],
+      [70, 104, false, "N"],
+      [72, 102, false, "N"],
+      [68, 100, false, "N"],
+      [70, 104, false, "N"],
     ];
-    const row = table[facing] ?? table[0];
-    return {
-      x: row.x,
-      y: row.y,
-      angle: 0,
-      behind: row.behind,
-      scale: 0.72,
-      facingFile: row.facingFile,
-    };
+    const row = grips[frame] ?? grips[1];
+    return { x: row[0], y: row[1], angle: 0, behind: row[2], scale: 0.72, facingFile: row[3] };
   }
 
   function loadWeaponRig() {
@@ -1144,7 +1164,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     actor.moving = moving;
     if (moving) {
       const rate = id === myId ? Math.max(0.45, Math.min(1.4, lastSpeed / MOVE)) : 1;
-      actor.phase += dt * 9 * rate;
+      actor.phase += dt * 6.5 * rate;
     }
     const kind = classKind(cls);
     const filter = classFilter[kind];
@@ -1166,13 +1186,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const gear = world.players.get(id)?.equipment;
     if (attacking && drawn === "human") {
-      const t = 1 - (actor.attackUntil - now) / 640;
+      const t = 1 - (actor.attackUntil - now) / SWING_MS;
       const step = Math.min(3, Math.floor(Math.max(0, t) * 4));
       const frame = actor.facing * 4 + step;
       if (!drawHumanPaper("atk", frame, x, z, cell, lift, filter, gear))
         drawSprite(drawn, x, z, 0.18);
     } else if (attacking) {
-      const t = 1 - (actor.attackUntil - now) / 640;
+      const t = 1 - (actor.attackUntil - now) / SWING_MS;
       const frame = Math.min(3, Math.floor(Math.max(0, t) * 4));
       if (!drawFrame(`${drawn}-atk-${frame}`, x, z, cell, lift, filter))
         drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
@@ -1187,7 +1207,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (!drew) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
-    if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 700);
+    if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 900);
   }
 
   function townNear(x: number, z: number) {
@@ -1832,7 +1852,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const next = resolveMove(p.x, p.z, p.x + vx * dt, p.z + vz * dt);
     let nx = next.x;
     let nz = next.z;
+    const foeTile = (x: number, z: number) =>
+      view().monsters.some(
+        (m) =>
+          m.hp > 0 &&
+          (m.id === chaseId || m.targetId === myId) &&
+          Math.round(m.x) === Math.round(x) &&
+          Math.round(m.z) === Math.round(z),
+      );
     const crowded = (x: number, z: number) =>
+      foeTile(x, z) ||
       view().monsters.some((m) => m.hp > 0 && m.id !== chaseId && screenGap(m.x, m.z, x, z) < 58);
     if (crowded(nx, nz)) {
       if (!crowded(nx, p.z) && !blocked(nx, p.z)) nz = p.z;
@@ -1928,7 +1957,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const drawables: Array<{ key: number; draw: () => void }> = [];
     for (const hall of HALLS) {
       drawables.push({
-        key: hall.x + hall.z,
+        key: depthOf(hall.x, hall.z),
         draw: () => {
           shadowAt(hall.x, hall.z, 16);
           drawSprite("hall", hall.x, hall.z, hall.scale);
@@ -1937,13 +1966,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     for (const npc of NPCS) {
       drawables.push({
-        key: npc.x + npc.z,
+        key: depthOf(npc.x, npc.z),
         draw: () => {
           const p = worldToScreen(npc.x, npc.z);
           ctx.save();
           ctx.translate(p.x, p.y + 4);
           ctx.scale(1, 0.42);
-          const vendor = npc.role === "vendor";
+          const vendor = npc.role === "vendor" || npc.role === "smith";
           const trainer = npc.role === "trainer";
           const registrar = npc.role === "registrar";
           ctx.beginPath();
@@ -1967,13 +1996,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.restore();
           shadowAt(npc.x, npc.z, 12);
           drawHero(npc.race, npc.id, npc.x, npc.z);
-          const tag = vendor
-            ? "VENDOR"
-            : trainer
-              ? "TRAINER"
-              : registrar
-                ? "REGISTRAR"
-                : "WAYFARER";
+          const tag = npc.role === "smith"
+            ? "SMITH"
+            : vendor
+              ? "VENDOR"
+              : trainer
+                ? "TRAINER"
+                : registrar
+                  ? "REGISTRAR"
+                  : "WAYFARER";
           const tagColor = vendor
             ? "#39ff6a"
             : trainer
@@ -1995,7 +2026,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     for (const [x, z] of TREES) {
       drawables.push({
-        key: x + z,
+        key: depthOf(x, z),
         draw: () => {
           shadowAt(x, z, 22);
           drawSprite("tree", x, z, 0.28);
@@ -2008,25 +2039,43 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           shadowAt(x, z, 10);
           drawSprite("fire", x, z, 0.16);
         },
-        key: x + z,
+        key: depthOf(x, z),
       });
     }
     for (const plot of CITY_PLOTS) {
       drawables.push({
-        key: plot.x + plot.z - 0.15,
+        key: depthOf(plot.x, plot.z) - 0.15,
         draw: () => drawCityPlot(plot),
       });
     }
     const aimed = currentTarget();
+    const myLevel = me()?.level ?? 1;
     for (const m of state.monsters) {
       if (m.hp <= 0) continue;
       drawables.push({
-        key: m.x + m.z,
+        key: depthOf(m.x, m.z),
         draw: () => {
           shadowAt(m.x, m.z, 14);
           if (!drawSprite(m.type.toLowerCase(), m.x, m.z, mobByType(m.type).scale || 0.18))
             drawFallback(m.type, m.x, m.z);
           if (aimed && aimed.id === m.id) markTarget(m.x, m.z);
+          const pt = worldToScreen(m.x, m.z);
+          const barW = 48;
+          const barY = pt.y - 108;
+          const pct = m.maxHp > 0 ? Math.max(0, Math.min(1, m.hp / m.maxHp)) : 0;
+          ctx.fillStyle = "rgba(0,0,0,.75)";
+          ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
+          ctx.fillStyle = "#3a1515";
+          ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
+          ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
+          ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
+          ctx.font = "13px Georgia";
+          ctx.textAlign = "center";
+          ctx.fillStyle = conFor(m.level, myLevel).color;
+          ctx.fillText(m.type, pt.x, barY - 16);
+          ctx.font = "12px Georgia";
+          ctx.fillStyle = "#fff6d8";
+          ctx.fillText(`HP ${Math.ceil(m.hp)}/${m.maxHp}`, pt.x, barY - 3);
         },
       });
     }
@@ -2043,13 +2092,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         const x = b.x0 + (b.x1 - b.x0) * t;
         const z = b.z0 + (b.z1 - b.z0) * t;
         drawables.push({
-          key: x + z + 0.2,
+          key: depthOf(x, z) + 0.2,
           draw: () => drawFx("fireball", Math.floor(nowDraw / 70) % 4, 2, 2, x, z, 72, 28),
         });
       } else {
         const frame = Math.min(3, Math.floor((age - 380) / 80));
         drawables.push({
-          key: b.x1 + b.z1 + 0.3,
+          key: depthOf(b.x1, b.z1) + 0.3,
           draw: () => drawFx("impact", frame, 2, 2, b.x1, b.z1, 96, 16),
         });
       }
@@ -2057,7 +2106,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const heroes = state.players.filter((pl) => pl.hp > 0);
     for (const pl of heroes) {
       drawables.push({
-        key: pl.x + pl.z,
+        key: depthOf(pl.x, pl.z),
         draw: () => {
           const race = (pl.race || "human").toLowerCase();
           shadowAt(pl.x, pl.z, 14);
@@ -2073,7 +2122,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     for (const peer of freshPeers()) {
       drawables.push({
-        key: peer.x + peer.z + 0.01,
+        key: depthOf(peer.x, peer.z) + 0.01,
         draw: () => {
           const race = (peer.race || "human").toLowerCase();
           shadowAt(peer.x, peer.z, 14);
@@ -2082,52 +2131,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.font = "13px Georgia";
           ctx.textAlign = "center";
           drawOverhead(pt.x, pt.y, peer.name, "", 136, "#d5e6ff");
+          if (peer.id !== pvpId) return;
+          markTarget(peer.x, peer.z);
+          const barW = 48;
+          const barY = pt.y - 108;
+          const pct = peer.maxHp > 0 ? Math.max(0, Math.min(1, peer.hp / peer.maxHp)) : 0;
+          ctx.fillStyle = "rgba(0,0,0,.75)";
+          ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
+          ctx.fillStyle = "#3a1515";
+          ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
+          ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
+          ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
+          ctx.font = "13px Georgia";
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#d5e6ff";
+          ctx.fillText(plateName(peer.name), pt.x, barY - 16);
+          ctx.font = "12px Georgia";
+          ctx.fillStyle = "#fff6d8";
+          ctx.fillText(`HP ${Math.ceil(peer.hp)}/${peer.maxHp}`, pt.x, barY - 3);
         },
       });
     }
     drawables.sort((a, b) => a.key - b.key);
     for (const d of drawables) d.draw();
-    for (const m of state.monsters) {
-      if (m.hp <= 0) continue;
-      const pt = worldToScreen(m.x, m.z);
-      const barW = 48;
-      const barY = pt.y - 108;
-      const pct = m.maxHp > 0 ? Math.max(0, Math.min(1, m.hp / m.maxHp)) : 0;
-      ctx.fillStyle = "rgba(0,0,0,.75)";
-      ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
-      ctx.fillStyle = "#3a1515";
-      ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
-      ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
-      ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
-      ctx.font = "13px Georgia";
-      ctx.textAlign = "center";
-      ctx.fillStyle = conFor(m.level, me()?.level ?? 1).color;
-      ctx.fillText(m.type, pt.x, barY - 16);
-      ctx.font = "12px Georgia";
-      ctx.fillStyle = "#fff6d8";
-      ctx.fillText(`HP ${Math.ceil(m.hp)}/${m.maxHp}`, pt.x, barY - 3);
-    }
-    const foe = pvpId ? freshPeers().find((peer) => peer.id === pvpId) : null;
-    if (foe) {
-      markTarget(foe.x, foe.z);
-      const pt = worldToScreen(foe.x, foe.z);
-      const barW = 48;
-      const barY = pt.y - 108;
-      const pct = foe.maxHp > 0 ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) : 0;
-      ctx.fillStyle = "rgba(0,0,0,.75)";
-      ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
-      ctx.fillStyle = "#3a1515";
-      ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
-      ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
-      ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
-      ctx.font = "13px Georgia";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#d5e6ff";
-      ctx.fillText(plateName(foe.name), pt.x, barY - 16);
-      ctx.font = "12px Georgia";
-      ctx.fillStyle = "#fff6d8";
-      ctx.fillText(`HP ${Math.ceil(foe.hp)}/${foe.maxHp}`, pt.x, barY - 3);
-    }
     ctx.font = "13px Georgia";
     ctx.textAlign = "center";
     for (const g of state.graves ?? []) {
@@ -2722,12 +2748,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     pvpId = peer.id;
     p.stamina = Math.max(0, p.stamina - cost);
-    const cd = now + (power?.cooldown ?? 780);
+    const cd = now + (power?.cooldown ?? 2400);
     p.nextSwing = cd;
     if (!p.cooldowns) p.cooldowns = {};
     p.cooldowns.attack = cd;
     const actor = actors.get(myId);
-    if (actor) actor.attackUntil = performance.now() + 640;
+    if (actor) actor.attackUntil = performance.now() + SWING_MS;
     if (Math.random() * 100 >= hitChance(p)) {
       floatAt(peer.x, peer.z, "Miss", "#f0e2b0", 96);
       return "miss";
@@ -4012,7 +4038,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!npc) return;
     const p = me();
     if (!p || Math.hypot(npc.x - p.x, npc.z - p.z) > 8) return;
-    if (npc.role === "vendor") openShop();
+    if (npc.role === "vendor" || npc.role === "smith") openShop();
     else if (npc.role === "trainer") openTrain();
     else if (npc.role === "registrar") openRegistrar();
     else openTravel(npc.city);
@@ -4266,8 +4292,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       stamp: 0,
     };
     const now = performance.now();
-    actor.attackUntil = now + 640;
-    if (power && power.mana > 0) actor.castUntil = now + 700;
+    actor.attackUntil = now + SWING_MS;
+    if (power && power.mana > 0) actor.castUntil = now + 900;
     actors.set(myId, actor);
     if (
       power &&

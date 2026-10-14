@@ -171,20 +171,20 @@ export interface MobDef {
 }
 
 export const MOBS: MobDef[] = [
-  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Boar", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "Thornling", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "BogHound", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "CragHarpy", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "ThunderElk", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.2 },
-  { type: "FenCrawler", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
-  { type: "MireWitch", hp: 0, xpBase: 14, xpPerLevel: 6, damage: 3, damagePerLevel: 0.45, attackMs: 1400, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.24 },
-  { type: "Cullhound", hp: 0, xpBase: 0, xpPerLevel: 0, damage: 4, damagePerLevel: 0.45, attackMs: 1200, aggro: 8, leash: 16, campLeash: 40, scale: 0.22 },
+  { type: "Spider", hp: 40, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Snake", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Lizard", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Boar", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Thornling", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "BogHound", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "CragHarpy", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "ThunderElk", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.2 },
+  { type: "FenCrawler", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 4, damagePerLevel: 0.7, attackMs: 2600, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "MireWitch", hp: 0, xpBase: 14, xpPerLevel: 6, damage: 6, damagePerLevel: 0.9, attackMs: 3000, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.24 },
+  { type: "Cullhound", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 8, damagePerLevel: 0.9, attackMs: 2800, aggro: 8, leash: 16, campLeash: 40, scale: 0.22 },
 ];
 
 const FALLBACK_MOB: MobDef = {
@@ -192,9 +192,9 @@ const FALLBACK_MOB: MobDef = {
   hp: 36,
   xpBase: 8,
   xpPerLevel: 5,
-  damage: 2,
-  damagePerLevel: 0.35,
-  attackMs: 1100,
+  damage: 4,
+  damagePerLevel: 0.7,
+  attackMs: 2600,
   aggro: 3.05,
   leash: 6.2,
   campLeash: 15,
@@ -295,6 +295,10 @@ export const ITEMS: ItemDef[] = [
   { id: "spider-silk", name: "Spider Silk", kind: "junk", sell: 5, heal: 0, slot: "", damage: 0, defense: 0, weight: "" },
   { id: "minor-potion", name: "Minor Potion", kind: "consumable", sell: 4, heal: 25, slot: "", damage: 0, defense: 0, weight: "" },
   { id: "iron-sword", name: "Iron Sword", kind: "equipment", sell: 6, heal: 0, slot: "weapon", damage: 6, defense: 0, weight: "" },
+  { id: "dagger", name: "Dagger", kind: "equipment", sell: 4, heal: 0, slot: "weapon", damage: 4, defense: 0, weight: "" },
+  { id: "mace", name: "Mace", kind: "equipment", sell: 7, heal: 0, slot: "weapon", damage: 8, defense: 0, weight: "" },
+  { id: "oak-staff", name: "Oak Staff", kind: "equipment", sell: 6, heal: 0, slot: "weapon", damage: 5, defense: 0, weight: "" },
+  { id: "round-shield", name: "Round Shield", kind: "equipment", sell: 6, heal: 0, slot: "offhand", damage: 0, defense: 4, weight: "" },
   { id: "iron-hauberk", name: "Iron Hauberk", kind: "equipment", sell: 8, heal: 0, slot: "chest", damage: 0, defense: 8, weight: "heavy" },
 ];
 
@@ -317,10 +321,14 @@ export function dropChance(row: DropDef) {
   return TEST_GENEROUS_DROPS ? Math.max(row.chance, 0.85) : row.chance;
 }
 
-/** What Marta sells. Price is the gold the player pays. */
+/** What the hamlet vendors sell. Price is the gold the player pays. */
 export const VENDOR_STOCK: Array<{ itemId: string; price: number }> = [
   { itemId: "minor-potion", price: 12 },
+  { itemId: "dagger", price: 10 },
+  { itemId: "mace", price: 18 },
+  { itemId: "oak-staff", price: 14 },
   { itemId: "iron-sword", price: 16 },
+  { itemId: "round-shield", price: 14 },
   { itemId: "iron-hauberk", price: 22 },
 ];
 
@@ -373,27 +381,27 @@ export interface PowerDef {
 }
 
 export const POWERS: PowerDef[] = [
-  { id: "attack", label: "Attack", classes: [], level: 1, slot: 1, mana: 0, stamina: 8, range: 7.6, cooldown: 780, damage: 7, damagePerLevel: 2, bonus: { Fighter: 5, Warrior: 5 }, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "attack", label: "Attack", classes: [], level: 1, slot: 1, mana: 0, stamina: 8, range: 7.6, cooldown: 2400, damage: 14, damagePerLevel: 4, bonus: { Fighter: 5, Warrior: 5 }, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "shield", label: "Shield Block", classes: ["Fighter", "Warrior"], level: 1, slot: 2, mana: 0, stamina: 12, range: 0, cooldown: 8000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
   { id: "cleave", label: "Cleave", classes: ["Fighter", "Warrior"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.6, cooldown: 4000, damage: 10, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "wall", label: "Bulwark Stance", classes: ["Fighter", "Warrior"], level: 8, slot: 4, mana: 0, stamina: 22, range: 0, cooldown: 18000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
-  { id: "heal", label: "Mending", classes: ["Healer", "Priest"], level: 1, slot: 2, mana: 10, stamina: 0, range: 0, cooldown: 2500, damage: 0, damagePerLevel: 0, bonus: {}, heal: 28, healPerLevel: 2, kind: "heal" },
+  { id: "heal", label: "Mending", classes: ["Healer", "Priest"], level: 1, slot: 2, mana: 10, stamina: 0, range: 0, cooldown: 3500, damage: 0, damagePerLevel: 0, bonus: {}, heal: 28, healPerLevel: 2, kind: "heal" },
   { id: "succor", label: "Rekindle", classes: ["Healer", "Priest"], level: 4, slot: 3, mana: 18, stamina: 0, range: 8, cooldown: 6000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 48, healPerLevel: 4, kind: "heal" },
   { id: "ward", label: "Ward", classes: ["Healer", "Priest"], level: 8, slot: 4, mana: 16, stamina: 0, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 12, healPerLevel: 1, kind: "buff" },
-  { id: "fireball", label: "Fireball", classes: ["Mage", "Wizard"], level: 1, slot: 1, mana: 10, stamina: 0, range: 9, cooldown: 1200, damage: 14, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "fireball", label: "Fireball", classes: ["Mage", "Wizard"], level: 1, slot: 1, mana: 10, stamina: 0, range: 9, cooldown: 2500, damage: 14, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "frostbind", label: "Frostbind", classes: ["Mage", "Wizard"], level: 1, slot: 2, mana: 12, stamina: 0, range: 8, cooldown: 6000, damage: 6, damagePerLevel: 1, bonus: {}, heal: 0, healPerLevel: 0, kind: "snare" },
-  { id: "bolt", label: "Arcane Bolt", classes: ["Mage", "Wizard"], level: 4, slot: 3, mana: 8, stamina: 0, range: 9, cooldown: 800, damage: 9, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "bolt", label: "Arcane Bolt", classes: ["Mage", "Wizard"], level: 4, slot: 3, mana: 8, stamina: 0, range: 9, cooldown: 2000, damage: 9, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "nova", label: "Nova", classes: ["Mage", "Wizard"], level: 8, slot: 4, mana: 22, stamina: 0, range: 7, cooldown: 8000, damage: 22, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "stealth", label: "Stealth", classes: ["Rogue", "Scout"], level: 1, slot: 2, mana: 0, stamina: 10, range: 0, cooldown: 12000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "stealth" },
   { id: "backstab", label: "Backstab", classes: ["Rogue", "Scout"], level: 4, slot: 3, mana: 0, stamina: 16, range: 3.2, cooldown: 5000, damage: 18, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
-  { id: "stab", label: "Stab", classes: ["Rogue", "Scout"], level: 1, slot: 4, mana: 0, stamina: 14, range: 3.4, cooldown: 2000, damage: 12, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "stab", label: "Stab", classes: ["Rogue", "Scout"], level: 1, slot: 4, mana: 0, stamina: 14, range: 3.4, cooldown: 3500, damage: 12, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "rally", label: "Rallying Blow", classes: ["Warrior"], level: 10, slot: 5, mana: 0, stamina: 18, range: 3.6, cooldown: 5000, damage: 16, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "ironveil", label: "Iron Veil", classes: ["Warrior"], level: 10, slot: 6, mana: 0, stamina: 16, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "buff" },
   { id: "hymn", label: "Hymn of Ease", classes: ["Priest"], level: 10, slot: 5, mana: 16, stamina: 0, range: 0, cooldown: 4000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 40, healPerLevel: 3, kind: "heal" },
   { id: "aegis", label: "Soft Aegis", classes: ["Priest"], level: 10, slot: 6, mana: 18, stamina: 0, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 10, healPerLevel: 1, kind: "buff" },
-  { id: "cinder", label: "Cinder Lance", classes: ["Wizard"], level: 10, slot: 5, mana: 16, stamina: 0, range: 9, cooldown: 2500, damage: 20, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "cinder", label: "Cinder Lance", classes: ["Wizard"], level: 10, slot: 5, mana: 16, stamina: 0, range: 9, cooldown: 4000, damage: 20, damagePerLevel: 3, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "glass", label: "Glass Snare", classes: ["Wizard"], level: 10, slot: 6, mana: 14, stamina: 0, range: 8, cooldown: 7000, damage: 8, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "snare" },
-  { id: "venom", label: "Venom Nick", classes: ["Scout"], level: 10, slot: 5, mana: 0, stamina: 14, range: 3.2, cooldown: 3000, damage: 14, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
+  { id: "venom", label: "Venom Nick", classes: ["Scout"], level: 10, slot: 5, mana: 0, stamina: 14, range: 3.2, cooldown: 4500, damage: 14, damagePerLevel: 2, bonus: {}, heal: 0, healPerLevel: 0, kind: "damage" },
   { id: "fade", label: "Fade Step", classes: ["Scout"], level: 10, slot: 6, mana: 0, stamina: 12, range: 0, cooldown: 14000, damage: 0, damagePerLevel: 0, bonus: {}, heal: 0, healPerLevel: 0, kind: "stealth" },
 ];
 

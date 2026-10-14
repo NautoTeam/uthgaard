@@ -37,7 +37,7 @@ export interface NpcDef {
   x: number;
   z: number;
   race: "human" | "elf" | "minotaur" | "marshwarden";
-  role: "wayfarer" | "vendor" | "trainer" | "registrar";
+  role: "wayfarer" | "vendor" | "trainer" | "registrar" | "smith";
 }
 
 export const HALLS: Hall[] = [];
@@ -146,6 +146,23 @@ for (const city of CITIES) {
       z: city.z + Math.sin(vendA) * 5.6,
       race: "human",
       role: "vendor",
+    });
+    let smithA = vendA + 1.05;
+    let sx = city.x + Math.cos(smithA) * 7.4;
+    let sz = city.z + Math.sin(smithA) * 7.4;
+    for (let n = 0; n < 8 && NPCS.some((npc) => Math.hypot(npc.x - sx, npc.z - sz) < 2.4); n++) {
+      smithA += 0.35;
+      sx = city.x + Math.cos(smithA) * 7.4;
+      sz = city.z + Math.sin(smithA) * 7.4;
+    }
+    NPCS.push({
+      id: "smith-uthgaard",
+      name: "Bram",
+      city: city.id,
+      x: sx,
+      z: sz,
+      race: "human",
+      role: "smith",
     });
     const trainA = npcA + 2.4;
     NPCS.push({
@@ -535,7 +552,7 @@ export function nearestVendor(x: number, z: number, range = 3.8) {
   let best: NpcDef | null = null;
   let bestD = range;
   for (const npc of NPCS) {
-    if (npc.role !== "vendor") continue;
+    if (npc.role !== "vendor" && npc.role !== "smith") continue;
     const d = Math.hypot(npc.x - x, npc.z - z);
     if (d < bestD) {
       bestD = d;

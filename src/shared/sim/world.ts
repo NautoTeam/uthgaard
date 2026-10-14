@@ -1,4 +1,5 @@
 import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { HAVEN_ZONE_RADIUS, havenCity } from "./mask";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
 import type { GraveState } from "./types";
@@ -136,12 +137,121 @@ export function createWorld() {
     return true;
   }
 
+  function sameTile(ax: number, az: number, bx: number, bz: number) {
+    return Math.round(ax) === Math.round(bx) && Math.round(az) === Math.round(bz);
+  }
+
+  function combatTile(p: PlayerState, x: number, z: number) {
+    for (const m of monsters.values()) {
+      if (m.hp <= 0 || m.targetId !== p.id) continue;
+      if (sameTile(x, z, m.x, m.z)) return true;
+    }
+    return false;
+  }
+
+  /** A point inside a haven, moved just past the rim. spin spreads a pack along the edge. */
+  function outsideHaven(x: number, z: number, spin = 0) {
+    const city = havenCity(x, z);
+    if (!city) return { x, z };
+    const d0 = Math.hypot(x - city.x, z - city.z);
+    const ang = (d0 < 0.5 ? 0 : Math.atan2(z - city.z, x - city.x)) + spin;
+    for (let r = HAVEN_ZONE_RADIUS + 1.2; r <= HAVEN_ZONE_RADIUS + 36; r += 1.2) {
+      const spot = nearestOpen(city.x + Math.cos(ang) * r, city.z + Math.sin(ang) * r, 3);
+      if (!havenCity(spot.x, spot.z)) return spot;
+    }
+    return {
+      x: city.x + Math.cos(ang) * (HAVEN_ZONE_RADIUS + 8),
+      z: city.z + Math.sin(ang) * (HAVEN_ZONE_RADIUS + 8),
+    };
+  }
+
+  function foeOf(m: MonsterState) {
+    if (!m.targetId) return null;
+    const t = players.get(m.targetId);
+    if (!t || t.hp <= 0) return null;
+    return t;
+  }
+
+  function mobCanOccupy(m: MonsterState, x: number, z: number) {
+    const inside = havenCity(x, z);
+    if (inside) {
+      const from = havenCity(m.x, m.z);
+      if (!from) return false;
+      const before = Math.hypot(m.x - from.x, m.z - from.z);
+      const after = Math.hypot(x - from.x, z - from.z);
+      if (after <= before + 0.001) return false;
+    }
+    const foe = foeOf(m);
+    if (foe && sameTile(x, z, foe.x, foe.z)) return false;
+    return true;
+  }
+
+  function applyMobStep(m: MonsterState, nx: number, nz: number) {
+    const pos = resolveMove(m.x, m.z, nx, nz);
+    if (!mobCanOccupy(m, pos.x, pos.z)) return false;
+    if (pos.x === m.x && pos.z === m.z) return false;
+    m.x = pos.x;
+    m.z = pos.z;
+    return true;
+  }
+
+  function stepOffTile(m: MonsterState, tx: number, tz: number) {
+    let best: { x: number; z: number } | null = null;
+    let bestD = 1e9;
+    for (const [dx, dz] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ] as const) {
+      const pos = resolveMove(m.x, m.z, m.x + dx * 1.1, m.z + dz * 1.1);
+      if (sameTile(pos.x, pos.z, tx, tz)) continue;
+      if (!mobCanOccupy(m, pos.x, pos.z)) continue;
+      const d = Math.hypot(pos.x - tx, pos.z - tz);
+      if (d < bestD) {
+        bestD = d;
+        best = pos;
+      }
+    }
+    if (!best) return;
+    m.x = best.x;
+    m.z = best.z;
+  }
+
+  function fleeHaven(m: MonsterState) {
+    const city = havenCity(m.x, m.z);
+    if (!city) return false;
+    const dx = m.x - city.x;
+    const dz = m.z - city.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const ux = dx / d;
+    const uz = dz / d;
+    const step = 0.38;
+    if (applyMobStep(m, m.x + ux * step, m.z + uz * step)) return true;
+    for (const turn of [0.7, -0.7, 1.4, -1.4, 2.2, -2.2]) {
+      const c = Math.cos(turn);
+      const s = Math.sin(turn);
+      const rx = ux * c - uz * s;
+      const rz = ux * s + uz * c;
+      if (applyMobStep(m, m.x + rx * step, m.z + rz * step)) return true;
+    }
+    return true;
+  }
+
   for (const camp of CAMPS) {
-    const slots = campSlots(camp.cx, camp.cz, camp.count);
+    const origin = havenCity(camp.cx, camp.cz) ? outsideHaven(camp.cx, camp.cz) : { x: camp.cx, z: camp.cz };
+    const slots = campSlots(origin.x, origin.z, camp.count + 8)
+      .map((s, i) => (havenCity(s.x, s.z) ? outsideHaven(s.x, s.z, i * 0.22) : s))
+      .filter((s, i, arr) => !havenCity(s.x, s.z) && arr.findIndex((o) => screenGap(o.x, o.z, s.x, s.z) < 70) === i);
     for (let i = 0; i < camp.count; i++) {
       const id = "m" + mid++;
       const hp = mobHp(camp.type, camp.level);
-      const placed = slots[i] ?? { x: Math.round(camp.cx + i * 3), z: Math.round(camp.cz) };
+      const raw = slots[i] ?? outsideHaven(origin.x + i * 1.4, origin.z, i * 0.35);
+      const placed = havenCity(raw.x, raw.z) ? outsideHaven(raw.x, raw.z, i * 0.35) : raw;
       monsters.set(id, {
         id,
         type: camp.type,
@@ -280,9 +390,9 @@ export function createWorld() {
     const next = resolveMove(p.x, p.z, x, z);
     let nx = next.x;
     let nz = next.z;
-    if (!clearOfMobs(nx, nz)) {
-      if (clearOfMobs(nx, p.z) && !blocked(nx, p.z)) nz = p.z;
-      else if (clearOfMobs(p.x, nz) && !blocked(p.x, nz)) nx = p.x;
+    if (!clearOfMobs(nx, nz) || combatTile(p, nx, nz)) {
+      if (clearOfMobs(nx, p.z) && !combatTile(p, nx, p.z) && !blocked(nx, p.z)) nz = p.z;
+      else if (clearOfMobs(p.x, nz) && !combatTile(p, p.x, nz) && !blocked(p.x, nz)) nx = p.x;
       else {
         nx = p.x;
         nz = p.z;
@@ -308,7 +418,7 @@ export function createWorld() {
 
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
     if (m.respawnAt) return 0;
-    m.respawnAt = Date.now() + 8000;
+    m.respawnAt = Date.now() + 15000;
     const def = mobByType(m.type);
     const xp = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
     p.xp += xp;
@@ -752,6 +862,11 @@ export function createWorld() {
         m.slotX = m.x;
         m.slotZ = m.z;
       }
+      if (havenCity(m.slotX, m.slotZ)) {
+        const ex = outsideHaven(m.slotX, m.slotZ);
+        m.slotX = ex.x;
+        m.slotZ = ex.z;
+      }
       if (m.hp <= 0) {
         const camp = campOf(m);
         if (m.respawnAt && now > m.respawnAt) {
@@ -761,8 +876,14 @@ export function createWorld() {
           }
           m.hp = m.maxHp;
           const placed = freeSlot(m);
-          m.x = placed.x;
-          m.z = placed.z;
+          const spot = havenCity(placed.x, placed.z) ? outsideHaven(placed.x, placed.z) : placed;
+          m.x = spot.x;
+          m.z = spot.z;
+          if (havenCity(m.slotX, m.slotZ)) {
+            const ex = outsideHaven(m.slotX, m.slotZ);
+            m.slotX = ex.x;
+            m.slotZ = ex.z;
+          }
           m.targetId = null;
           m.respawnAt = 0;
           m.nextHit = 0;
@@ -781,7 +902,9 @@ export function createWorld() {
         }
       }
       if (!campHot) continue;
-      const homeD = Math.hypot(m.x - m.homeX, m.z - m.homeZ);
+      if (fleeHaven(m)) continue;
+      const leashFrom = havenCity(m.homeX, m.homeZ) ? { x: m.slotX, z: m.slotZ } : { x: m.homeX, z: m.homeZ };
+      const homeD = Math.hypot(m.x - leashFrom.x, m.z - leashFrom.z);
       const def = mobByType(m.type);
       if (!m.nextHit) m.nextHit = 0;
       if (!m.targetId) {
@@ -799,7 +922,7 @@ export function createWorld() {
         }
         if (prey) {
           m.targetId = prey.id;
-          m.nextHit = now + 900;
+          m.nextHit = now + 1500;
         }
       }
       if (m.targetId) {
@@ -808,6 +931,7 @@ export function createWorld() {
         if (!t || t.hp <= 0 || d > def.leash || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
           m.targetId = null;
         } else if (screenGap(t.x, t.z, m.x, m.z) <= 130 || d <= 6.4) {
+          if (sameTile(m.x, m.z, t.x, t.z)) stepOffTile(m, t.x, t.z);
           if (now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
@@ -821,12 +945,12 @@ export function createWorld() {
             }
           }
         } else {
-          const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.42, Math.max(0, d - 5.6));
-          const nx = m.x + ((t.x - m.x) / d) * stepLen;
-          const nz = m.z + ((t.z - m.z) / d) * stepLen;
-          const stepPos = resolveMove(m.x, m.z, nx, nz);
-          m.x = stepPos.x;
-          m.z = stepPos.z;
+          const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, Math.max(0, d - 5.6));
+          if (stepLen > 0) {
+            const nx = m.x + ((t.x - m.x) / d) * stepLen;
+            const nz = m.z + ((t.z - m.z) / d) * stepLen;
+            applyMobStep(m, nx, nz);
+          }
         }
       }
       if (!m.targetId) {
@@ -836,10 +960,8 @@ export function createWorld() {
         const dz = sz - m.z;
         const sd = Math.hypot(dx, dz);
         if (sd > 0.2) {
-          const stepLen = Math.min(0.55, sd);
-          const stepPos = resolveMove(m.x, m.z, m.x + (dx / sd) * stepLen, m.z + (dz / sd) * stepLen);
-          m.x = stepPos.x;
-          m.z = stepPos.z;
+          const stepLen = Math.min(0.38, sd);
+          applyMobStep(m, m.x + (dx / sd) * stepLen, m.z + (dz / sd) * stepLen);
         }
       }
     }
@@ -849,29 +971,19 @@ export function createWorld() {
         const a = alive[i];
         const b = alive[j];
         const d = Math.hypot(a.x - b.x, a.z - b.z);
-        if (screenGap(a.x, a.z, b.x, b.z) >= 116 || d < 0.001) continue;
-        const push = 0.55;
+        if (screenGap(a.x, a.z, b.x, b.z) >= 70 || d < 0.001) continue;
+        const push = 0.25;
         const ux = (a.x - b.x) / d;
         const uz = (a.z - b.z) / d;
         const na = resolveMove(a.x, a.z, a.x + ux * push, a.z + uz * push);
         const nb = resolveMove(b.x, b.z, b.x - ux * push, b.z - uz * push);
-        a.x = na.x;
-        a.z = na.z;
-        b.x = nb.x;
-        b.z = nb.z;
-      }
-    }
-    for (const m of alive) {
-      for (const p of players.values()) {
-        if (p.hp <= 0) continue;
-        for (let n = 0; n < 6 && screenGap(m.x, m.z, p.x, p.z) < 108; n++) {
-          const d = Math.hypot(m.x - p.x, m.z - p.z) || 1;
-          const ux = d < 0.001 ? 1 : (m.x - p.x) / d;
-          const uz = d < 0.001 ? 0 : (m.z - p.z) / d;
-          const pos = resolveMove(m.x, m.z, m.x + ux * 1.2, m.z + uz * 1.2);
-          if (pos.x === m.x && pos.z === m.z) break;
-          m.x = pos.x;
-          m.z = pos.z;
+        if (mobCanOccupy(a, na.x, na.z)) {
+          a.x = na.x;
+          a.z = na.z;
+        }
+        if (mobCanOccupy(b, nb.x, nb.z)) {
+          b.x = nb.x;
+          b.z = nb.z;
         }
       }
     }
@@ -905,7 +1017,8 @@ export function createWorld() {
     if (!p || p.hp <= 0) return { ok: false, reason: "You cannot do that." };
     const level = Math.max(1, p.level);
     const type = "Cullhound";
-    const spot = nearestOpen(p.x + 3, p.z);
+    const spot0 = nearestOpen(p.x + 3, p.z);
+    const spot = havenCity(spot0.x, spot0.z) ? outsideHaven(spot0.x, spot0.z) : spot0;
     const hp = mobHp(type, level);
     const mobId = "t" + mid++;
     monsters.set(mobId, {
