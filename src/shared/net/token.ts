@@ -16,6 +16,7 @@ export async function signGameToken(secret: string, user: { id: string; name: st
     .setProtectedHeader({ alg: ALG })
     .setSubject(user.id)
     .setAudience(GAME_TOKEN_AUD)
+    .setJti(crypto.randomUUID())
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(key(secret));
@@ -24,18 +25,20 @@ export async function signGameToken(secret: string, user: { id: string; name: st
 export async function verifyGameToken(
   secret: string,
   token: string,
-): Promise<{ userId: string; name: string } | null> {
+): Promise<{ userId: string; name: string; jti: string; exp: number } | null> {
   try {
     const { payload } = await jwtVerify(token, key(secret), {
       algorithms: [ALG],
       audience: GAME_TOKEN_AUD,
-      requiredClaims: ["sub", "iat", "exp"],
+      requiredClaims: ["sub", "iat", "exp", "jti"],
       maxTokenAge: "5 minutes",
     });
     const userId = typeof payload.sub === "string" ? payload.sub.trim() : "";
-    if (!userId || userId.length > 128) return null;
+    const jti = typeof payload.jti === "string" ? payload.jti.trim() : "";
+    const exp = typeof payload.exp === "number" ? payload.exp : 0;
+    if (!userId || userId.length > 128 || !jti || !(exp > 0)) return null;
     const raw = typeof payload.name === "string" ? payload.name.trim().slice(0, 24) : "";
-    return { userId, name: raw || "Hero" };
+    return { userId, name: raw || "Hero", jti, exp };
   } catch {
     return null;
   }

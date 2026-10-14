@@ -123,11 +123,20 @@ export const IntentSchema = z.discriminatedUnion("op", [
 
 export type Intent = z.infer<typeof IntentSchema>;
 
+const helloCreate = z
+  .object({
+    name: z.string().min(2).max(16).regex(/^[A-Za-z][A-Za-z' -]*$/),
+    race: z.string(),
+    baseClass: z.string(),
+  })
+  .strict();
+
 export const ClientMsg = z.discriminatedUnion("t", [
   z
     .object({
       t: z.literal("hello"),
       token: z.string().min(20).max(2048),
+      create: helloCreate.optional(),
     })
     .strict(),
   z

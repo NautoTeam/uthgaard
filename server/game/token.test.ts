@@ -14,7 +14,12 @@ test("a session mints a five-minute caldrenmoor token", async () => {
   assert.equal(issued.status, 200);
   assert.ok("token" in issued.body);
   const claims = await verifyGameToken(SECRET, issued.body.token);
-  assert.deepEqual(claims, { userId: "user-1", name: "Ada" });
+  assert.equal(claims?.userId, "user-1");
+  assert.equal(claims?.name, "Ada");
+  assert.match(claims?.jti ?? "", /^[0-9a-f-]{36}$/i);
+  assert.ok((claims?.exp ?? 0) > Date.now() / 1000 + 60);
+  const again = await verifyGameToken(SECRET, issued.body.token);
+  assert.equal(again?.jti, claims?.jti);
 });
 
 test("the wrong audience and a stale token are rejected", async () => {
@@ -23,6 +28,7 @@ test("the wrong audience and a stale token are rejected", async () => {
     .setProtectedHeader({ alg: "HS256" })
     .setSubject("user-1")
     .setAudience("somewhere-else")
+    .setJti("11111111-1111-1111-1111-111111111111")
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(key);
@@ -32,6 +38,7 @@ test("the wrong audience and a stale token are rejected", async () => {
     .setProtectedHeader({ alg: "HS256" })
     .setSubject("user-1")
     .setAudience(GAME_TOKEN_AUD)
+    .setJti("22222222-2222-2222-2222-222222222222")
     .setIssuedAt(Math.floor(Date.now() / 1000) - 600)
     .setExpirationTime(Math.floor(Date.now() / 1000) - 60)
     .sign(key);

@@ -3,13 +3,15 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { createAuthority } from "../../src/server/authority";
 import { verifyGameToken } from "../../src/shared/net/token";
 import { ClientMsg, type ServerMsg } from "../../src/shared/net/protocol";
-import type { CharacterDb } from "./db";
+import type { World } from "../../src/shared/sim/world";
+import type { GameDb } from "./db";
 import { applyIntent } from "./dispatch";
-import { joinInputFor, recordFromPlayer } from "./persist";
+import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
+import { seen } from "./replay";
 
 const HELLO_MS = 5000;
 const TICK_MS = 50;
-const SAVE_EVERY = 100;
+const SAVE_MS = 30_000;
 
 export interface GameServer {
   close: () => Promise<void>;
@@ -17,6 +19,7 @@ export interface GameServer {
   ready: Promise<number>;
   readonly dropped: number;
   readonly tick: number;
+  readonly world: World;
 }
 
 function rawText(data: RawData): string {
@@ -37,6 +40,12 @@ type Conn = {
   userId: string | null;
   playerId: string | null;
   replaced: boolean;
+  dead: boolean;
+  jti: string | null;
+  rev: number;
+  savedHash: string;
+  alive: boolean;
+  saveChain: Promise<void>;
 };
 
 /**
@@ -47,7 +56,7 @@ export function startServer(opts: {
   port: number;
   now?: () => number;
   rand?: () => number;
-  characters?: CharacterDb;
+  characters?: GameDb;
   tokenSecret?: string;
 }): GameServer {
   const now = opts.now ?? Date.now;
@@ -58,11 +67,18 @@ export function startServer(opts: {
   let tick = 0;
   let dropped = 0;
   let closed = false;
-  let saving = false;
+  let lastSaveAt = now();
+  let gravesReady = false;
+  const knownGraves = new Set<string>();
   const helloTimers = new Set<ReturnType<typeof setTimeout>>();
   const byUser = new Map<string, Conn>();
   const userLock = new Map<string, Promise<void>>();
   const pending = new Set<Promise<void>>();
+
+  function digest(userId: string) {
+    const player = authority.world.players.get(userId);
+    return player ? JSON.stringify(recordFromPlayer(player)) : "";
+  }
 
   async function withUser<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     const prev = userLock.get(userId) ?? Promise.resolve();
@@ -85,6 +101,78 @@ export function startServer(opts: {
     pending.add(work);
     void work.finally(() => pending.delete(work));
   }
+
+  async function writePlayer(conn: Conn, force: boolean) {
+    if (!characters || !conn.userId || !conn.playerId) return;
+    const player = authority.world.players.get(conn.playerId);
+    if (!player) return;
+    const record = recordFromPlayer(player);
+    const hash = JSON.stringify(record);
+    if (!force && hash === conn.savedHash) return;
+    const next = await characters.save(conn.userId, record, conn.rev);
+    if (next == null) {
+      console.error(`stale save ${conn.userId}`);
+      return;
+    }
+    conn.rev = next;
+    conn.savedHash = hash;
+  }
+
+  function persist(conn: Conn, force: boolean) {
+    const run = conn.saveChain.then(() => writePlayer(conn, force));
+    conn.saveChain = run.then(
+      () => undefined,
+      (err) => warnSave(err),
+    );
+    track(conn.saveChain);
+    return run;
+  }
+
+  function syncLife(conn: Conn) {
+    if (!conn.playerId) return;
+    const player = authority.world.players.get(conn.playerId);
+    if (!player) return;
+    const dead = player.hp <= 0 && player.graveDropped;
+    if (conn.alive && dead) {
+      conn.alive = false;
+      void persist(conn, true);
+    } else if (!conn.alive && player.hp > 0) {
+      conn.alive = true;
+      void persist(conn, true);
+    }
+  }
+
+  function syncGraves() {
+    if (!characters || !gravesReady) return;
+    const graves = authority.snapshot().graves;
+    const ids = new Set(graves.map((g) => g.id));
+    for (const grave of graves) {
+      if (knownGraves.has(grave.id)) continue;
+      knownGraves.add(grave.id);
+      track(characters.putGrave(grave).catch((err) => warnSave(err)));
+    }
+    for (const id of [...knownGraves]) {
+      if (ids.has(id)) continue;
+      knownGraves.delete(id);
+      track(characters.deleteGrave(id).catch((err) => warnSave(err)));
+    }
+  }
+
+  void (async () => {
+    if (!characters) {
+      gravesReady = true;
+      return;
+    }
+    try {
+      const list = await characters.listGraves();
+      authority.world.adoptGraves(list);
+      for (const grave of list) knownGraves.add(grave.id);
+    } catch (err) {
+      warnSave(err);
+    } finally {
+      gravesReady = true;
+    }
+  })();
 
   const httpServer = http.createServer((req, res) => {
     if (req.method === "GET" && (req.url === "/healthz" || req.url?.startsWith("/healthz?"))) {
@@ -121,15 +209,42 @@ export function startServer(opts: {
     if (!playerId) return;
     const left = authority.world.leave(playerId);
     if (!left || !userId || !characters) return;
+    const db = characters;
+    const record = recordFromPlayer(left);
+    const run = conn.saveChain.then(async () => {
+      const next = await db.save(userId, record, conn.rev);
+      if (next == null) {
+        console.error(`stale save ${userId}`);
+        return;
+      }
+      conn.rev = next;
+      conn.savedHash = JSON.stringify(record);
+    });
+    conn.saveChain = run.then(
+      () => undefined,
+      (err) => warnSave(err),
+    );
+    track(conn.saveChain);
     try {
-      await characters.save(userId, recordFromPlayer(left));
+      await run;
     } catch (err) {
       warnSave(err);
     }
   }
 
   wss.on("connection", (socket) => {
-    const conn: Conn = { socket, userId: null, playerId: null, replaced: false };
+    const conn: Conn = {
+      socket,
+      userId: null,
+      playerId: null,
+      replaced: false,
+      dead: false,
+      jti: null,
+      rev: 0,
+      savedHash: "",
+      alive: true,
+      saveChain: Promise.resolve(),
+    };
     const helloTimer = setTimeout(() => {
       helloTimers.delete(helloTimer);
       if (!conn.playerId && socket.readyState === WebSocket.OPEN) socket.close(4401, "hello required");
@@ -148,8 +263,17 @@ export function startServer(opts: {
     });
 
     socket.on("close", () => {
+      conn.dead = true;
       track(forget());
     });
+
+    function reject(reason: "bad token" | "not ready") {
+      conn.dead = true;
+      send(socket, { t: "error", reason });
+      clearTimeout(helloTimer);
+      helloTimers.delete(helloTimer);
+      socket.close(4401, reason);
+    }
 
     let chain = Promise.resolve();
     socket.on("message", (data) => {
@@ -160,7 +284,7 @@ export function startServer(opts: {
     });
 
     async function onMessage(data: RawData) {
-      if (conn.replaced) return;
+      if (conn.replaced || conn.dead) return;
       let parsed: ReturnType<typeof ClientMsg.safeParse>;
       try {
         parsed = ClientMsg.safeParse(JSON.parse(rawText(data)));
@@ -173,37 +297,85 @@ export function startServer(opts: {
         return;
       }
       if (parsed.data.t === "hello") {
-        if (conn.playerId || conn.replaced) return;
+        const hello = parsed.data;
+        if (conn.playerId || conn.replaced || conn.dead) return;
         if (!tokenSecret || !characters) {
-          send(socket, { t: "error", reason: "not ready" });
+          reject("not ready");
           return;
         }
-        const claims = await verifyGameToken(tokenSecret, parsed.data.token);
-        if (!claims || conn.replaced) {
-          if (!claims) send(socket, { t: "error", reason: "bad token" });
+        const claims = await verifyGameToken(tokenSecret, hello.token);
+        if (conn.replaced || conn.dead) return;
+        if (!claims) {
+          reject("bad token");
           return;
         }
+        if (conn.jti !== claims.jti && seen(claims.jti, claims.exp)) {
+          reject("bad token");
+          return;
+        }
+        conn.jti = claims.jti;
         await withUser(claims.userId, async () => {
-          if (conn.playerId || conn.replaced || !characters) return;
+          if (conn.playerId || conn.replaced || conn.dead || !characters) return;
           const prev = byUser.get(claims.userId);
           if (prev && prev !== conn) {
             prev.replaced = true;
             await dropConn(prev);
             prev.socket.close(4409, "replaced");
           }
+          const loaded = await characters.load(claims.userId);
+          if (conn.replaced || conn.dead) return;
+          let input = loaded ? joinInputFor(claims.userId, loaded.save, null) : null;
+          let rev = loaded?.rev ?? 0;
+          if (!loaded) {
+            const choice = validateCreate(hello.create);
+            if (!hello.create) {
+              send(socket, { t: "error", reason: "need_create" });
+              return;
+            }
+            if (!choice) {
+              send(socket, { t: "error", reason: "bad_create" });
+              return;
+            }
+            input = joinInputFor(claims.userId, null, choice);
+            if (!input) {
+              send(socket, { t: "error", reason: "bad_create" });
+              return;
+            }
+            const player = authority.world.join(input);
+            const record = recordFromPlayer(player);
+            let created: Awaited<ReturnType<NonNullable<typeof characters>["create"]>>;
+            try {
+              created = await characters.create(claims.userId, record.username, record);
+            } catch (err) {
+              authority.world.leave(player.id);
+              throw err;
+            }
+            if (created === "name_taken") {
+              authority.world.leave(player.id);
+              send(socket, { t: "error", reason: "name_taken" });
+              return;
+            }
+            rev = created;
+            conn.savedHash = JSON.stringify(record);
+          }
+          if (!input) {
+            send(socket, { t: "error", reason: "need_create" });
+            return;
+          }
+          if (conn.dead || conn.replaced) {
+            if (!loaded) authority.world.leave(claims.userId);
+            return;
+          }
+          const player = loaded ? authority.world.join(input) : authority.world.players.get(claims.userId);
+          if (!player) return;
+          if (loaded) conn.savedHash = digest(player.id);
           clearTimeout(helloTimer);
           helloTimers.delete(helloTimer);
-          const saved = await characters.load(claims.userId);
-          if (conn.replaced) return;
-          const player = authority.world.join(joinInputFor(claims.userId, claims.name, saved));
           conn.userId = claims.userId;
           conn.playerId = player.id;
+          conn.rev = rev;
+          conn.alive = player.hp > 0;
           byUser.set(claims.userId, conn);
-          try {
-            await characters.save(claims.userId, recordFromPlayer(player));
-          } catch (err) {
-            warnSave(err);
-          }
           send(socket, { t: "welcome", playerId: player.id });
         });
         return;
@@ -211,29 +383,22 @@ export function startServer(opts: {
       if (!conn.playerId) return;
       const result = applyIntent(authority.world, conn.playerId, parsed.data.intent);
       send(socket, { t: "ack", seq: parsed.data.seq, result });
+      if (parsed.data.intent.op === "respawn" && result.ok) {
+        conn.alive = true;
+        void persist(conn, true);
+      }
     }
   });
 
   const timer = setInterval(() => {
     tick++;
     authority.step(now());
-    if (characters && tick % SAVE_EVERY === 0 && !saving) {
-      saving = true;
-      const jobs: Promise<void>[] = [];
-      for (const conn of byUser.values()) {
-        if (!conn.userId || !conn.playerId) continue;
-        const player = authority.world.players.get(conn.playerId);
-        if (!player) continue;
-        jobs.push(characters.save(conn.userId, recordFromPlayer(player)));
-      }
-      track(
-        Promise.all(jobs)
-          .then(() => undefined)
-          .catch((err) => warnSave(err))
-          .finally(() => {
-            saving = false;
-          }),
-      );
+    for (const conn of byUser.values()) syncLife(conn);
+    syncGraves();
+    const at = now();
+    if (characters && at - lastSaveAt >= SAVE_MS) {
+      lastSaveAt = at;
+      for (const conn of byUser.values()) void persist(conn, false);
     }
     if (tick % 2 !== 0) return;
     const msg = JSON.stringify({
@@ -246,8 +411,8 @@ export function startServer(opts: {
     }
   }, TICK_MS);
 
-  const ready = new Promise<number>((resolve, reject) => {
-    httpServer.once("error", reject);
+  const ready = new Promise<number>((resolve, rejectReady) => {
+    httpServer.once("error", rejectReady);
     httpServer.listen(opts.port, () => {
       httpServer.removeAllListeners("error");
       httpServer.on("error", () => {
@@ -266,21 +431,24 @@ export function startServer(opts: {
     get tick() {
       return tick;
     },
-    close() {
-      if (closed) return Promise.resolve();
+    get world() {
+      return authority.world;
+    },
+    async close() {
+      if (closed) return;
       closed = true;
       clearInterval(timer);
       for (const helloTimer of helloTimers) clearTimeout(helloTimer);
       helloTimers.clear();
+      const conns = [...byUser.values()];
+      await Promise.all(conns.map((conn) => persist(conn, true))).catch((err) => warnSave(err));
+      for (const conn of conns) conn.replaced = true;
       for (const client of wss.clients) client.terminate();
       wss.close();
-      return new Promise((resolve) => {
-        httpServer.close(() => {
-          setImmediate(() => {
-            void Promise.all([...pending]).then(() => resolve());
-          });
-        });
+      await new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
       });
+      await Promise.all([...pending]);
     },
   };
 }

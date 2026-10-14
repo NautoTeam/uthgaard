@@ -1132,7 +1132,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   }
 
   /** Open ground 2–3 tiles out, not on the hero and not on another fighter. */
-  function testFoeSpot(px: number, pz: number) {
+  function testFoeSpot(px: number, pz: number): { x: number; z: number } | null {
     let best: { x: number; z: number } | null = null;
     let bestGap = -1;
     const consider = (x: number, z: number, minD: number, maxD: number) => {

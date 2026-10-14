@@ -10,13 +10,14 @@ const game = startServer({
   characters: db ?? undefined,
   tokenSecret: tokenSecret || undefined,
 });
+if (db) game.world.adoptGraves(await db.listGraves());
 console.log(`listening :${port}`);
 
 let shuttingDown = false;
 function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  const force = setTimeout(() => process.exit(0), 2000);
+  const force = setTimeout(() => process.exit(0), 10_000);
   force.unref();
   void game.close().then(async () => {
     await db?.close();

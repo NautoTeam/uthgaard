@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { PGlite } from "@electric-sql/pglite";
 import { WebSocket } from "ws";
+import { answerNeedCreate, helloAfterNeedCreate } from "../../src/game/net";
 import { signGameToken } from "../../src/shared/net/token";
 import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protocol";
+import type { CharacterRecord } from "../../src/shared/persist/store";
 import { blocked, TREES } from "../../src/shared/sim/geo";
+import { attrsFor } from "../../src/shared/sim/types";
 import { createWorld, MAX_SPEED } from "../../src/shared/sim/world";
-import { memoryCharacters } from "./db";
+import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
 import { applyIntent, TICK_DT } from "./dispatch";
 import { startServer } from "./server";
 
 const maxStep = MAX_SPEED * TICK_DT * 1.5;
+/** A legal walk. Must stay under one tick of MAX_SPEED. */
+const step = Math.min(0.2, maxStep * 0.85);
 const SECRET = "test-secret-test-secret-test-secret";
 
-function gameOpts(extra: { characters?: ReturnType<typeof memoryCharacters> } = {}) {
+function gameOpts(extra: { characters?: GameDb } = {}) {
   return {
     port: 0,
     tokenSecret: SECRET,
@@ -20,9 +26,29 @@ function gameOpts(extra: { characters?: ReturnType<typeof memoryCharacters> } = 
   };
 }
 
-async function hello(ws: WebSocket, userId: string, name: string) {
+async function hello(
+  ws: WebSocket,
+  userId: string,
+  name: string,
+  create?: { name?: string; race?: string; baseClass?: string } | false,
+) {
   const token = await signGameToken(SECRET, { id: userId, name });
-  ws.send(JSON.stringify({ t: "hello", token }));
+  if (create === false) {
+    ws.send(JSON.stringify({ t: "hello", token }));
+    return token;
+  }
+  ws.send(
+    JSON.stringify({
+      t: "hello",
+      token,
+      create: {
+        name: create?.name ?? name,
+        race: create?.race ?? "Human",
+        baseClass: create?.baseClass ?? "Fighter",
+      },
+    }),
+  );
+  return token;
 }
 
 function mulberry32(seed: number) {
@@ -53,6 +79,48 @@ async function until<T>(read: () => T | undefined | Promise<T | undefined>, ms =
   }
 }
 
+function closeCode(ws: WebSocket, ms: number) {
+  return new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("socket stayed open")), ms);
+    ws.once("close", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
+
+type Msg = {
+  t?: string;
+  reason?: string;
+  playerId?: string;
+  seq?: number;
+  result?: { ok: boolean };
+  state?: {
+    players?: Array<{ id: string; username: string; x: number; z: number; gold?: number; hp?: number }>;
+    graves?: Array<{ id: string; owner: string; gold: number }>;
+  };
+};
+
+async function pgliteDb() {
+  const pg = new PGlite();
+  await pg.waitReady;
+  const query = async (text: string, params?: unknown[]) => {
+    const result = await pg.query(text, params);
+    return { rows: result.rows as Array<Record<string, unknown>> };
+  };
+  await applyGameMigrations(query);
+  return { pg, characters: characterStore(query) };
+}
+
+async function connect(port: number) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+  const msgs: Msg[] = [];
+  ws.on("message", (data) => msgs.push(JSON.parse(data.toString())));
+  ws.on("error", () => undefined);
+  await opened(ws);
+  return { ws, msgs };
+}
+
 test("protocol rejects unknown ops, debug ops, and an extra id", () => {
   assert.equal(IntentSchema.safeParse({ op: "dance" }).success, false);
   assert.equal(IntentSchema.safeParse({ op: "setLevel", level: 20 }).success, false);
@@ -73,6 +141,23 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
   assert.equal(ClientMsg.safeParse({ t: "hello", name: "Ada" }).success, false);
   assert.equal(ClientMsg.safeParse({ t: "hello", token: "x".repeat(20) }).success, true);
   assert.equal(ClientMsg.safeParse({ t: "hello", token: "short" }).success, false);
+  assert.equal(ClientMsg.safeParse({ t: "hello", token: "x".repeat(20), userId: "user-b" }).success, false);
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "hello",
+      token: "x".repeat(20),
+      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+    }).success,
+    true,
+  );
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "hello",
+      token: "x".repeat(20),
+      create: { name: "A", race: "Human", baseClass: "Fighter" },
+    }).success,
+    false,
+  );
 });
 
 test("move rejects a jump past max speed and a blocked tile", () => {
@@ -103,7 +188,7 @@ test("move rejects a jump past max speed and a blocked tile", () => {
   let into: { x: number; z: number } | null = null;
   for (let away = 0.9; away <= 2.4 && !stand; away += 0.05) {
     const sx = tree[0] + away;
-    const ix = sx - 0.3;
+    const ix = sx - step;
     if (blocked(sx, tree[1]) || !blocked(ix, tree[1])) continue;
     if (Math.abs(sx - ix) > maxStep) continue;
     stand = { x: sx, z: tree[1] };
@@ -288,54 +373,68 @@ test("hello verifies the game token and reloads the saved character", async () =
   const characters = memoryCharacters();
   const game = startServer({ ...gameOpts({ characters }), now: () => 8_000, rand: mulberry32(6) });
   const port = await game.ready;
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  const msgs: Array<{ t?: string; reason?: string; playerId?: string; seq?: number; result?: { ok: boolean }; state?: { players?: Array<{ id: string; x: number; z: number }> } }> = [];
-  ws.on("message", (data) => msgs.push(JSON.parse(data.toString())));
-  ws.on("error", () => undefined);
+  const bad = new WebSocket(`ws://127.0.0.1:${port}`);
+  const badMsgs: Msg[] = [];
+  bad.on("message", (data) => badMsgs.push(JSON.parse(data.toString())));
+  bad.on("error", () => undefined);
   let movedX = 0;
   try {
-    await opened(ws);
-    ws.send(JSON.stringify({ t: "hello", token: "x".repeat(40) }));
-    const err = await until(() => msgs.find((m) => m.t === "error"));
+    await opened(bad);
+    const started = Date.now();
+    const closed = closeCode(bad, 800);
+    bad.send(JSON.stringify({ t: "hello", token: "x".repeat(40) }));
+    const err = await until(() => badMsgs.find((m) => m.t === "error"));
     assert.equal(err.reason, "bad token");
+    assert.equal(await closed, 4401);
+    assert.ok(Date.now() - started < 500);
     const early = (await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()) as { players: number };
     assert.equal(early.players, 0);
 
-    await hello(ws, "user-ada", "Ada");
-    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
-    assert.equal(welcome.playerId, "user-ada");
-    const placed = await until(() => {
-      const snap = [...msgs].reverse().find((m) => m.t === "snap");
-      return snap?.state?.players?.find((p) => p.id === "user-ada");
-    });
-    const dest = { x: placed.x + 0.3, z: placed.z };
-    ws.send(JSON.stringify({ t: "intent", seq: 1, intent: { op: "move", ...dest, rotation: 1 } }));
-    const ack = await until(() => msgs.find((m) => m.t === "ack" && m.seq === 1));
-    assert.equal(ack.result?.ok, true);
-    const after = await until(() => {
-      const snap = [...msgs].reverse().find((m) => m.t === "snap");
-      const hero = snap?.state?.players?.find((p) => p.id === "user-ada");
-      if (!hero || Math.abs(hero.x - placed.x) < 0.01) return undefined;
-      return hero;
-    });
-    movedX = after.x;
-    ws.close();
-    const saved = await until(async () => {
-      const row = await characters.load("user-ada");
-      if (!row || Math.abs((row.x ?? 0) - movedX) > 0.05) return undefined;
-      return row;
-    });
-    assert.equal(saved.username, "Ada");
-    assert.equal(saved.equipment?.weapon, "iron-sword");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    const msgs: Msg[] = [];
+    ws.on("message", (data) => msgs.push(JSON.parse(data.toString())));
+    ws.on("error", () => undefined);
+    try {
+      await opened(ws);
+      await hello(ws, "user-ada", "Ada");
+      const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+      assert.equal(welcome.playerId, "user-ada");
+      const placed = await until(() => {
+        const snap = [...msgs].reverse().find((m) => m.t === "snap");
+        return snap?.state?.players?.find((p) => p.id === "user-ada");
+      });
+      const dest = { x: placed.x + step, z: placed.z };
+      ws.send(JSON.stringify({ t: "intent", seq: 1, intent: { op: "move", ...dest, rotation: 1 } }));
+      const ack = await until(() => msgs.find((m) => m.t === "ack" && m.seq === 1));
+      assert.equal(ack.result?.ok, true);
+      const after = await until(() => {
+        const snap = [...msgs].reverse().find((m) => m.t === "snap");
+        const hero = snap?.state?.players?.find((p) => p.id === "user-ada");
+        if (!hero || Math.abs(hero.x - placed.x) < 0.01) return undefined;
+        return hero;
+      });
+      movedX = after.x;
+      ws.close();
+      const saved = await until(async () => {
+        const row = await characters.load("user-ada");
+        if (!row || Math.abs((row.save.x ?? 0) - movedX) > 0.05) return undefined;
+        return row;
+      });
+      assert.equal(saved.save.username, "Ada");
+      assert.equal(saved.save.equipment?.weapon, "iron-sword");
+      assert.equal(saved.rev, 2);
+    } finally {
+      ws.close();
+    }
   } finally {
-    ws.close();
+    bad.close();
     await game.close();
   }
 
   const again = startServer({ ...gameOpts({ characters }), now: () => 9_000, rand: mulberry32(7) });
   const port2 = await again.ready;
   const ws2 = new WebSocket(`ws://127.0.0.1:${port2}`);
-  const msgs2: Array<{ t?: string; state?: { players?: Array<{ username: string; x: number }> } }> = [];
+  const msgs2: Msg[] = [];
   ws2.on("message", (data) => msgs2.push(JSON.parse(data.toString())));
   ws2.on("error", () => undefined);
   try {
@@ -347,10 +446,365 @@ test("hello verifies the game token and reloads the saved character", async () =
     });
     assert.ok(Math.abs(back.x - movedX) < 0.05);
     const row = await characters.load("user-ada");
-    assert.equal(row?.username, "Ada");
+    assert.equal(row?.save.username, "Ada");
+    assert.notEqual(row?.save.username, "Someone Else");
   } finally {
     ws2.close();
     await again.close();
   }
 });
+
+test("need_create is answered with the creation-screen hello", () => {
+  const token = "t".repeat(30);
+  const choice = { username: "Ada", race: "Human" as const, baseClass: "Fighter" as const };
+  assert.equal(helloAfterNeedCreate(token, "bad token", choice), null);
+  assert.equal(helloAfterNeedCreate(token, "need_create", { ...choice, username: "A" }), null);
+  const sent: unknown[] = [];
+  answerNeedCreate({ t: "error", reason: "need_create" }, token, choice, (body) => sent.push(body));
+  answerNeedCreate({ t: "snap" }, token, choice, (body) => sent.push(body));
+  assert.deepEqual(sent, [
+    {
+      t: "hello",
+      token,
+      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+    },
+  ]);
+});
+
+test("a second hello for the same user closes the first socket", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 20_000, rand: mulberry32(11) });
+  const port = await game.ready;
+  const first = await connect(port);
+  const second = await connect(port);
+  try {
+    await hello(first.ws, "user-ada", "Ada");
+    const welcome = await until(() => first.msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-ada");
+    const placed = await until(() => {
+      const snap = [...first.msgs].reverse().find((m) => m.t === "snap");
+      return snap?.state?.players?.find((p) => p.id === "user-ada");
+    });
+    const dest = { x: placed.x + step, z: placed.z };
+    first.ws.send(JSON.stringify({ t: "intent", seq: 1, intent: { op: "move", ...dest, rotation: 0.4 } }));
+    const ack = await until(() => first.msgs.find((m) => m.t === "ack" && m.seq === 1));
+    assert.equal(ack.result?.ok, true);
+    const moved = await until(() => {
+      const hero = game.world.players.get("user-ada");
+      if (!hero || Math.abs(hero.x - placed.x) < 0.01) return undefined;
+      return hero.x;
+    });
+    const closed = closeCode(first.ws, 2500);
+    await hello(second.ws, "user-ada", "Someone Else", false);
+    assert.equal(await closed, 4409);
+    const again = await until(() => second.msgs.find((m) => m.t === "welcome"));
+    assert.equal(again.playerId, "user-ada");
+    assert.equal(game.world.players.size, 1);
+    const row = await characters.load("user-ada");
+    assert.ok(row);
+    assert.ok(Math.abs((row.save.x ?? 0) - moved) < 0.05);
+    assert.equal(row.save.username, "Ada");
+    assert.equal(game.world.players.get("user-ada")?.username, "Ada");
+  } finally {
+    first.ws.close();
+    second.ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
+test("a token cannot load another user's row", async () => {
+  const { pg, characters } = await pgliteDb();
+  const bea: CharacterRecord = {
+    version: 1,
+    username: "Bea",
+    race: "Elf",
+    baseClass: "Mage",
+    prestigeClass: "",
+    level: 4,
+    xp: 12,
+    gold: 777,
+    x: 3,
+    z: 4,
+    hp: 40,
+    equipment: { weapon: "oak-staff" },
+  };
+  assert.equal(await characters.create("user-bea", "Bea", bea), 1);
+  const game = startServer({ ...gameOpts({ characters }), now: () => 30_000, rand: mulberry32(12) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    const token = await signGameToken(SECRET, { id: "user-ada", name: "Ada" });
+    assert.equal(ClientMsg.safeParse({ t: "hello", token, userId: "user-bea" }).success, false);
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Bea", race: "Human", baseClass: "Fighter" } }));
+    const taken = await until(() => msgs.find((m) => m.t === "error"));
+    assert.equal(taken.reason, "name_taken");
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal(game.world.players.size, 0);
+    assert.equal((await characters.load("user-bea"))?.save.gold, 777);
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-ada");
+    const hero = game.world.players.get("user-ada");
+    assert.ok(hero);
+    assert.equal(hero.username, "Ada");
+    assert.equal(hero.race, "Human");
+    assert.equal(hero.gold, 40);
+    assert.equal(hero.str, attrsFor("Human", "Fighter").str);
+    assert.equal(game.world.players.has("user-bea"), false);
+    assert.equal((await characters.load("user-bea"))?.save.gold, 777);
+    assert.equal((await characters.load("user-ada"))?.rev, 1);
+  } finally {
+    ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
+test("the same token is rejected on a second socket", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 40_000, rand: mulberry32(13) });
+  const port = await game.ready;
+  const first = await connect(port);
+  const second = await connect(port);
+  try {
+    const token = await hello(first.ws, "user-ada", "Ada");
+    await until(() => first.msgs.find((m) => m.t === "welcome"));
+    const started = Date.now();
+    const closed = closeCode(second.ws, 500);
+    second.ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    assert.equal(await closed, 4401);
+    assert.ok(Date.now() - started < 500);
+    const reason = await until(() => second.msgs.find((m) => m.t === "error"));
+    assert.equal(reason.reason, "bad token");
+    assert.equal(first.ws.readyState, WebSocket.OPEN);
+    assert.equal(game.world.players.size, 1);
+  } finally {
+    first.ws.close();
+    second.ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
+test("a bad or wrong-secret token closes 4401 immediately", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 50_000, rand: mulberry32(14) });
+  const port = await game.ready;
+  const garbage = await connect(port);
+  const forged = await connect(port);
+  try {
+    const garbageStarted = Date.now();
+    const garbageClosed = closeCode(garbage.ws, 500);
+    garbage.ws.send(JSON.stringify({ t: "hello", token: "x".repeat(40) }));
+    assert.equal(await garbageClosed, 4401);
+    assert.ok(Date.now() - garbageStarted < 500);
+    assert.equal((await until(() => garbage.msgs.find((m) => m.t === "error"))).reason, "bad token");
+
+    const token = await signGameToken("other-secret-other-secret-other", { id: "user-ada", name: "Ada" });
+    const forgedStarted = Date.now();
+    const forgedClosed = closeCode(forged.ws, 500);
+    forged.ws.send(JSON.stringify({ t: "hello", token }));
+    assert.equal(await forgedClosed, 4401);
+    assert.ok(Date.now() - forgedStarted < 500);
+    assert.equal((await until(() => forged.msgs.find((m) => m.t === "error"))).reason, "bad token");
+    assert.equal(game.world.players.size, 0);
+  } finally {
+    garbage.ws.close();
+    forged.ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
+test("not ready closes 4401", async () => {
+  const game = startServer({ port: 0, now: () => 1_000, rand: mulberry32(15) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    const started = Date.now();
+    const closed = closeCode(ws, 500);
+    ws.send(JSON.stringify({ t: "hello", token: "x".repeat(30) }));
+    assert.equal(await closed, 4401);
+    assert.ok(Date.now() - started < 500);
+    assert.equal((await until(() => msgs.find((m) => m.t === "error"))).reason, "not ready");
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
+test("create is required, validated, and stored at rev 1", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 60_000, rand: mulberry32(16) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  const other = await connect(port);
+  try {
+    const token = await signGameToken(SECRET, { id: "user-ada", name: "Ada" });
+    ws.send(JSON.stringify({ t: "hello", token }));
+    assert.equal((await until(() => msgs.find((m) => m.reason === "need_create"))).reason, "need_create");
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal(game.world.players.size, 0);
+
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Dragon", baseClass: "Fighter" } }));
+    assert.equal((await until(() => msgs.find((m) => m.reason === "bad_create"))).reason, "bad_create");
+    assert.equal(ws.readyState, WebSocket.OPEN);
+
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Minotaur", baseClass: "Mage" } }));
+    await until(() => (msgs.filter((m) => m.reason === "bad_create").length >= 2 ? true : undefined));
+    assert.equal(game.world.players.size, 0);
+
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-ada");
+    const row = await characters.load("user-ada");
+    assert.equal(row?.rev, 1);
+    assert.equal(row?.save.username, "Ada");
+    assert.equal(row?.save.race, "Human");
+    assert.equal(row?.save.baseClass, "Fighter");
+    assert.equal(game.world.players.get("user-ada")?.str, attrsFor("Human", "Fighter").str);
+
+    const horn = await signGameToken(SECRET, { id: "user-horn", name: "Horn" });
+    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "ada", race: "Minotaur", baseClass: "Fighter" } }));
+    const taken = await until(() => other.msgs.find((m) => m.t === "error"));
+    assert.equal(taken.reason, "name_taken");
+    assert.equal(other.ws.readyState, WebSocket.OPEN);
+    assert.equal(await characters.load("user-horn"), null);
+    assert.equal(game.world.players.has("user-horn"), false);
+
+    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "Horn", race: "Minotaur", baseClass: "Fighter" } }));
+    const hornWelcome = await until(() => other.msgs.find((m) => m.t === "welcome"));
+    assert.equal(hornWelcome.playerId, "user-horn");
+    assert.equal((await characters.load("user-horn"))?.rev, 1);
+    assert.equal(game.world.players.get("user-horn")?.race, "Minotaur");
+  } finally {
+    ws.close();
+    other.ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
+test("death writes a grave and a new server restores it with the character", async () => {
+  const { pg, characters } = await pgliteDb();
+  const bornAt = 50_000_000;
+  const game = startServer({ ...gameOpts({ characters }), now: () => bornAt, rand: mulberry32(17) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    await hello(ws, "user-ada", "Ada");
+    await until(() => msgs.find((m) => m.t === "welcome"));
+    const before = game.world.players.get("user-ada");
+    assert.ok(before);
+    const goldBefore = before.gold;
+    game.world.setHp("user-ada", 0);
+    const grave = await until(async () => {
+      const list = await characters.listGraves();
+      return list.length ? list[0] : undefined;
+    });
+    assert.equal(grave.owner, "Ada");
+    assert.ok(grave.gold > 0);
+    const saved = await until(async () => {
+      const row = await characters.load("user-ada");
+      if (!row || (row.save.hp ?? 1) > 0) return undefined;
+      return row;
+    });
+    assert.ok((saved.save.gold ?? 0) < goldBefore);
+    assert.equal(saved.save.deathSettled, true);
+    ws.close();
+  } finally {
+    ws.close();
+    await game.close();
+  }
+
+  const again = startServer({ ...gameOpts({ characters }), now: () => bornAt + 1_000, rand: mulberry32(18) });
+  try {
+    await again.ready;
+    const restored = await until(() => {
+      const graves = again.world.snapshot().graves;
+      return graves.length ? graves : undefined;
+    });
+    assert.equal(restored.length, 1);
+    assert.equal(restored[0].id, graveId(await characters.listGraves()));
+    assert.equal(restored[0].owner, "Ada");
+    const port2 = await again.ready;
+    const back = await connect(port2);
+    try {
+      await hello(back.ws, "user-ada", "Ada", false);
+      const welcome = await until(() => back.msgs.find((m) => m.t === "welcome"));
+      assert.equal(welcome.playerId, "user-ada");
+      const hero = again.world.players.get("user-ada");
+      assert.ok(hero);
+      assert.equal(hero.hp, 0);
+      assert.ok(hero.gold < 40);
+      assert.equal(again.world.snapshot().graves.length, 1);
+      assert.equal((await characters.listGraves()).length, 1);
+    } finally {
+      back.ws.close();
+    }
+  } finally {
+    await again.close();
+    await pg.close();
+  }
+});
+
+function graveId(list: Array<{ id: string }>) {
+  return list[0]?.id;
+}
+
+test("a 30s tick saves dirty players and close saves everyone online", async () => {
+  const { pg, characters } = await pgliteDb();
+  let clock = 1_000_000;
+  const game = startServer({ ...gameOpts({ characters }), now: () => clock, rand: mulberry32(19) });
+  const port = await game.ready;
+  const ada = await connect(port);
+  const bea = await connect(port);
+  try {
+    await hello(ada.ws, "user-ada", "Ada");
+    await hello(bea.ws, "user-bea", "Bea");
+    await until(() => ada.msgs.find((m) => m.t === "welcome"));
+    await until(() => bea.msgs.find((m) => m.t === "welcome"));
+    const dirty = game.world.players.get("user-ada");
+    const clean = game.world.players.get("user-bea");
+    assert.ok(dirty && clean);
+    dirty.x = 500;
+    dirty.z = 500;
+    clean.x = 506;
+    clean.z = 500;
+    dirty.hp = dirty.maxHp;
+    clean.hp = clean.maxHp;
+    const baseGold = dirty.gold;
+    clock += 30_000;
+    await until(async () => {
+      const row = await characters.load("user-ada");
+      const other = await characters.load("user-bea");
+      if (!row || !other || row.rev < 2 || other.rev < 2) return undefined;
+      if (row.save.gold !== baseGold) return undefined;
+      return true;
+    });
+    dirty.gold = baseGold + 9;
+    clock += 30_000;
+    const saved = await until(async () => {
+      const row = await characters.load("user-ada");
+      if (!row || row.rev < 3 || row.save.gold !== baseGold + 9) return undefined;
+      return row;
+    });
+    assert.equal(saved.rev, 3);
+    assert.equal((await characters.load("user-bea"))?.rev, 2);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal((await characters.load("user-bea"))?.rev, 2);
+    await game.close();
+    assert.equal((await characters.load("user-ada"))?.rev, 4);
+    assert.equal((await characters.load("user-ada"))?.save.gold, baseGold + 9);
+    assert.equal((await characters.load("user-bea"))?.rev, 3);
+    assert.equal((await characters.load("user-bea"))?.save.x, 506);
+  } finally {
+    ada.ws.close();
+    bea.ws.close();
+    await game.close();
+    await pg.close();
+  }
+});
+
 
