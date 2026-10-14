@@ -291,16 +291,78 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     return true;
   }
 
+  /** A camp tile is free when nobody stands there and nobody is homed there. */
+  function campTileFree(x: number, z: number, exceptId?: string) {
+    if (blocked(x, z) || havenCity(x, z)) return false;
+    for (const o of monsters.values()) {
+      if (o.hp <= 0 || o.id === exceptId) continue;
+      if (sameTile(x, z, o.x, o.z)) return false;
+      if (Number.isFinite(o.slotX) && sameTile(x, z, o.slotX, o.slotZ)) return false;
+    }
+    return true;
+  }
+
+  /** Another free tile inside this camp's spawn radius. Never a shared tile. */
+  function takeCampSpot(ox: number, oz: number, exceptId?: string, maxR = 11.5): { x: number; z: number } | null {
+    const accept = (x: number, z: number) =>
+      Number.isFinite(x) &&
+      Number.isFinite(z) &&
+      Math.hypot(x - ox, z - oz) <= maxR &&
+      campTileFree(x, z, exceptId);
+    if (accept(ox, oz)) return { x: ox, z: oz };
+    const slots = campSlots(ox, oz, 24);
+    for (let i = 0; i < slots.length; i++) {
+      const raw = slots[i];
+      const spot = havenCity(raw.x, raw.z) ? outsideHaven(raw.x, raw.z, i * 0.31) : raw;
+      if (accept(spot.x, spot.z)) return spot;
+    }
+    for (let r = 1.1; r <= maxR; r += 0.55) {
+      const steps = Math.max(10, Math.ceil((Math.PI * 2 * r) / 0.8));
+      for (let i = 0; i < steps; i++) {
+        const ang = (i / steps) * Math.PI * 2 + r;
+        const raw = nearestOpen(ox + Math.cos(ang) * r, oz + Math.sin(ang) * r, 2);
+        const spot = havenCity(raw.x, raw.z) ? outsideHaven(raw.x, raw.z, ang) : raw;
+        if (accept(spot.x, spot.z)) return spot;
+      }
+    }
+    return null;
+  }
+
+  /** Camp center, or the nearest ground outside every haven when the center is in town. */
+  function campAnchor(cx: number, cz: number) {
+    if (!havenCity(cx, cz) && !blocked(cx, cz)) return { x: cx, z: cz };
+    const pushed = outsideHaven(cx, cz);
+    if (!havenCity(pushed.x, pushed.z) && !blocked(pushed.x, pushed.z)) return pushed;
+    const city = havenCity(cx, cz);
+    const prefer = city ? Math.atan2(cz - city.z, cx - city.x) : 0;
+    for (let r = 2; r <= 48; r += 1) {
+      const steps = Math.max(16, Math.ceil((Math.PI * 2 * r) / 1.1));
+      let best: { x: number; z: number } | null = null;
+      let bestTurn = 1e9;
+      for (let i = 0; i < steps; i++) {
+        const ang = (i / steps) * Math.PI * 2;
+        const x = cx + Math.cos(ang) * r;
+        const z = cz + Math.sin(ang) * r;
+        if (havenCity(x, z) || blocked(x, z)) continue;
+        let turn = Math.abs(Math.atan2(z - cz, x - cx) - prefer);
+        if (turn > Math.PI) turn = Math.PI * 2 - turn;
+        if (turn < bestTurn) {
+          bestTurn = turn;
+          best = { x, z };
+        }
+      }
+      if (best) return best;
+    }
+    return pushed;
+  }
+
   for (const camp of CAMPS) {
-    const origin = havenCity(camp.cx, camp.cz) ? outsideHaven(camp.cx, camp.cz) : { x: camp.cx, z: camp.cz };
-    const slots = campSlots(origin.x, origin.z, camp.count + 8)
-      .map((s, i) => (havenCity(s.x, s.z) ? outsideHaven(s.x, s.z, i * 0.22) : s))
-      .filter((s, i, arr) => !havenCity(s.x, s.z) && arr.findIndex((o) => screenGap(o.x, o.z, s.x, s.z) < 70) === i);
+    const origin = campAnchor(camp.cx, camp.cz);
     for (let i = 0; i < camp.count; i++) {
+      const placed = takeCampSpot(origin.x, origin.z) ?? takeCampSpot(origin.x, origin.z, undefined, 18);
+      if (!placed) continue;
       const id = "m" + mid++;
       const hp = mobHp(camp.type, camp.level);
-      const raw = slots[i] ?? outsideHaven(origin.x + i * 1.4, origin.z, i * 0.35);
-      const placed = havenCity(raw.x, raw.z) ? outsideHaven(raw.x, raw.z, i * 0.35) : raw;
       monsters.set(id, {
         id,
         type: camp.type,
@@ -876,15 +938,10 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   }
 
   function freeSlot(m: MonsterState) {
-    const others = [...monsters.values()].filter((o) => o.hp > 0 && o.id !== m.id);
-    const clear = (x: number, z: number) => !blocked(x, z) && !others.some((o) => screenGap(o.x, o.z, x, z) < SLOT_GAP);
-    if (Number.isFinite(m.slotX) && clear(m.slotX, m.slotZ)) return { x: m.slotX, z: m.slotZ };
+    if (Number.isFinite(m.slotX) && campTileFree(m.slotX, m.slotZ, m.id)) return { x: m.slotX, z: m.slotZ };
     const camp = campOf(m);
-    if (camp) {
-      const open = campSlots(camp.cx, camp.cz, camp.count + 6).find((s) => clear(s.x, s.z));
-      if (open) return open;
-    }
-    return { x: m.slotX ?? m.homeX, z: m.slotZ ?? m.homeZ };
+    const origin = camp ? campAnchor(camp.cx, camp.cz) : { x: m.slotX ?? m.homeX, z: m.slotZ ?? m.homeZ };
+    return takeCampSpot(origin.x, origin.z, m.id) ?? takeCampSpot(origin.x, origin.z, m.id, 18) ?? origin;
   }
 
   function step(now: number) {
@@ -908,9 +965,13 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         m.slotZ = m.z;
       }
       if (!m.id.startsWith("t") && havenCity(m.slotX, m.slotZ)) {
-        const ex = outsideHaven(m.slotX, m.slotZ);
-        m.slotX = ex.x;
-        m.slotZ = ex.z;
+        const camp = campOf(m);
+        const origin = camp ? campAnchor(camp.cx, camp.cz) : outsideHaven(m.slotX, m.slotZ);
+        const alt = takeCampSpot(origin.x, origin.z, m.id) ?? takeCampSpot(origin.x, origin.z, m.id, 18);
+        if (alt) {
+          m.slotX = alt.x;
+          m.slotZ = alt.z;
+        }
       }
       if (m.hp <= 0) {
         const camp = campOf(m);
@@ -921,13 +982,18 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
           }
           m.hp = m.maxHp;
           const placed = freeSlot(m);
-          const spot = !m.id.startsWith("t") && havenCity(placed.x, placed.z) ? outsideHaven(placed.x, placed.z) : placed;
-          m.x = spot.x;
-          m.z = spot.z;
-          if (!m.id.startsWith("t") && havenCity(m.slotX, m.slotZ)) {
-            const ex = outsideHaven(m.slotX, m.slotZ);
-            m.slotX = ex.x;
-            m.slotZ = ex.z;
+          m.x = placed.x;
+          m.z = placed.z;
+          m.slotX = placed.x;
+          m.slotZ = placed.z;
+          if (!m.id.startsWith("t") && havenCity(m.x, m.z)) {
+            const ex = outsideHaven(m.x, m.z);
+            if (campTileFree(ex.x, ex.z, m.id)) {
+              m.x = ex.x;
+              m.z = ex.z;
+              m.slotX = ex.x;
+              m.slotZ = ex.z;
+            }
           }
           m.targetId = null;
           m.respawnAt = 0;
@@ -972,15 +1038,17 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       }
       if (m.targetId) {
         const t = players.get(m.targetId);
-        const d = t && t.hp > 0 ? Math.hypot(t.x - m.x, t.z - m.z) : 99;
-        if (!t || t.hp <= 0 || d > def.leash || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
+        if (!t || t.hp <= 0 || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
           m.targetId = null;
         } else {
           if (sameTile(m.x, m.z, t.x, t.z)) stepOffTile(m, t.x, t.z);
           const spot = nearestMeleeStand(m, t.x, t.z);
-          const sharing = sameTile(m.x, m.z, t.x, t.z);
-          const gap = spot ? Math.hypot(spot.x - m.x, spot.z - m.z) : 0;
-          if (spot && gap > 0.4 && !sharing) {
+          const gap = spot ? Math.hypot(spot.x - m.x, spot.z - m.z) : Infinity;
+          // Still in range: hold. Leash is how far we will walk to a free tile
+          // that is back in range, not a reason to drop the fight before that.
+          if (!spot || gap > def.leash) {
+            m.targetId = null;
+          } else if (gap > 0.12 && !sameTile(m.x, m.z, t.x, t.z)) {
             const stepLen = (m.snareUntil > now ? 0.4 : 1) * Math.min(0.3, gap);
             if (stepLen > 0.001) {
               const ox = m.x;
@@ -994,7 +1062,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
               }
             }
           }
-          if (!sameTile(m.x, m.z, t.x, t.z) && inMeleeRange(m.x, m.z, t.x, t.z) && now >= m.nextHit) {
+          if (m.targetId && !sameTile(m.x, m.z, t.x, t.z) && inMeleeRange(m.x, m.z, t.x, t.z) && now >= m.nextHit) {
             m.nextHit = now + def.attackMs;
             const raw = def.damage + Math.floor(m.level * def.damagePerLevel);
             let dmg = Math.max(1, raw - gearTotals(t.equipment).defense);
@@ -1024,7 +1092,18 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     for (let i = 0; i < alive.length; i++) {
       for (let j = i + 1; j < alive.length; j++) {
         if (!sameTile(alive[i].x, alive[i].z, alive[j].x, alive[j].z)) continue;
-        stepOffTile(alive[j], alive[i].x, alive[i].z);
+        const b = alive[j];
+        const bx = b.x;
+        const bz = b.z;
+        stepOffTile(b, alive[i].x, alive[i].z);
+        if (b.targetId || (b.x === bx && b.z === bz)) continue;
+        if (
+          sameTile(b.slotX, b.slotZ, alive[i].x, alive[i].z) ||
+          sameTile(b.slotX, b.slotZ, alive[i].slotX, alive[i].slotZ)
+        ) {
+          b.slotX = b.x;
+          b.slotZ = b.z;
+        }
       }
     }
     for (const p of players.values()) {
