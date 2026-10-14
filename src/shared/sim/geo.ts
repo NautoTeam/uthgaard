@@ -37,7 +37,7 @@ export interface NpcDef {
   x: number;
   z: number;
   race: "human" | "elf" | "minotaur" | "marshwarden";
-  role: "wayfarer" | "vendor" | "trainer";
+  role: "wayfarer" | "vendor" | "trainer" | "registrar";
 }
 
 export const HALLS: Hall[] = [];
@@ -178,6 +178,26 @@ for (const city of CITIES) {
       z: city.z + Math.sin(trainA) * 6.4,
       race: "marshwarden",
       role: "trainer",
+    });
+  }
+  if (city.id === "uthgaard" || city.id === "fenhollow") {
+    let angle = npcA + 1.15;
+    const rad = 5.2;
+    let x = city.x + Math.cos(angle) * rad;
+    let z = city.z + Math.sin(angle) * rad;
+    for (let n = 0; n < 10 && NPCS.some((npc) => Math.hypot(npc.x - x, npc.z - z) < 2.6); n++) {
+      angle += 0.4;
+      x = city.x + Math.cos(angle) * rad;
+      z = city.z + Math.sin(angle) * rad;
+    }
+    NPCS.push({
+      id: `registrar-${city.id}`,
+      name: "Registrar",
+      city: city.id,
+      x,
+      z,
+      race: city.race,
+      role: "registrar",
     });
   }
   const ring = city.race === "elf" ? 14 : 10;
@@ -391,13 +411,19 @@ export function arrivalAt(
     if (separated.some((keep) => Math.hypot(keep.x - spot.x, keep.z - spot.z) < 1.8)) continue;
     separated.push(spot);
   }
-  const free = (spot: { x: number; z: number }) => !occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 1.8);
+  const free = (spot: { x: number; z: number }) =>
+    !occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 1.8);
   const open = separated.filter((spot) => free(spot));
   if (open.length) return open[Math.abs(salt) % open.length];
-  const base = separated[Math.abs(salt) % Math.max(1, separated.length)] ?? nearestOpen(x + 2.8, z + 2.8);
+  const base =
+    separated[Math.abs(salt) % Math.max(1, separated.length)] ?? nearestOpen(x + 2.8, z + 2.8);
   for (let n = 1; n <= 10; n++) {
     const ang = (salt + n * 47) * (Math.PI / 180);
-    const nudged = nearestOpen(base.x + Math.cos(ang) * (2 + n * 0.2), base.z + Math.sin(ang) * (2 + n * 0.2), 3);
+    const nudged = nearestOpen(
+      base.x + Math.cos(ang) * (2 + n * 0.2),
+      base.z + Math.sin(ang) * (2 + n * 0.2),
+      3,
+    );
     if (!free(nudged) || blocked(nudged.x, nudged.z)) continue;
     if (Math.hypot(nudged.x - x, nudged.z - z) < 1.8) continue;
     return nudged;
@@ -533,13 +559,28 @@ export function nearestTrainer(x: number, z: number, range = 8) {
   return best;
 }
 
+export function nearestRegistrar(x: number, z: number, range = 3.8) {
+  let best: NpcDef | null = null;
+  let bestD = range;
+  for (const npc of NPCS) {
+    if (npc.role !== "registrar") continue;
+    const d = Math.hypot(npc.x - x, npc.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = npc;
+    }
+  }
+  return best;
+}
+
 export function tileFill(x: number, z: number) {
   const d = Math.hypot(x, z);
   if (d > LAND + 5) return (x + z) & 1 ? "#0c2c32" : "#0a2428";
   if (d > LAND) return (x + z) & 1 ? "#164850" : "#123e46";
   if (inLake(x, z)) return (x + z) & 1 ? "#1d5c68" : "#184e58";
   for (const city of CITIES) {
-    if (Math.hypot(x - city.x, z - city.z) < 6.4) return (x * 3 + z) % 5 === 0 ? city.stoneAlt : city.stone;
+    if (Math.hypot(x - city.x, z - city.z) < 6.4)
+      return (x * 3 + z) % 5 === 0 ? city.stoneAlt : city.stone;
   }
   if (onRoad(x, z)) return (x + z) & 1 ? "#7a6848" : "#6a563c";
   for (const camp of CAMPS) {

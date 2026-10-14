@@ -145,14 +145,27 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="debugSpawnBtn" type="button">
           Spawn test mob
         </button>
+        <button id="debugKillHudBtn" type="button">
+          Kill me
+        </button>
       </div>
       <div id="groupFrame" hidden />
+      <div id="targetFrame" hidden></div>
       <div id="inviteToast" hidden>
         <p id="inviteText" />
         <button id="inviteAccept" type="button">
           Accept
         </button>
         <button id="inviteDecline" type="button">
+          Decline
+        </button>
+      </div>
+      <div id="guildToast" hidden>
+        <p id="guildToastText" />
+        <button id="guildAccept" type="button">
+          Accept
+        </button>
+        <button id="guildDecline" type="button">
           Decline
         </button>
       </div>
@@ -199,6 +212,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="mapBtn" type="button">
           Map
         </button>
+        <button id="guildBtn" type="button">
+          Guild
+        </button>
         <button id="chatToggle" type="button">
           Chat
         </button>
@@ -242,6 +258,15 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <div id="shopStock" />
           <div id="shopBag" />
           <button id="shopClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="guild" hidden>
+        <div id="guildPanel">
+          <div id="guildTitle">Guild</div>
+          <div id="guildBody" />
+          <button id="guildClose" type="button">
             Close
           </button>
         </div>

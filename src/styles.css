@@ -318,7 +318,8 @@ body {
 #sheet,
 #bag,
 #shop,
-#train {
+#train,
+#guild {
   position: absolute;
   inset: 0;
   display: grid;
@@ -331,14 +332,16 @@ body {
 #sheet[hidden],
 #bag[hidden],
 #shop[hidden],
-#train[hidden] {
+#train[hidden],
+#guild[hidden] {
   display: none !important;
 }
 
 #sheetPanel,
 #bagPanel,
 #shopPanel,
-#trainPanel {
+#trainPanel,
+#guildPanel {
   width: min(360px, 92vw);
   max-height: 80dvh;
   overflow-y: auto;
@@ -352,7 +355,8 @@ body {
 #sheetTitle,
 #bagTitle,
 #shopTitle,
-#trainTitle {
+#trainTitle,
+#guildTitle {
   font-family: Cinzel, Georgia, serif;
   letter-spacing: 2px;
   margin-bottom: 8px;
@@ -424,15 +428,19 @@ body {
 
 #clickDebug {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
-  top: auto;
+  right: max(8px, env(safe-area-inset-right));
+  top: 248px;
+  left: auto;
+  bottom: auto;
   z-index: 4;
-  max-width: calc(100vw - 16px);
+  max-width: min(240px, 46vw);
   background: rgba(8, 10, 8, 0.82);
   border: 1px solid #8a7344;
   color: #f0e2b0;
-  font: 12px/1.35 ui-monospace, "Source Sans 3", monospace;
+  font:
+    12px/1.35 ui-monospace,
+    "Source Sans 3",
+    monospace;
   padding: 6px 8px;
   white-space: pre;
   pointer-events: none;
@@ -444,8 +452,9 @@ body {
 
 #debugHud {
   position: absolute;
-  left: 8px;
-  top: 252px;
+  right: max(8px, env(safe-area-inset-right));
+  top: 118px;
+  left: auto;
   z-index: 9;
   display: flex;
   flex-wrap: wrap;
@@ -455,7 +464,7 @@ body {
   background: rgba(8, 10, 8, 0.9);
   border: 1px solid #8a7344;
   color: #f0e2b0;
-  max-width: min(280px, calc(100vw - 16px));
+  max-width: min(240px, 46vw);
 }
 
 #debugHud[hidden] {
@@ -479,6 +488,7 @@ body {
 
 #debugHud button,
 #inviteToast button,
+#guildToast button,
 #ctxMenu button {
   min-height: 40px;
   padding: 8px 12px;
@@ -537,8 +547,112 @@ body {
   text-align: center;
 }
 
-#inviteToast[hidden] {
+#inviteToast[hidden],
+#guildToast[hidden] {
   display: none !important;
+}
+
+#guildToast {
+  position: absolute;
+  top: 168px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: min(320px, calc(100vw - 24px));
+  background: #141812;
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+  padding: 12px;
+  text-align: center;
+}
+
+#guildToast p {
+  margin: 0 0 8px;
+}
+
+#targetFrame {
+  position: absolute;
+  left: 50%;
+  top: 78px;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: min(240px, 70vw);
+  pointer-events: none;
+  background: rgba(12, 14, 12, 0.88);
+  border: 1px solid #a84838;
+  color: #f0e2b0;
+  padding: 6px 10px 8px;
+  text-align: center;
+}
+
+#targetFrame[hidden] {
+  display: none !important;
+}
+
+#targetFrame b {
+  display: block;
+  margin-bottom: 4px;
+  color: #fff6d8;
+}
+
+#guildBody input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 8px;
+  padding: 8px;
+  background: #1a221c;
+  color: #eee;
+  border: 1px solid #6a5a38;
+}
+
+.guild-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.guild-picks button.on {
+  border-color: #f0e2b0;
+  color: #fff6d8;
+}
+
+.guild-roster {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.guild-roster li {
+  padding: 4px 0;
+  border-bottom: 1px solid #3a3224;
+}
+
+.crest {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border: 1px solid #f0e2b0;
+  vertical-align: -2px;
+}
+
+.crest-ash {
+  background: #c4b08a;
+}
+.crest-tide {
+  background: #6aa8c8;
+}
+.crest-thorn {
+  background: #6e9a4a;
+}
+.crest-sun {
+  background: #e2b15a;
+}
+
+.guild-warn {
+  color: #e7b4a0;
 }
 
 #inviteToast p {
@@ -568,6 +682,7 @@ body {
 #bagClose,
 #shopClose,
 #trainClose,
+#guildClose,
 #trainPromote,
 #debugLevelBtn,
 #debugPlusBtn,
@@ -576,6 +691,7 @@ body {
 #shopStock button,
 #shopBag button,
 #trainList button,
+#guildBody button,
 .bag-row button {
   min-height: 40px;
   padding: 8px 12px;

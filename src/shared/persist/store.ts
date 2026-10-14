@@ -23,6 +23,8 @@ export interface CharacterRecord {
   attunedGates?: string[];
   /** True once this death has already taken gold and XP. */
   deathSettled?: boolean;
+  /** Paid the Registrar and has not founded a guild yet. */
+  charter?: boolean;
   /** Monotonic save generation. A write with an older inputAt is ignored. */
   rev?: number;
   /** Last time this tab handled player input. Newer input wins over a stale tab. */

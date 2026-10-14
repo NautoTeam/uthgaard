@@ -101,7 +101,10 @@ function ensure() {
   land = new Uint8Array(W * H);
   terrain = new Uint8Array(W * H);
   zoneIx = new Uint8Array(W * H);
-  const zonesByIsland = new Map<string, Array<{ index: number; sx: number; sz: number; terrain: number }>>();
+  const zonesByIsland = new Map<
+    string,
+    Array<{ index: number; sx: number; sz: number; terrain: number }>
+  >();
   ZONES.forEach((zone, index) => {
     const list = zonesByIsland.get(zone.island) ?? [];
     list.push({
@@ -336,6 +339,48 @@ function ensure() {
     }
   }
   buildMs = performance.now() - started;
+  stampHavenZones();
+}
+
+/** Tiles this close to a phase-1 haven keep that city's zone, not the seed seam. */
+export const HAVEN_ZONE_RADIUS = 56;
+
+export function havenCity(x: number, z: number) {
+  let best: (typeof WORLD_CITIES)[number] | null = null;
+  let bestD = HAVEN_ZONE_RADIUS;
+  for (const city of WORLD_CITIES) {
+    if ((city.phase ?? 1) > 1 || city.kind !== "haven" || !city.zone) continue;
+    const d = Math.hypot(city.x - x, city.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = city;
+    }
+  }
+  return best;
+}
+
+function stampHavenZones() {
+  if (!land || !zoneIx) return;
+  for (const city of WORLD_CITIES) {
+    if ((city.phase ?? 1) > 1 || city.kind !== "haven" || !city.zone) continue;
+    const declared = ZONES.findIndex((zone) => zone.id === city.zone);
+    if (declared < 0) continue;
+    const mark = declared + 1;
+    const r = HAVEN_ZONE_RADIUS;
+    const x0 = Math.max(BOUNDS.minX, Math.floor(city.x - r));
+    const x1 = Math.min(BOUNDS.maxX, Math.ceil(city.x + r));
+    const z0 = Math.max(BOUNDS.minZ, Math.floor(city.z - r));
+    const z1 = Math.min(BOUNDS.maxZ, Math.ceil(city.z + r));
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        if (Math.hypot(x - city.x, z - city.z) >= r) continue;
+        if (!insideGrid(x, z)) continue;
+        const at = cellIndex(x, z);
+        if (!land[at]) continue;
+        zoneIx[at] = mark;
+      }
+    }
+  }
 }
 
 export function isLand(x: number, z: number) {
@@ -356,19 +401,9 @@ export function terrainAt(x: number, z: number) {
 
 export function zoneAt(x: number, z: number): ZoneDef | null {
   ensure();
-  // A haven keeps its own zone for a short walk past the gate. Fenhollow sits
-  // on the Hearthfields / Beastmarch seam, and nearest-seed was calling that
-  // starter ground a level 20 PvP zone once the town name dropped off.
-  let haven: (typeof WORLD_CITIES)[number] | null = null;
-  let havenD = 40;
-  for (const city of WORLD_CITIES) {
-    if ((city.phase ?? 1) > 1 || city.kind !== "haven" || !city.zone) continue;
-    const d = Math.hypot(city.x - x, city.z - z);
-    if (d < havenD) {
-      havenD = d;
-      haven = city;
-    }
-  }
+  // Fenhollow sits on the Hearthfields / Beastmarch seam. A haven apron
+  // keeps the city's own zone so two tabs a few tiles apart cannot disagree.
+  const haven = havenCity(x, z);
   if (haven?.zone) {
     const declared = ZONES.find((zone) => zone.id === haven.zone);
     if (declared) return declared;
@@ -377,7 +412,7 @@ export function zoneAt(x: number, z: number): ZoneDef | null {
   const iz = Math.round(z);
   if (!insideGrid(ix, iz) || !zoneIx) return null;
   const id = zoneIx[cellIndex(ix, iz)];
-  return id ? ZONES[id - 1] ?? null : null;
+  return id ? (ZONES[id - 1] ?? null) : null;
 }
 
 export function maskBuildMs() {
