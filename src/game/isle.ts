@@ -394,23 +394,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     };
   }
   const frames: Record<string, HTMLImageElement> = {};
+  function loadFrame(key: string, version: string) {
+    const img = new Image();
+    img.onload = () => {
+      frames[key] = img;
+    };
+    img.src = `/sprites/anim/${key}.png?v=${version}`;
+  }
   for (const race of ["human", "elf", "minotaur", "marshwarden"]) {
     for (let i = 0; i < 16; i++) {
-      const img = new Image();
-      const key = `${race}-walk-${i}`;
-      img.onload = () => {
-        frames[key] = img;
-      };
-      img.src = `/sprites/anim/${key}.png?v=7`;
+      if (race !== "human") loadFrame(`${race}-walk-${i}`, "7");
     }
-    for (let i = 0; i < 4; i++) {
-      const img = new Image();
-      const key = `${race}-atk-${i}`;
-      img.onload = () => {
-        frames[key] = img;
-      };
-      img.src = `/sprites/anim/${key}.png?v=6`;
-    }
+    for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
+  }
+  for (let i = 0; i < 16; i++) {
+    loadFrame(`human-base-walk-${i}`, "8");
+    loadFrame(`human-chest-cloth-${i}`, "8");
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -912,6 +911,49 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
+  function wornClothChest(equipment?: Record<string, string>) {
+    const worn = equipment?.chest;
+    if (!worn) return false;
+    const item = itemById(worn);
+    if (!item || item.slot !== "chest" || item.weight === "heavy") return false;
+    const label = `${item.id} ${item.name}`.toLowerCase();
+    return label.includes("cloth") || label.includes("tunic") || label.includes("linen");
+  }
+
+  const HUMAN_LAYERS = ["base", "legs", "feet", "chest", "weapon", "hands", "head"] as const;
+
+  function humanLayerKey(
+    layer: (typeof HUMAN_LAYERS)[number],
+    frame: number,
+    equipment?: Record<string, string>,
+  ) {
+    if (layer === "base") return `human-base-walk-${frame}`;
+    if (layer === "chest" && wornClothChest(equipment)) return `human-chest-cloth-${frame}`;
+    return "";
+  }
+
+  function drawHumanWalk(
+    frame: number,
+    x: number,
+    z: number,
+    cell: number,
+    lift: number,
+    filter: string,
+    equipment?: Record<string, string>,
+  ) {
+    let drew = false;
+    for (const layer of HUMAN_LAYERS) {
+      const key = humanLayerKey(layer, frame, equipment);
+      if (!key) continue;
+      const ok = drawFrame(key, x, z, cell, lift, filter);
+      if (layer === "base") {
+        if (!ok) return false;
+        drew = true;
+      }
+    }
+    return drew;
+  }
+
   function drawHero(race: string, id: string, x: number, z: number, cls?: string) {
     const drawn = race;
     const actor = trackActor(id, x, z);
@@ -950,8 +992,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     } else {
       const col = moving ? Math.floor(actor.phase) % 4 : 0;
       const row = actor.facing * 4;
-      if (!drawFrame(`${drawn}-walk-${row + col}`, x, z, cell, lift, filter))
-        drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
+      const frame = row + col;
+      const drew =
+        drawn === "human"
+          ? drawHumanWalk(frame, x, z, cell, lift, filter, world.players.get(id)?.equipment)
+          : drawFrame(`${drawn}-walk-${frame}`, x, z, cell, lift, filter);
+      if (!drew) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
     if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 700);
