@@ -1,9 +1,9 @@
 import raw from "./world.json";
 
 /**
- * Phase-1 world data. The live isle still builds only the three Reach cities,
- * their roads, and the six camps. Wardstone, Stiltwick, and the new camps
- * stay in these exports until the land mask is turned on.
+ * Phase-1 world data. Cities, roads, and the land mask already include
+ * Wardstone and Stiltwick. CAMPS in catalog.ts spawns the live camps
+ * plus proposedCamps with phase <= 1. Later phases stay in the file only.
  * hash01 matches geo.ts hash so island edges stay stable.
  */
 

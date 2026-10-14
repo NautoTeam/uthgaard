@@ -3,6 +3,7 @@ import {
   ISLANDS,
   LAKES,
   LIVE_CAMPS,
+  PROPOSED_CAMPS,
   PHASE1_ROADS,
   WORLD_CITIES,
   ZONES,
@@ -218,7 +219,7 @@ function ensure() {
       }
     }
   }
-  for (const camp of LIVE_CAMPS) {
+  for (const camp of [...LIVE_CAMPS, ...PROPOSED_CAMPS]) {
     const r = 4;
     for (let z = Math.floor(camp.cz) - r; z <= Math.ceil(camp.cz) + r; z++) {
       for (let x = Math.floor(camp.cx) - r; x <= Math.ceil(camp.cx) + r; x++) {

@@ -1,6 +1,6 @@
 /** Game content. Camps, mobs, items, and powers are data — add a row, don't add a branch. */
 
-import { LIVE_CAMPS } from "./world";
+import { LIVE_CAMPS, PROPOSED_CAMPS } from "./world";
 
 export const RACES = ["Human", "Elf", "Minotaur"] as const;
 export type Race = (typeof RACES)[number] | "Marshwarden";
@@ -146,8 +146,11 @@ export interface CampDef {
   cz: number;
 }
 
-/** Live camps only. Phase-1 proposals stay in PROPOSED_CAMPS until the mask lands. */
-export const CAMPS: CampDef[] = LIVE_CAMPS;
+/** Live Reach camps plus phase-1 proposals. Later phases stay out of PROPOSED_CAMPS. */
+export const CAMPS: CampDef[] = [
+  ...LIVE_CAMPS,
+  ...PROPOSED_CAMPS.map(({ type, level, count, cx, cz }) => ({ type, level, count, cx, cz })),
+];
 
 export interface MobDef {
   type: string;
@@ -174,6 +177,13 @@ export const MOBS: MobDef[] = [
   { type: "Orc", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
   { type: "Bandit", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
   { type: "Beast", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Boar", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "Thornling", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "BogHound", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "CragHarpy", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "ThunderElk", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.2 },
+  { type: "FenCrawler", hp: 0, xpBase: 8, xpPerLevel: 5, damage: 2, damagePerLevel: 0.35, attackMs: 1100, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.18 },
+  { type: "MireWitch", hp: 0, xpBase: 14, xpPerLevel: 6, damage: 3, damagePerLevel: 0.45, attackMs: 1400, aggro: 3.05, leash: 6.2, campLeash: 15, scale: 0.24 },
 ];
 
 const FALLBACK_MOB: MobDef = {
