@@ -12,6 +12,7 @@ import {
   tileFill,
   TREES,
   arrivalAt,
+  arrivalSalt,
   blocked,
   clearLine,
   nearestOpen,
@@ -247,8 +248,24 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return true;
   }
 
+  const SPRITE_FILES = new Set([
+    "human",
+    "elf",
+    "minotaur",
+    "marshwarden",
+    "spider",
+    "snake",
+    "lizard",
+    "orc",
+    "bandit",
+    "beast",
+    "hall",
+    "tree",
+    "fire",
+  ]);
   const sprites: Record<string, HTMLImageElement> = {};
   for (const name of NAMES) {
+    if (!SPRITE_FILES.has(name)) continue;
     const img = new Image();
     img.src = `/sprites/${name}.png`;
     img.onload = () => {
@@ -310,6 +327,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     shroudUntil: saved?.shroudUntil,
     attunedGates: saved?.attunedGates,
     hp: saved?.hp,
+    deathSettled: saved?.deathSettled,
   };
 
   const authority = createAuthority();
@@ -829,16 +847,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (p.hp <= 0) {
       if (!notedDeath) {
         notedDeath = true;
-        if (!dirty) {
-          lastInput = Date.now();
-          dirty = true;
-        }
+        const live = localPlayer();
+        if (host && live && !live.graveDropped) world.setHp(myId, 0);
+        lastInput = Date.now();
+        dirty = true;
         persist();
       }
-      const xpLost = Math.floor(p.xp * 0.1);
       const stone = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
       deathHint.textContent = stone
-        ? `A tombstone holds ${stone.gold} gold. Respawn in ${homeTown} under Grave Chill for 60s (${xpLost} XP). Spells stay sealed; melee still works.`
+        ? `A tombstone holds ${stone.gold} gold. A tenth of your XP is already gone. Respawn in ${homeTown} under Grave Chill for 60s. Spells stay sealed; melee still works.`
         : `Respawn in ${homeTown} under Grave Chill. Spells stay sealed; melee still works.`;
     } else {
       notedDeath = false;
@@ -1547,6 +1564,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.fillStyle = "#fff6d8";
       ctx.fillText(`HP ${Math.ceil(m.hp)}/${m.maxHp}`, pt.x, barY - 3);
     }
+    const foe = pvpId ? freshPeers().find((peer) => peer.id === pvpId) : null;
+    if (foe) {
+      markTarget(foe.x, foe.z);
+      const pt = worldToScreen(foe.x, foe.z);
+      const barW = 48;
+      const barY = pt.y - 108;
+      const pct = foe.maxHp > 0 ? Math.max(0, Math.min(1, foe.hp / foe.maxHp)) : 0;
+      ctx.fillStyle = "rgba(0,0,0,.75)";
+      ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
+      ctx.fillStyle = "#3a1515";
+      ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
+      ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
+      ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
+      ctx.font = "13px Georgia";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#d5e6ff";
+      ctx.fillText(foe.name, pt.x, barY - 16);
+      ctx.font = "12px Georgia";
+      ctx.fillStyle = "#fff6d8";
+      ctx.fillText(`HP ${Math.ceil(foe.hp)}/${foe.maxHp}`, pt.x, barY - 3);
+    }
     ctx.font = "13px Georgia";
     ctx.textAlign = "center";
     for (const g of state.graves ?? []) {
@@ -1632,13 +1670,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function adoptSave(disk: NonNullable<ReturnType<typeof loadSave>>) {
     const p = localPlayer();
     if (!p) return;
-    if (typeof disk.x === "number") p.x = disk.x;
-    if (typeof disk.z === "number") p.z = disk.z;
-    cam.x = (p.x - p.z) * (TW / 2);
-    cam.z = (p.x + p.z) * (TH / 2);
-    p.gold = disk.gold ?? p.gold;
-    p.level = disk.level || p.level;
-    p.xp = disk.xp ?? p.xp;
+    const corpse = p.hp <= 0 && !!p.graveDropped;
+    if (!corpse) {
+      if (typeof disk.x === "number") p.x = disk.x;
+      if (typeof disk.z === "number") p.z = disk.z;
+      cam.x = (p.x - p.z) * (TW / 2);
+      cam.z = (p.x + p.z) * (TH / 2);
+      p.gold = disk.gold ?? p.gold;
+      p.level = disk.level || p.level;
+      p.xp = disk.xp ?? p.xp;
+    } else {
+      if (typeof disk.gold === "number") p.gold = Math.min(p.gold, Math.max(0, disk.gold));
+      if (typeof disk.xp === "number") p.xp = Math.min(p.xp, Math.max(0, disk.xp));
+    }
     p.shroudUntil = disk.shroudUntil ?? 0;
     if (disk.inventory) p.inventory = { ...disk.inventory };
     if (disk.equipment) p.equipment = { ...disk.equipment };
@@ -1646,11 +1690,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (disk.hotbar) p.hotbar = [...disk.hotbar];
     if (typeof disk.trainPoints === "number") p.trainPoints = disk.trainPoints;
     if (disk.attunedGates) p.attunedGates = [...disk.attunedGates];
-    if (typeof disk.hp === "number") {
+    if (!corpse && typeof disk.hp === "number") {
       p.hp = Math.max(0, Math.min(p.maxHp, disk.hp));
-      if (p.hp <= 0) p.graveDropped = true;
     }
-    if ((p.shroudUntil ?? 0) > Date.now()) {
+    if (p.hp <= 0 && (disk.deathSettled || corpse)) p.graveDropped = true;
+    if (!corpse && (p.shroudUntil ?? 0) > Date.now() && p.hp > 0) {
       p.hp = p.maxHp;
       p.mana = p.maxMana;
       p.stamina = p.maxStamina;
@@ -1707,6 +1751,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       shroudUntil: p.shroudUntil,
       attunedGates: p.attunedGates,
       hp: p.hp,
+      deathSettled: p.hp <= 0 && !!p.graveDropped,
       rev: nextRev,
       inputAt: lastInput,
     });
@@ -2219,6 +2264,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
+    if (!e.repeat && e.code === "Backquote") {
+      e.preventDefault();
+      if (clickDebugToggle) clickDebugToggle.checked = !clickDebugToggle.checked;
+      paintClickDebug();
+      return;
+    }
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
       e.preventDefault();
     }
@@ -2251,7 +2302,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function paintClickDebug() {
     if (!clickDebug) return;
-    const on = clickDebugToggle ? clickDebugToggle.checked : true;
+    const on = clickDebugToggle ? clickDebugToggle.checked : false;
     clickDebug.hidden = !on;
     if (!on) return;
     if (!lastClick) {
@@ -2363,14 +2414,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return { x: bestX, z: bestZ };
   }
 
-  function goTo(x: number, z: number, talk: string | null, keepChase = false) {
+  function goTo(x: number, z: number, talk: string | null, keepChase = false, quiet = false) {
     const p = localPlayer();
     dest = { x, z };
     talkNpc = talk;
     if (!keepChase) chaseId = null;
     repaths = 0;
     path = p ? routeTo(p.x, p.z, x, z) : [];
-    note(`walk → (${Math.round(x)},${Math.round(z)})`);
+    if (!quiet) note(`walk → (${Math.round(x)},${Math.round(z)})`);
   }
 
   function spriteHit(sx: number, sy: number, x: number, z: number, height: number) {
@@ -2386,6 +2437,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return dx < 34 && above > -4 && above < 112;
   }
   let pendingMove: { x: number; z: number } | null = null;
+  let consumeClick = false;
   function onPointer(e: PointerEvent) {
     if (ctxMenu) ctxMenu.hidden = true;
     if (e.button !== 0 || !mapOverlay.hidden) return;
@@ -2434,6 +2486,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (pickedNpc) {
       const dist = Math.hypot(pickedNpc.x - p.x, pickedNpc.z - p.z);
       chaseId = null;
+      pendingMove = null;
+      consumeClick = true;
       rememberClick(e, hit, pickedNpc);
       if (dist <= 3.6) {
         dest = null;
@@ -2452,7 +2506,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           spot = nearestOpen(sx, sz, 4);
           if (Math.hypot(spot.x - pickedNpc.x, spot.z - pickedNpc.z) > dist - 0.2) spot = { x: sx, z: sz };
         }
-        goTo(spot.x, spot.z, pickedNpc.id);
+        goTo(spot.x, spot.z, pickedNpc.id, false, true);
       }
       return;
     }
@@ -2534,6 +2588,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function onWorldUp(e: PointerEvent) {
+    if (consumeClick) {
+      consumeClick = false;
+      pendingMove = null;
+      return;
+    }
     const move = pendingMove;
     pendingMove = null;
     if (!move || e.button !== 0) return;
@@ -2698,12 +2757,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     talkNpc = null;
     setOpen(travelPanel, false);
     const had = (p.attunedGates ?? DEFAULT_ATTUNED).includes(cityId);
+    const crowd = freshPeers()
+      .filter((peer) => peer.hp > 0)
+      .map((peer) => ({ x: peer.x, z: peer.z }));
     if (host) {
-      const result = world.travel(p.id, cityId);
+      const result = world.travel(p.id, cityId, crowd);
       if (!result.ok && result.reason) floatText(result.reason, "#f0dca0", 130);
       else if (result.ok && !had) floatText(`${city.name} stones attuned.`);
     } else {
-      const spot = arrivalAt(city.x, city.z);
+      const occupied = [
+        ...view().players.filter((pl) => pl.id !== p.id && pl.hp > 0).map((pl) => ({ x: pl.x, z: pl.z })),
+        ...crowd,
+      ];
+      const spot = arrivalAt(city.x, city.z, occupied, arrivalSalt(p.id));
       p.x = spot.x;
       p.z = spot.z;
       if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
@@ -2741,7 +2807,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     dest = null;
     path = [];
     talkNpc = null;
-    if (host) world.respawn(myId);
+    if (host) {
+      const crowd = freshPeers()
+        .filter((peer) => peer.hp > 0)
+        .map((peer) => ({ x: peer.x, z: peer.z }));
+      world.respawn(myId, crowd);
+    }
     persist();
   }
 

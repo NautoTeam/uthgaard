@@ -133,7 +133,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
   return (
     <div id="game">
       <canvas id="view" />
-      <div id="clickDebug" />
+      <div id="clickDebug" hidden></div>
       <div id="debugHud" hidden>
         <label>
           Set level
@@ -268,8 +268,8 @@ function Isle({ profile }: { profile: IsleProfile }) {
               Debug: Kill me
             </button>
             <label className="click-debug-toggle">
-              <input id="clickDebugToggle" type="checkbox" defaultChecked />
-              Show last click
+              <input id="clickDebugToggle" type="checkbox" />
+              Show last click (`)
             </label>
           </div>
           <button id="sheetClose" type="button">

@@ -352,31 +352,57 @@ export function underHall(x: number, z: number) {
   return false;
 }
 
-export function arrivalAt(x: number, z: number): { x: number; z: number } {
+export function arrivalSalt(id: string) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function arrivalAt(
+  x: number,
+  z: number,
+  occupied: Array<{ x: number; z: number }> = [],
+  salt = 0,
+): { x: number; z: number } {
   const npc = NPCS.find((n) => Math.hypot(n.x - x, n.z - z) < 14);
   const nx = npc ? npc.x - x : 0;
   const nz = npc ? npc.z - z : 1;
-  let best: { x: number; z: number } | null = null;
-  let bestScore = -999;
-  for (let r = 2.2; r <= 3.6; r += 0.35) {
+  const spots: Array<{ x: number; z: number; score: number }> = [];
+  for (let r = 2.2; r <= 5.4; r += 0.35) {
     for (let a = 0; a < 20; a++) {
       const ang = (a / 20) * Math.PI * 2;
       const spot = nearestOpen(x + Math.cos(ang) * r, z + Math.sin(ang) * r);
       const far = Math.hypot(spot.x - x, spot.z - z);
-      if (far < 1.8 || far > 4.4) continue;
+      if (far < 1.8 || far > 6.2) continue;
       if (blocked(spot.x, spot.z) || underHall(spot.x, spot.z)) continue;
       if (FIRES.some(([fx, fz]) => Math.hypot(spot.x - fx, spot.z - fz) < 3.4)) continue;
       if (NPCS.some((n) => Math.hypot(spot.x - n.x, spot.z - n.z) < 3.6)) continue;
       const away = -((spot.x - x) * nx + (spot.z - z) * nz);
       const down = spot.x - x + (spot.z - z);
-      const score = away * 1.4 + down;
-      if (score > bestScore) {
-        bestScore = score;
-        best = spot;
-      }
+      spots.push({ x: spot.x, z: spot.z, score: away * 1.4 + down - Math.max(0, r - 3.6) });
     }
   }
-  return best ?? nearestOpen(x + 2.8, z + 2.8);
+  spots.sort((a, b) => b.score - a.score);
+  const separated: Array<{ x: number; z: number }> = [];
+  for (const spot of spots) {
+    if (separated.some((keep) => Math.hypot(keep.x - spot.x, keep.z - spot.z) < 1.8)) continue;
+    separated.push(spot);
+  }
+  const free = (spot: { x: number; z: number }) => !occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 1.8);
+  const open = separated.filter((spot) => free(spot));
+  if (open.length) return open[Math.abs(salt) % open.length];
+  const base = separated[Math.abs(salt) % Math.max(1, separated.length)] ?? nearestOpen(x + 2.8, z + 2.8);
+  for (let n = 1; n <= 10; n++) {
+    const ang = (salt + n * 47) * (Math.PI / 180);
+    const nudged = nearestOpen(base.x + Math.cos(ang) * (2 + n * 0.2), base.z + Math.sin(ang) * (2 + n * 0.2), 3);
+    if (!free(nudged) || blocked(nudged.x, nudged.z)) continue;
+    if (Math.hypot(nudged.x - x, nudged.z - z) < 1.8) continue;
+    return nudged;
+  }
+  return base;
 }
 
 export function clearLine(x0: number, z0: number, x1: number, z1: number) {

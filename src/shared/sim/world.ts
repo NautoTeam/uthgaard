@@ -1,4 +1,4 @@
-import { CITIES, NPCS, arrivalAt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
 import type { GraveState } from "./types";
@@ -43,6 +43,8 @@ export interface JoinInput {
   shroudUntil?: number;
   attunedGates?: string[];
   hp?: number;
+  /** Death already took gold and XP. A reload must not take them again. */
+  deathSettled?: boolean;
 }
 
 function applyStats(p: PlayerState) {
@@ -255,7 +257,10 @@ export function createWorld() {
     player.hp = savedHp == null ? player.maxHp : Math.max(0, Math.min(player.maxHp, savedHp));
     player.mana = player.maxMana;
     player.stamina = player.maxStamina;
-    if (player.hp <= 0) player.graveDropped = true;
+    if (player.hp <= 0) {
+      if (input.deathSettled) player.graveDropped = true;
+      else dropGrave(player);
+    }
     players.set(player.id, player);
     log(`${player.username} entered ${home.name}.`);
     return player;
@@ -480,7 +485,7 @@ export function createWorld() {
     return { ok: true };
   }
 
-  function travel(id: string, cityId: string): ActionResult {
+  function travel(id: string, cityId: string, extra: Array<{ x: number; z: number }> = []): ActionResult {
     const p = players.get(id);
     const city = cityAt(cityId);
     if (!p || p.hp <= 0 || !city) return { ok: false, reason: "That gate is shut." };
@@ -489,7 +494,11 @@ export function createWorld() {
     if (here.city === cityId) return { ok: true };
     const reason = gateHop(here.city, cityId, p.level, p.attunedGates ?? DEFAULT_ATTUNED);
     if (reason) return { ok: false, reason };
-    const spot = arrivalAt(city.x, city.z);
+    const occupied = [
+      ...[...players.values()].filter((o) => o.id !== p.id && o.hp > 0).map((o) => ({ x: o.x, z: o.z })),
+      ...extra,
+    ];
+    const spot = arrivalAt(city.x, city.z, occupied, arrivalSalt(p.id));
     if (blocked(spot.x, spot.z)) return { ok: false, reason: "The arrival stone is blocked." };
     p.x = spot.x;
     p.z = spot.z;
@@ -635,13 +644,16 @@ export function createWorld() {
     log(`${p.username}: ${msg}`);
   }
 
-  function respawn(id: string): ActionResult {
+  function respawn(id: string, extra: Array<{ x: number; z: number }> = []): ActionResult {
     const p = players.get(id);
     if (!p || p.hp > 0) return { ok: false, reason: "You are still standing." };
-    const xpLost = Math.floor(p.xp * 0.1);
-    p.xp = Math.max(0, p.xp - xpLost);
+    dropGrave(p);
     const home = hearthOf(p.race);
-    const spot = arrivalAt(home.x, home.z);
+    const occupied = [
+      ...[...players.values()].filter((o) => o.id !== p.id && o.hp > 0).map((o) => ({ x: o.x, z: o.z })),
+      ...extra,
+    ];
+    const spot = arrivalAt(home.x, home.z, occupied, arrivalSalt(p.id));
     p.x = spot.x;
     p.z = spot.z;
     p.hp = p.maxHp;
@@ -649,18 +661,21 @@ export function createWorld() {
     p.stamina = p.maxStamina;
     p.graveDropped = false;
     p.shroudUntil = Date.now() + DEATH_SHROUD_MS;
-    log(`${p.username} returned to ${home.name} under Grave Chill, leaving ${xpLost} XP behind.`);
+    log(`${p.username} returned to ${home.name} under Grave Chill.`);
     return { ok: true, reason: "Grave Chill for 60s." };
   }
 
   function dropGrave(p: PlayerState) {
     if (p.hp > 0 || p.graveDropped) return;
     p.graveDropped = true;
-    const gold = Math.min(p.gold, Math.max(p.gold > 0 ? 5 : 0, Math.floor(p.gold * 0.15)));
-    p.gold -= gold;
+    const pct = Math.floor(Math.max(0, p.gold) * 0.15);
+    const gold = Math.min(Math.max(0, p.gold), Math.max(p.gold > 0 ? 5 : 0, pct));
+    const xpLost = Math.max(0, Math.floor(Math.max(0, p.xp) * 0.1));
+    p.gold = Math.max(0, p.gold - gold);
+    p.xp = Math.max(0, p.xp - xpLost);
     const id = "g" + Math.floor(Math.random() * 1e9).toString(36);
     graves.set(id, { id, owner: p.username, x: p.x, z: p.z, gold, items: {}, born: Date.now() });
-    log(`${p.username} fell. A tombstone holds ${gold} gold.`);
+    log(`${p.username} fell. A tombstone holds ${gold} gold. ${xpLost} XP is gone.`);
   }
 
   function loot(id: string, graveId: string): ActionResult {
@@ -668,14 +683,16 @@ export function createWorld() {
     const grave = graves.get(graveId);
     if (!p || p.hp <= 0 || !grave) return { ok: false, reason: "Nothing to loot." };
     if (Math.hypot(p.x - grave.x, p.z - grave.z) > 4) return { ok: false, reason: "Too far." };
-    p.gold += grave.gold;
+    const gold = Math.max(0, Math.floor(grave.gold));
+    grave.gold = 0;
     if (!p.inventory) p.inventory = {};
     for (const [itemId, count] of Object.entries(grave.items)) {
       if (count > 0) p.inventory[itemId] = (p.inventory[itemId] ?? 0) + count;
     }
     graves.delete(graveId);
-    log(`${p.username} looted ${grave.owner}'s tombstone (${grave.gold} gold).`);
-    return { ok: true, reason: grave.gold > 0 ? `+${grave.gold} gold` : "The stone was empty." };
+    p.gold += gold;
+    log(`${p.username} looted ${grave.owner}'s tombstone (${gold} gold).`);
+    return { ok: true, reason: gold > 0 ? `+${gold} gold` : "The stone was empty." };
   }
 
   function adoptGraves(list: GraveState[]) {

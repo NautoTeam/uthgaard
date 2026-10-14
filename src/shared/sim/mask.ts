@@ -356,6 +356,23 @@ export function terrainAt(x: number, z: number) {
 
 export function zoneAt(x: number, z: number): ZoneDef | null {
   ensure();
+  // A haven keeps its own zone for a short walk past the gate. Fenhollow sits
+  // on the Hearthfields / Beastmarch seam, and nearest-seed was calling that
+  // starter ground a level 20 PvP zone once the town name dropped off.
+  let haven: (typeof WORLD_CITIES)[number] | null = null;
+  let havenD = 40;
+  for (const city of WORLD_CITIES) {
+    if ((city.phase ?? 1) > 1 || city.kind !== "haven" || !city.zone) continue;
+    const d = Math.hypot(city.x - x, city.z - z);
+    if (d < havenD) {
+      havenD = d;
+      haven = city;
+    }
+  }
+  if (haven?.zone) {
+    const declared = ZONES.find((zone) => zone.id === haven.zone);
+    if (declared) return declared;
+  }
   const ix = Math.round(x);
   const iz = Math.round(z);
   if (!insideGrid(ix, iz) || !zoneIx) return null;
