@@ -21,6 +21,19 @@ export function reconnectPlan(
   return { reconnect: true, notice: "Reconnecting…" };
 }
 
+/** The world is playable only after welcome. A close never falls back to a local world. */
+export type LinkGate = "connecting" | "online" | "unavailable" | "elsewhere" | "sign-in";
+
+export function gateAfterClose(code: number): LinkGate {
+  if (code === 4401) return "sign-in";
+  if (code === 4409) return "elsewhere";
+  return "unavailable";
+}
+
+export function worldMayStart(gate: LinkGate): boolean {
+  return gate === "online";
+}
+
 export function snapAlpha(olderAt: number, newerAt: number, now: number, delay = RENDER_DELAY_MS): number {
   const span = newerAt - olderAt;
   if (!(span > 0)) return 1;
@@ -177,21 +190,15 @@ export function connectRemote(opts: {
   onAck?: (seq: number, result: { ok: boolean; reason?: string }) => void;
   onStatus?: (line: string | null) => void;
   onNeedCreate?: () => Promise<HelloImport | null>;
-  /** First connection failed, or the hero was never welcomed. */
-  onOffline?: (why: "signed-out" | "unreachable" | "join" | "replaced", detail?: string) => void;
+  /** Full-screen gate. `online` is the only state that may show the world. */
+  onLink?: (gate: LinkGate) => void;
   fetchToken?: () => Promise<TokenResponse>;
   openSocket?: (url: string) => SocketLike;
-  sleep?: (ms: number) => Promise<void>;
-  rand?: () => number;
 }): RemoteHandle {
   const fetchToken = opts.fetchToken ?? defaultFetchToken;
   const openSocket = opts.openSocket ?? defaultOpen;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const rand = opts.rand ?? Math.random;
   let stopped = false;
   let socket: SocketLike | null = null;
-  let attempt = 0;
-  let tokenFailures = 0;
   let welcomed = false;
   let importPick: HelloImport | null | undefined;
   let importWait: Promise<HelloImport | null> | null = null;
@@ -236,7 +243,7 @@ export function connectRemote(opts: {
         const failure = joinFailure(reason);
         stopped = true;
         opts.onError(reason);
-        opts.onOffline?.(failure.why, failure.detail);
+        opts.onLink?.(failure.why === "signed-out" ? "sign-in" : "unavailable");
         try {
           sock.close(1000);
         } catch {
@@ -278,10 +285,9 @@ export function connectRemote(opts: {
         }
         if (msg.t === "welcome" && msg.playerId) {
           welcomed = true;
-          attempt = 0;
-          tokenFailures = 0;
           clearTimeout(createTimer);
           opts.onStatus?.("Online");
+          opts.onLink?.("online");
           opts.onWelcome(msg.playerId);
           return;
         }
@@ -329,34 +335,12 @@ export function connectRemote(opts: {
   }
 
   async function loop() {
-    while (!stopped) {
-      const code = await openOnce();
-      if (stopped) return;
-      if (code === 4409) {
-        stopped = true;
-        opts.onOffline?.("replaced");
-        return;
-      }
-      if (!welcomed) {
-        stopped = true;
-        opts.onOffline?.(code === 4401 ? "signed-out" : "unreachable");
-        return;
-      }
-      const plan = reconnectPlan(code, tokenFailures);
-      if (code === 4401) tokenFailures += 1;
-      if (!plan.reconnect) {
-        if (plan.notice === "sign in again") {
-          stopped = true;
-          opts.onOffline?.("signed-out");
-          return;
-        }
-        if (plan.notice) opts.onStatus?.(plan.notice);
-        return;
-      }
-      if (welcomed) opts.onStatus?.(plan.notice);
-      await sleep(backoffMs(attempt, rand));
-      attempt = Math.min(attempt + 1, BACKOFF_MS.length - 1);
-    }
+    opts.onLink?.("connecting");
+    if (stopped) return;
+    const code = await openOnce();
+    if (stopped) return;
+    stopped = true;
+    opts.onLink?.(gateAfterClose(code));
   }
 
   void loop();

@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
 import { deleteSave, listSaves, type CharacterSave } from "@/client/localSave";
 import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClass, type Race } from "@/game/types";
-import { SERVER } from "@/game/net";
-import { probeGameLink } from "@/game/remote";
 import { authClient, signOut } from "@/lib/auth/client";
 
 export function Uthgaard() {
@@ -21,6 +19,7 @@ export function Uthgaard() {
               setCreateError(createErrorText(reason));
               setRun(null);
             },
+            onSignOut: () => setRun(null),
           });
         }}
       />
@@ -45,10 +44,6 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [link, setLink] = useState({ online: false, reason: "", ready: false });
-  const linkRef = useRef(link);
-  const probeRef = useRef<Promise<{ online: boolean; reason: string }> | null>(null);
-  const [probeNonce, setProbeNonce] = useState(0);
   const { data: session, isPending } = authClient.useSession();
   const email = session?.user?.email ?? "";
   const locked = !classAllowed(race, path);
@@ -56,35 +51,6 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   useEffect(() => {
     setSaves(listSaves());
   }, []);
-
-  useEffect(() => {
-    if (isPending) return;
-    let stale = false;
-    if (!email || !SERVER) {
-      probeRef.current = null;
-      const next = { online: false, reason: "", ready: true };
-      linkRef.current = next;
-      setLink(next);
-      return;
-    }
-    const pending = probeGameLink(SERVER).then(async (result) => {
-      if (result.reason !== "You're not signed in.") return result;
-      await new Promise((r) => setTimeout(r, 400));
-      return probeGameLink(SERVER);
-    });
-    probeRef.current = pending;
-    setLink((prev) => ({ ...prev, ready: false }));
-    void pending.then((result) => {
-      if (stale) return;
-      const next = { ...result, ready: true };
-      linkRef.current = next;
-      if (probeRef.current === pending) probeRef.current = null;
-      setLink(next);
-    });
-    return () => {
-      stale = true;
-    };
-  }, [email, isPending, probeNonce]);
 
   async function enter(next?: CharacterSave) {
     let signedIn = email;
@@ -96,24 +62,14 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
     } catch {
       /* keep the session already on screen */
     }
-    let online = false;
-    let reason = "You're not signed in.";
-    if (signedIn && SERVER) {
-      const result = await probeGameLink(SERVER);
-      online = result.online;
-      reason = result.reason || (online ? "" : "The game server can't be reached.");
-      const nextLink = { online: result.online, reason: result.reason, ready: true };
-      linkRef.current = nextLink;
-      setLink(nextLink);
-    } else if (signedIn) {
-      reason = "The game server isn't set.";
+    if (!signedIn) {
+      setAuthError("Sign in to enter the village.");
+      return;
     }
     onEnter({
       username: (next?.username ?? name).trim().slice(0, 16) || "Hero",
       race: next?.race ?? race,
       baseClass: next?.baseClass ?? path,
-      online,
-      offlineNote: online ? undefined : `Playing offline: ${reason}`,
     });
   }
 
@@ -141,7 +97,6 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
       }
       setPassword("");
       await authClient.getSession();
-      setProbeNonce((n) => n + 1);
     } catch (err) {
       const message = err instanceof Error ? err.message : "That didn't work.";
       setAuthError(message.length > 140 ? `${message.slice(0, 137)}…` : message);
@@ -189,10 +144,6 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
         ) : email ? (
           <>
             <p className="account-who">Signed in as {email}</p>
-            <p className={link.ready && link.online ? "account-net online" : "account-net offline"}>
-              {link.ready ? (link.online ? "Server reachable" : "Offline") : "…"}
-            </p>
-            {link.ready && !link.online && link.reason && <p className="account-reason">{link.reason}</p>}
             <button type="button" disabled={busy} onClick={() => void leaveAccount()}>
               Sign out
             </button>
@@ -233,7 +184,6 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
                 Create account
               </button>
             </div>
-            <p className="account-net offline">Offline</p>
           </>
         )}
         {authError && <p className="account-reason">{authError}</p>}
@@ -285,7 +235,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
           {error}
         </p>
       )}
-      <button id="joinBtn" type="submit" disabled={locked}>
+      <button id="joinBtn" type="submit" disabled={locked || !email || isPending}>
         Enter the Village
       </button>
       <p className="hint">
@@ -297,7 +247,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
         <div className="saves">
           {saves.map((s) => (
             <div className="save-row" key={s.username}>
-              <button type="button" className="save-continue" onClick={() => enter(s)}>
+              <button type="button" className="save-continue" disabled={!email || isPending} onClick={() => enter(s)}>
                 Continue
                 <small>
                   {s.username} · {s.race} {s.prestigeClass || s.baseClass} · Lv {s.level}
@@ -330,6 +280,14 @@ function Isle({ profile }: { profile: IsleProfile }) {
 
   return (
     <div id="game">
+      <div id="linkGate">
+        <div className="card">
+          <p id="linkGateText">Connecting…</p>
+          <button id="linkGateRetry" type="button" hidden>
+            Retry
+          </button>
+        </div>
+      </div>
       <canvas id="view" />
       <div id="clickDebug" hidden></div>
       <div id="debugHud" hidden>

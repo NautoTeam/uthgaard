@@ -1119,6 +1119,41 @@ body {
   min-height: 36px;
 }
 
+#linkGate {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 10, 8, 0.88);
+}
+
+#linkGate[hidden] {
+  display: none !important;
+}
+
+#linkGate .card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 240px;
+  padding: 20px;
+  background: #1a221c;
+  border: 1px solid #6a5a38;
+  color: #f0e2b0;
+  text-align: center;
+}
+
+#linkGate p {
+  margin: 0;
+  font-size: 18px;
+}
+
+#linkGate button {
+  min-height: 40px;
+}
+
 #chatInput {
   width: 100%;
   box-sizing: border-box;
