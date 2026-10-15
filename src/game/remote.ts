@@ -142,6 +142,23 @@ export function probeGameLink(url: string): Promise<{ online: boolean; reason: s
   });
 }
 
+function messageText(data: unknown): string | null {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(data as Uint8Array);
+  return null;
+}
+
+function joinFailure(reason: string): { why: "signed-out" | "unreachable" | "join"; detail: string } {
+  if (reason === "name_taken") return { why: "join", detail: "That name is taken." };
+  if (reason === "bad_create") return { why: "join", detail: "That hero cannot be created." };
+  if (reason === "join_failed") return { why: "join", detail: "The hero could not be saved." };
+  if (reason === "bad token") return { why: "signed-out", detail: "The game token was rejected." };
+  if (reason === "not ready") return { why: "unreachable", detail: "The game server is not ready." };
+  const line = reason.replace(/\s+/g, " ").trim();
+  return { why: "join", detail: line ? line.slice(0, 90) : "The hero could not join." };
+}
+
 function defaultOpen(url: string): SocketLike {
   return new WebSocket(url) as unknown as SocketLike;
 }
@@ -160,8 +177,8 @@ export function connectRemote(opts: {
   onAck?: (seq: number, result: { ok: boolean; reason?: string }) => void;
   onStatus?: (line: string | null) => void;
   onNeedCreate?: () => Promise<HelloImport | null>;
-  /** First connection failed: not signed in, or the socket never came up. */
-  onOffline?: (why: "signed-out" | "unreachable") => void;
+  /** First connection failed, or the hero was never welcomed. */
+  onOffline?: (why: "signed-out" | "unreachable" | "join", detail?: string) => void;
   fetchToken?: () => Promise<TokenResponse>;
   openSocket?: (url: string) => SocketLike;
   sleep?: (ms: number) => Promise<void>;
@@ -205,12 +222,27 @@ export function connectRemote(opts: {
       let opened = false;
       let createSent = false;
       let openTimer: ReturnType<typeof setTimeout> | undefined;
+      let createTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (code: number) => {
         if (settled) return;
         settled = true;
         clearTimeout(openTimer);
+        clearTimeout(createTimer);
         if (socket === sock) socket = null;
         resolve(code || 1006);
+      };
+      const failJoin = (reason: string) => {
+        if (stopped || welcomed || settled) return;
+        const failure = joinFailure(reason);
+        stopped = true;
+        opts.onError(reason);
+        opts.onOffline?.(failure.why, failure.detail);
+        try {
+          sock.close(1000);
+        } catch {
+          /* already closed */
+        }
+        finish(1000);
       };
       openTimer = setTimeout(() => {
         if (opened || settled) return;
@@ -221,16 +253,15 @@ export function connectRemote(opts: {
         }
         finish(1006);
       }, 8000);
-      sock.onopen = () => {
-        opened = true;
-        clearTimeout(openTimer);
-        if (stopped) {
-          sock.close(1000);
-          return;
-        }
-        sock.send(JSON.stringify(gameHello(token)));
+      const sendCreate = (imported: HelloImport | null) => {
+        if (stopped || createSent || sock.readyState !== 1) return;
+        createSent = true;
+        sock.send(JSON.stringify(gameHello(token, opts.choice, imported)));
+        clearTimeout(createTimer);
+        createTimer = setTimeout(() => failJoin("The hero did not join."), 8000);
       };
-      sock.onmessage = (ev) => {
+      const handleRaw = (raw: string) => {
+        if (settled) return;
         let msg: {
           t?: string;
           reason?: string;
@@ -240,7 +271,7 @@ export function connectRemote(opts: {
           state?: PublicState;
         };
         try {
-          msg = JSON.parse(String(ev.data)) as typeof msg;
+          msg = JSON.parse(raw) as typeof msg;
         } catch {
           return;
         }
@@ -248,6 +279,7 @@ export function connectRemote(opts: {
           welcomed = true;
           attempt = 0;
           tokenFailures = 0;
+          clearTimeout(createTimer);
           opts.onStatus?.(null);
           opts.onWelcome(msg.playerId);
           return;
@@ -263,18 +295,32 @@ export function connectRemote(opts: {
         if (msg.t !== "error") return;
         const reason = msg.reason ?? "";
         if (reason === "need_create") {
-          void pickImport().then((imported) => {
-            if (stopped || createSent || sock.readyState !== 1) return;
-            createSent = true;
-            sock.send(JSON.stringify(gameHello(token, opts.choice, imported)));
-          });
+          if (createSent) {
+            failJoin("The server did not accept that hero.");
+            return;
+          }
+          void pickImport().then((imported) => sendCreate(imported));
           return;
         }
-        if (reason === "name_taken" || reason === "bad_create") {
-          stopped = true;
-          opts.onError(reason);
+        if (!welcomed) failJoin(reason || "The hero could not join.");
+      };
+      sock.onopen = () => {
+        opened = true;
+        clearTimeout(openTimer);
+        if (stopped) {
           sock.close(1000);
+          return;
         }
+        sock.send(JSON.stringify(gameHello(token)));
+      };
+      sock.onmessage = (ev) => {
+        const data = ev.data;
+        if (typeof Blob !== "undefined" && data instanceof Blob) {
+          void data.text().then((raw) => handleRaw(raw));
+          return;
+        }
+        const raw = messageText(data);
+        if (raw != null) handleRaw(raw);
       };
       sock.onerror = () => undefined;
       sock.onclose = (ev) => finish(ev?.code ?? 1006);

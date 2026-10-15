@@ -372,14 +372,20 @@ export function startServer(opts: {
 
     async function onMessage(data: RawData) {
       if (conn.replaced || conn.dead) return;
-      let parsed: ReturnType<typeof ClientMsg.safeParse>;
+      let raw: unknown;
       try {
-        parsed = ClientMsg.safeParse(JSON.parse(rawText(data)));
+        raw = JSON.parse(rawText(data));
       } catch {
         noteBad();
         return;
       }
+      const parsed = ClientMsg.safeParse(raw);
       if (!parsed.success) {
+        const kind = raw && typeof raw === "object" ? (raw as { t?: unknown }).t : undefined;
+        if (kind === "hello") {
+          send(socket, { t: "error", reason: "bad_create" });
+          return;
+        }
         noteBad();
         return;
       }
@@ -439,7 +445,9 @@ export function startServer(opts: {
               created = await characters.create(claims.userId, record.username, record);
             } catch (err) {
               authority.world.leave(player.id);
-              throw err;
+              warnSave(err);
+              send(socket, { t: "error", reason: "join_failed" });
+              return;
             }
             if (created === "name_taken") {
               authority.world.leave(player.id);

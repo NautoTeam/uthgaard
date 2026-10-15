@@ -737,6 +737,28 @@ test("create is required, validated, and stored at rev 1", async () => {
   }
 });
 
+test("a digit in the name still joins, and a one-letter name is rejected", async () => {
+  const characters = memoryCharacters();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 60_000, rand: mulberry32(36) });
+  const port = await game.ready;
+  const { ws, msgs } = await connect(port);
+  try {
+    const token = await signGameToken(SECRET, { id: "user-two", name: "Two" });
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Hero2", race: "Human", baseClass: "Fighter" } }));
+    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+    assert.equal(welcome.playerId, "user-two");
+    assert.equal(game.world.players.get("user-two")?.username, "Hero2");
+
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "A", race: "Human", baseClass: "Fighter" } }));
+    assert.equal((await until(() => msgs.find((m) => m.reason === "bad_create"))).reason, "bad_create");
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal(game.world.players.get("user-two")?.username, "Hero2");
+  } finally {
+    ws.close();
+    await game.close();
+  }
+});
+
 test("death writes a grave and a new server restores it with the character", async () => {
   const { pg, characters } = await pgliteDb();
   const bornAt = 50_000_000;

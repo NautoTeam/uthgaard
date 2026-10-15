@@ -125,7 +125,12 @@ export type Intent = z.infer<typeof IntentSchema>;
 
 const helloCreate = z
   .object({
-    name: z.string().min(2).max(16).regex(/^[A-Za-z][A-Za-z' -]*$/),
+    name: z
+      .string()
+      .trim()
+      .min(2)
+      .max(16)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9' -]*$/),
     race: z.string(),
     baseClass: z.string(),
   })

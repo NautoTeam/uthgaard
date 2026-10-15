@@ -45,9 +45,10 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [link, setLink] = useState({ online: false, reason: "" });
+  const [link, setLink] = useState({ online: false, reason: "", ready: false });
   const linkRef = useRef(link);
   const probeRef = useRef<Promise<{ online: boolean; reason: string }> | null>(null);
+  const [probeNonce, setProbeNonce] = useState(0);
   const { data: session, isPending } = authClient.useSession();
   const email = session?.user?.email ?? "";
   const locked = !classAllowed(race, path);
@@ -61,22 +62,29 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
     let stale = false;
     if (!email || !SERVER) {
       probeRef.current = null;
-      linkRef.current = { online: false, reason: "" };
-      setLink(linkRef.current);
+      const next = { online: false, reason: "", ready: true };
+      linkRef.current = next;
+      setLink(next);
       return;
     }
-    const pending = probeGameLink(SERVER);
+    const pending = probeGameLink(SERVER).then(async (result) => {
+      if (result.reason !== "You're not signed in.") return result;
+      await new Promise((r) => setTimeout(r, 400));
+      return probeGameLink(SERVER);
+    });
     probeRef.current = pending;
+    setLink((prev) => ({ ...prev, ready: false }));
     void pending.then((result) => {
       if (stale) return;
-      linkRef.current = result;
+      const next = { ...result, ready: true };
+      linkRef.current = next;
       if (probeRef.current === pending) probeRef.current = null;
-      setLink(result);
+      setLink(next);
     });
     return () => {
       stale = true;
     };
-  }, [email, isPending]);
+  }, [email, isPending, probeNonce]);
 
   async function enter(next?: CharacterSave) {
     let online = false;
@@ -118,6 +126,8 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
         return;
       }
       setPassword("");
+      await authClient.getSession();
+      setProbeNonce((n) => n + 1);
     } catch (err) {
       const message = err instanceof Error ? err.message : "That didn't work.";
       setAuthError(message.length > 140 ? `${message.slice(0, 137)}…` : message);
@@ -161,12 +171,14 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
       >
         <h2>Sign in / Create account</h2>
         {isPending ? (
-          <p className="account-net offline">Offline</p>
+          <p className="account-net">…</p>
         ) : email ? (
           <>
             <p className="account-who">Signed in as {email}</p>
-            <p className={link.online ? "account-net online" : "account-net offline"}>{link.online ? "Online" : "Offline"}</p>
-            {link.reason && !link.online && <p className="account-reason">{link.reason}</p>}
+            <p className={link.ready && link.online ? "account-net online" : "account-net offline"}>
+              {link.ready ? (link.online ? "Online" : "Offline") : "…"}
+            </p>
+            {link.ready && !link.online && link.reason && <p className="account-reason">{link.reason}</p>}
             <button type="button" disabled={busy} onClick={() => void leaveAccount()}>
               Sign out
             </button>

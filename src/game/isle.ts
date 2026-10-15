@@ -501,10 +501,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   const authority = createAuthority();
   const world = authority.world;
-  if (!remotePlay) {
-    world.join(joinBody);
-    world.adoptGraves(loadGraves());
-  }
+  if (!remotePlay) world.adoptGraves(loadGraves());
+  world.join(joinBody);
 
   const claim = Date.now() + Math.random();
   let bestClaim = claim;
@@ -650,24 +648,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function overlayMine(snap: PublicState): PublicState {
     const mine = localPlayer();
-    if (!mine) return snap;
-    const players = snap.players.some((p) => p.id === myId)
-      ? snap.players.map((p) =>
+    const players = snap.players ?? [];
+    if (!mine) return { ...snap, players };
+    if (players.some((p) => p.id === myId)) {
+      return {
+        ...snap,
+        players: players.map((p) =>
           p.id === myId ? { ...p, x: mine.x, z: mine.z, rotation: mine.rotation } : p,
-        )
-      : [...snap.players, { ...mine }];
-    return { ...snap, players };
+        ),
+      };
+    }
+    if (players.some((p) => p.username === mine.username)) return { ...snap, players };
+    return { ...snap, players: [...players, { ...mine }] };
   }
 
   function serverView(): PublicState {
     const newer = snaps[snaps.length - 1];
-    if (!newer) return { players: [], monsters: [], graves: [], logs: [] };
+    if (!newer) return overlayMine({ players: [], monsters: [], graves: [], logs: [] });
     const older = snaps.length > 1 ? snaps[0] : undefined;
     const alpha = older ? snapAlpha(older.at, newer.at, performance.now()) : 1;
     return overlayMine({
       ...newer.state,
-      players: interpolateXZ(older?.state.players, newer.state.players, alpha, myId),
-      monsters: interpolateXZ(older?.state.monsters, newer.state.monsters, alpha),
+      players: interpolateXZ(older?.state.players, newer.state.players ?? [], alpha, myId),
+      monsters: interpolateXZ(older?.state.monsters, newer.state.monsters ?? [], alpha),
     });
   }
 
@@ -679,6 +682,51 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function me() {
     return view().players.find((p) => p.id === myId) ?? localPlayer();
+  }
+
+  let serverBound = false;
+  let placed = false;
+
+  function claimServerId(nextId: string) {
+    if (!nextId || nextId === myId) {
+      serverBound = true;
+      return;
+    }
+    const prev = world.players.get(myId);
+    const prevId = myId;
+    myId = nextId;
+    serverBound = true;
+    if (!prev || world.players.get(nextId)) {
+      if (prev && prevId !== nextId) world.leave(prevId);
+      return;
+    }
+    world.leave(prevId);
+    world.join({
+      id: nextId,
+      username: prev.username,
+      race: prev.race,
+      baseClass: prev.baseClass,
+      prestigeClass: prev.prestigeClass || undefined,
+      level: prev.level,
+      xp: prev.xp,
+      gold: prev.gold,
+      x: prev.x,
+      z: prev.z,
+      hp: prev.hp,
+      inventory: prev.inventory,
+      equipment: prev.equipment,
+      trainPoints: prev.trainPoints,
+      skills: prev.skills,
+      hotbar: prev.hotbar,
+      shroudUntil: prev.shroudUntil,
+      attunedGates: prev.attunedGates,
+      deathSettled: prev.hp <= 0 && prev.graveDropped,
+    });
+    const moved = world.players.get(nextId);
+    if (!moved) return;
+    moved.x = prev.x;
+    moved.z = prev.z;
+    moved.rotation = prev.rotation;
   }
 
   function adoptServerHero(mine: PublicState["players"][number]) {
@@ -709,11 +757,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       local.x = mine.x;
       local.z = mine.z;
       local.rotation = mine.rotation;
-    } else if (Math.hypot(local.x - mine.x, local.z - mine.z) > 1.5) {
+    } else if (!placed || Math.hypot(local.x - mine.x, local.z - mine.z) > 1.5) {
       local.x = mine.x;
       local.z = mine.z;
       local.rotation = mine.rotation;
     }
+    placed = true;
     local.hp = mine.hp;
     local.maxHp = mine.maxHp;
     local.mana = mine.mana;
@@ -2080,7 +2129,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (now - lastSend > 70) {
       lastSend = now;
       if (host) world.move(p.id, p.x, p.z, p.rotation);
-      else if (remotePlay && myId) send({ op: "move", id: myId, x: p.x, z: p.z, rotation: p.rotation });
+      else if (remotePlay && serverBound && placed && myId) send({ op: "move", id: myId, x: p.x, z: p.z, rotation: p.rotation });
     }
   }
 
@@ -4968,54 +5017,55 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     });
   }
 
-  function playOffline(why: "signed-out" | "unreachable") {
+  function playOffline(why: "signed-out" | "unreachable" | "join", detail?: string) {
     if (!remotePlay) return;
     remotePlay = false;
     host = true;
+    serverBound = false;
     remote = null;
     snaps.length = 0;
     remoteSession?.close();
     remoteSession = null;
     finishImport?.(null);
-    if (myId !== joinBody.id) {
-      world.leave(myId);
-      myId = joinBody.id;
+    const live = world.players.get(myId);
+    if (!live) {
+      if (myId !== joinBody.id) myId = joinBody.id;
+      const disk = loadSave(profile.username);
+      if (disk) {
+        if (disk.baseClass === profile.baseClass) joinBody.prestigeClass = disk.prestigeClass || "";
+        joinBody.level = disk.level || 1;
+        joinBody.xp = disk.xp || 0;
+        joinBody.gold = disk.gold ?? 40;
+        joinBody.x = disk.x;
+        joinBody.z = disk.z;
+        joinBody.inventory = disk.inventory;
+        joinBody.equipment = disk.equipment;
+        joinBody.trainPoints = disk.trainPoints;
+        joinBody.skills = disk.skills;
+        joinBody.hotbar = disk.hotbar;
+        joinBody.shroudUntil = disk.shroudUntil;
+        joinBody.attunedGates = disk.attunedGates;
+        joinBody.hp = disk.hp;
+        joinBody.deathSettled = disk.deathSettled;
+        charterHeld = disk.charter === true;
+        lastInput = disk.inputAt ?? 0;
+      }
+      if (!world.players.get(myId)) world.join(joinBody);
     }
-    const disk = loadSave(profile.username);
-    if (disk) {
-      if (disk.baseClass === profile.baseClass) joinBody.prestigeClass = disk.prestigeClass || "";
-      joinBody.level = disk.level || 1;
-      joinBody.xp = disk.xp || 0;
-      joinBody.gold = disk.gold ?? 40;
-      joinBody.x = disk.x;
-      joinBody.z = disk.z;
-      joinBody.inventory = disk.inventory;
-      joinBody.equipment = disk.equipment;
-      joinBody.trainPoints = disk.trainPoints;
-      joinBody.skills = disk.skills;
-      joinBody.hotbar = disk.hotbar;
-      joinBody.shroudUntil = disk.shroudUntil;
-      joinBody.attunedGates = disk.attunedGates;
-      joinBody.hp = disk.hp;
-      joinBody.deathSettled = disk.deathSettled;
-      charterHeld = disk.charter === true;
-      lastInput = disk.inputAt ?? 0;
-    }
-    if (!world.players.get(myId)) {
-      world.join(joinBody);
-      world.adoptGraves(loadGraves());
-    }
+    world.adoptGraves(loadGraves());
     const spawned = world.players.get(myId);
     if (spawned) {
       cam.x = (spawned.x - spawned.z) * (TW / 2);
       cam.z = (spawned.x + spawned.z) * (TH / 2);
     }
     showLocalDebug();
-    setNetStatus(
+    const line =
       why === "signed-out"
         ? "You're not signed in. Playing offline."
-        : "The game server can't be reached. Playing offline.",
-    );
+        : why === "join"
+          ? `${detail || "The hero could not join."} Playing offline.`
+          : "The game server can't be reached. Playing offline.";
+    setNetStatus(line);
   }
 
   if (remotePlay) {
@@ -5025,12 +5075,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       choice: { username: profile.username, race: profile.race, baseClass: profile.baseClass },
       onSnap: (state) => takeSnap(state),
       onWelcome: (playerId) => {
-        myId = playerId;
+        claimServerId(playerId);
+        const latest = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === playerId);
+        if (latest) adoptServerHero(latest);
       },
-      onError: (reason) => {
-        if (reason === "name_taken" || reason === "bad_create") profile.onCreateError?.(reason);
-      },
-      onOffline: (why) => playOffline(why),
+      onError: () => undefined,
+      onOffline: (why, detail) => playOffline(why, detail),
       onAck: (seq, result) => {
         const intent = sentIntents.get(seq);
         sentIntents.delete(seq);
