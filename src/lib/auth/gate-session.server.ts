@@ -205,6 +205,30 @@ function removeRequestCookie(headers: Headers, name: string): void {
   }
 }
 
+/** Better Auth's email/password account. Not a Grok viewer. */
+const EMAIL_PASSWORD_PROVIDER = "credential";
+
+/**
+ * An `x-grok-identity` header must not replace a session the browser already
+ * has. Adopt the viewer only when nothing valid is signed in. A matching
+ * gate account is the same person; an email/password account stays theirs.
+ */
+export function resolveGateSessionUser(input: {
+  existingUserId: string | null;
+  accounts: readonly { providerId: string; accountId: string }[] | null;
+  identitySub: string;
+}): { action: "keep"; userId: string; gate: boolean; email: boolean } | { action: "adopt" } {
+  if (!input.existingUserId) return { action: "adopt" };
+  const email = input.accounts?.some((account) => account.providerId === EMAIL_PASSWORD_PROVIDER) ?? false;
+  const gate =
+    !email &&
+    Boolean(
+      input.accounts &&
+        sessionBoundToGateIdentity(input.accounts, input.identitySub, GATE_PROVIDER_ID),
+    );
+  return { action: "keep", userId: input.existingUserId, gate, email };
+}
+
 export function gateIdentitySessions() {
   return {
     id: "grok-gate-identity",
@@ -255,25 +279,15 @@ export function gateIdentitySessions() {
                   );
                   return;
                 }
-                if (
-                  sessionBoundToGateIdentity(
-                    accounts,
-                    identity.sub,
-                    GATE_PROVIDER_ID,
-                  )
-                ) {
-                  await writeGateMarkerCookie(ctx, false);
+                const decision = resolveGateSessionUser({
+                  existingUserId: existing.user.id,
+                  accounts,
+                  identitySub: identity.sub,
+                });
+                if (decision.action === "keep") {
+                  if (decision.gate) await writeGateMarkerCookie(ctx, false);
                   return;
                 }
-                await ctx.context.internalAdapter
-                  .deleteSession(existing.session.token)
-                  .catch((err) => {
-                    console.error(
-                      `${LOG} deleteSession (stale non-gate session) failed`,
-                      err,
-                    );
-                    return null;
-                  });
               }
             }
 

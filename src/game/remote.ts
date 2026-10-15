@@ -178,7 +178,7 @@ export function connectRemote(opts: {
   onStatus?: (line: string | null) => void;
   onNeedCreate?: () => Promise<HelloImport | null>;
   /** First connection failed, or the hero was never welcomed. */
-  onOffline?: (why: "signed-out" | "unreachable" | "join", detail?: string) => void;
+  onOffline?: (why: "signed-out" | "unreachable" | "join" | "replaced", detail?: string) => void;
   fetchToken?: () => Promise<TokenResponse>;
   openSocket?: (url: string) => SocketLike;
   sleep?: (ms: number) => Promise<void>;
@@ -281,13 +281,12 @@ export function connectRemote(opts: {
           attempt = 0;
           tokenFailures = 0;
           clearTimeout(createTimer);
-          opts.onStatus?.(null);
+          opts.onStatus?.("Online");
           opts.onWelcome(msg.playerId);
           return;
         }
         if (msg.t === "snap" && msg.state) {
-          const online = typeof msg.online === "number" ? msg.online : msg.state.players?.length;
-          opts.onSnap(msg.state, online);
+          opts.onSnap(msg.state, typeof msg.online === "number" ? msg.online : undefined);
           return;
         }
         if (msg.t === "ack" && typeof msg.seq === "number" && msg.result) {
@@ -333,6 +332,11 @@ export function connectRemote(opts: {
     while (!stopped) {
       const code = await openOnce();
       if (stopped) return;
+      if (code === 4409) {
+        stopped = true;
+        opts.onOffline?.("replaced");
+        return;
+      }
       if (!welcomed) {
         stopped = true;
         opts.onOffline?.(code === 4401 ? "signed-out" : "unreachable");

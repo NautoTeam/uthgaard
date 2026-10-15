@@ -510,7 +510,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let remote: PublicState | null = null;
   let lastHeard = performance.now();
   const snaps: Array<{ at: number; state: PublicState }> = [];
-  let playersOnline = 1;
+  let playersOnline = 0;
   let remoteSession: RemoteHandle | null = null;
   let intentSeq = 0;
   const sentIntents = new Map<number, Intent>();
@@ -1498,11 +1498,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           : zone
             ? `${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${pvp}${where}`
             : (islandAt(p.x, p.z)?.name ?? "The Reach");
-    const onlineN = remotePlay ? Math.max(1, playersOnline) : 1;
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
       `<div class="zone-line">${zoneLabel}</div>` +
-      `<div class="online-line">Players online: ${onlineN}</div>` +
+      `<div class="online-line">Players online: ${playersOnline}</div>` +
       `<div class="gold-line">Gold ${p.gold}</div>` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(hp)}/${maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(mana)}/${maxMana}</span></div>` +
@@ -5026,7 +5025,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     });
   }
 
-  function playOffline(why: "signed-out" | "unreachable" | "join", detail?: string) {
+  function playOffline(why: "signed-out" | "unreachable" | "join" | "replaced", detail?: string) {
     if (!remotePlay) return;
     remotePlay = false;
     host = true;
@@ -5069,11 +5068,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     showLocalDebug();
     const line =
-      why === "signed-out"
-        ? "You're not signed in. Playing offline."
-        : why === "join"
-          ? `${detail || "The hero could not join."} Playing offline.`
-          : "The game server can't be reached. Playing offline.";
+      why === "replaced"
+        ? "Signed in elsewhere"
+        : why === "signed-out"
+          ? "You're not signed in. Playing offline."
+          : why === "join"
+            ? `${detail || "The hero could not join."} Playing offline.`
+            : "The game server can't be reached. Playing offline.";
     setNetStatus(line);
   }
 
@@ -5090,6 +5091,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         claimServerId(playerId);
         const latest = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === playerId);
         if (latest) adoptServerHero(latest);
+        setNetStatus("Online");
       },
       onError: () => undefined,
       onOffline: (why, detail) => playOffline(why, detail),

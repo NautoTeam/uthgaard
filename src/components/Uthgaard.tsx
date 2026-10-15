@@ -176,7 +176,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
           <>
             <p className="account-who">Signed in as {email}</p>
             <p className={link.ready && link.online ? "account-net online" : "account-net offline"}>
-              {link.ready ? (link.online ? "Online" : "Offline") : "…"}
+              {link.ready ? (link.online ? "Server reachable" : "Offline") : "…"}
             </p>
             {link.ready && !link.online && link.reason && <p className="account-reason">{link.reason}</p>}
             <button type="button" disabled={busy} onClick={() => void leaveAccount()}>
