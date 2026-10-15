@@ -1,0 +1,695 @@
+{
+ "race": "human",
+ "anim": "atk2h",
+ "variant": "base",
+ "version": 2,
+ "emptyHanded": true,
+ "frameSize": [
+  180,
+  180
+ ],
+ "frames": "human-base-atk2h-{0..15}.png",
+ "layers": {
+  "base": "human-base-atk2h-{0..15}.png",
+  "chest-cloth": "human-chest-cloth-atk2h-{0..15}.png"
+ },
+ "drawSize": 112,
+ "frameIndex": "facing*4+step (0=S,1=W,2=E,3=N)",
+ "steps": 4,
+ "frameDurationsMs": [
+  300,
+  140,
+  180,
+  320
+ ],
+ "feetY": 174,
+ "torsoX": 90,
+ "units": "pixels in the 180x180 source frame (scale with the draw size: 112/180)",
+ "angle": "direction a held weapon points out of the fist (thumb side), degrees, screen coords, 0=+x, 90=down, -90=up. E = mirror of W (x -> 180-x, angle -> 180-angle)",
+ "behind": "true = a prop in this hand should be drawn before (under) the body sprite",
+ "note": "mainHand = right hand (sword), offHand = left hand (shield / off-hand / second grip). W-side frames are mirrors of E so the sword hand stays the near arm, as in the earlier sets. Mixamo source: great sword slash",
+ "source": {
+  "clip": "great sword slash",
+  "sourceFrames": [
+   15,
+   19,
+   23,
+   28
+  ],
+  "sourceRange": [
+   1,
+   39
+  ]
+ },
+ "mainHand": [
+  {
+   "x": 52,
+   "y": 31,
+   "angle": -125,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 0
+  },
+  {
+   "x": 72,
+   "y": 90,
+   "angle": -144,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 1
+  },
+  {
+   "x": 107,
+   "y": 140,
+   "angle": 124,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 2
+  },
+  {
+   "x": 111,
+   "y": 126,
+   "angle": 146,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 3
+  },
+  {
+   "x": 86,
+   "y": 50,
+   "angle": 16,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 4
+  },
+  {
+   "x": 16,
+   "y": 64,
+   "angle": -9,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 5
+  },
+  {
+   "x": 28,
+   "y": 103,
+   "angle": 123,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 6
+  },
+  {
+   "x": 41,
+   "y": 93,
+   "angle": 143,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 7
+  },
+  {
+   "x": 94,
+   "y": 50,
+   "angle": 164,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 8
+  },
+  {
+   "x": 164,
+   "y": 64,
+   "angle": -171,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 9
+  },
+  {
+   "x": 152,
+   "y": 103,
+   "angle": 57,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 10
+  },
+  {
+   "x": 139,
+   "y": 93,
+   "angle": 37,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 11
+  },
+  {
+   "x": 128,
+   "y": 27,
+   "angle": 72,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 12
+  },
+  {
+   "x": 108,
+   "y": 16,
+   "angle": -21,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 13
+  },
+  {
+   "x": 73,
+   "y": 78,
+   "angle": 27,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 14
+  },
+  {
+   "x": 69,
+   "y": 77,
+   "angle": -15,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 15
+  }
+ ],
+ "offHand": [
+  {
+   "x": 51,
+   "y": 37,
+   "angle": -39,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 0
+  },
+  {
+   "x": 82,
+   "y": 99,
+   "angle": -96,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 1
+  },
+  {
+   "x": 115,
+   "y": 131,
+   "angle": 96,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 2
+  },
+  {
+   "x": 121,
+   "y": 119,
+   "angle": 111,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 3
+  },
+  {
+   "x": 70,
+   "y": 49,
+   "angle": -29,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 4
+  },
+  {
+   "x": 10,
+   "y": 66,
+   "angle": -62,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 5
+  },
+  {
+   "x": 34,
+   "y": 92,
+   "angle": 164,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 6
+  },
+  {
+   "x": 50,
+   "y": 86,
+   "angle": 167,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 7
+  },
+  {
+   "x": 110,
+   "y": 49,
+   "angle": -151,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 8
+  },
+  {
+   "x": 170,
+   "y": 66,
+   "angle": -118,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 9
+  },
+  {
+   "x": 146,
+   "y": 92,
+   "angle": 16,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 10
+  },
+  {
+   "x": 130,
+   "y": 86,
+   "angle": 13,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 11
+  },
+  {
+   "x": 129,
+   "y": 17,
+   "angle": 156,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 12
+  },
+  {
+   "x": 98,
+   "y": 19,
+   "angle": -80,
+   "behind": true,
+   "scale": 0.72,
+   "frame": 13
+  },
+  {
+   "x": 65,
+   "y": 75,
+   "angle": -73,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 14
+  },
+  {
+   "x": 59,
+   "y": 79,
+   "angle": -59,
+   "behind": false,
+   "scale": 0.72,
+   "frame": 15
+  }
+ ],
+ "bonus8dir": {
+  "frames": "dir8-bonus/human-{base,chest-cloth}-atk2h-{S,SW,W,NW,N,NE,E,SE}-{0..3}.png",
+  "mainHand": {
+   "S_0": {
+    "x": 52,
+    "y": 31,
+    "angle": -125,
+    "behind": false
+   },
+   "S_1": {
+    "x": 72,
+    "y": 90,
+    "angle": -144,
+    "behind": false
+   },
+   "S_2": {
+    "x": 107,
+    "y": 140,
+    "angle": 124,
+    "behind": false
+   },
+   "S_3": {
+    "x": 111,
+    "y": 126,
+    "angle": 146,
+    "behind": false
+   },
+   "SW_0": {
+    "x": 114,
+    "y": 49,
+    "angle": -6,
+    "behind": false
+   },
+   "SW_1": {
+    "x": 50,
+    "y": 90,
+    "angle": -19,
+    "behind": false
+   },
+   "SW_2": {
+    "x": 34,
+    "y": 130,
+    "angle": 90,
+    "behind": false
+   },
+   "SW_3": {
+    "x": 40,
+    "y": 116,
+    "angle": 87,
+    "behind": false
+   },
+   "W_0": {
+    "x": 86,
+    "y": 50,
+    "angle": 16,
+    "behind": false
+   },
+   "W_1": {
+    "x": 16,
+    "y": 64,
+    "angle": -9,
+    "behind": false
+   },
+   "W_2": {
+    "x": 28,
+    "y": 103,
+    "angle": 123,
+    "behind": false
+   },
+   "W_3": {
+    "x": 41,
+    "y": 93,
+    "angle": 143,
+    "behind": false
+   },
+   "NW_0": {
+    "x": 61,
+    "y": 41,
+    "angle": 48,
+    "behind": false
+   },
+   "NW_1": {
+    "x": 25,
+    "y": 33,
+    "angle": -170,
+    "behind": false
+   },
+   "NW_2": {
+    "x": 58,
+    "y": 81,
+    "angle": 145,
+    "behind": false
+   },
+   "NW_3": {
+    "x": 71,
+    "y": 77,
+    "angle": 171,
+    "behind": true
+   },
+   "N_0": {
+    "x": 128,
+    "y": 27,
+    "angle": 72,
+    "behind": false
+   },
+   "N_1": {
+    "x": 108,
+    "y": 16,
+    "angle": -21,
+    "behind": true
+   },
+   "N_2": {
+    "x": 73,
+    "y": 78,
+    "angle": 27,
+    "behind": true
+   },
+   "N_3": {
+    "x": 69,
+    "y": 77,
+    "angle": -15,
+    "behind": false
+   },
+   "NE_0": {
+    "x": 119,
+    "y": 41,
+    "angle": 132,
+    "behind": false
+   },
+   "NE_1": {
+    "x": 155,
+    "y": 33,
+    "angle": -10,
+    "behind": false
+   },
+   "NE_2": {
+    "x": 122,
+    "y": 81,
+    "angle": 35,
+    "behind": false
+   },
+   "NE_3": {
+    "x": 109,
+    "y": 77,
+    "angle": 9,
+    "behind": true
+   },
+   "E_0": {
+    "x": 94,
+    "y": 50,
+    "angle": 164,
+    "behind": false
+   },
+   "E_1": {
+    "x": 164,
+    "y": 64,
+    "angle": -171,
+    "behind": false
+   },
+   "E_2": {
+    "x": 152,
+    "y": 103,
+    "angle": 57,
+    "behind": false
+   },
+   "E_3": {
+    "x": 139,
+    "y": 93,
+    "angle": 37,
+    "behind": false
+   },
+   "SE_0": {
+    "x": 66,
+    "y": 49,
+    "angle": -174,
+    "behind": false
+   },
+   "SE_1": {
+    "x": 130,
+    "y": 90,
+    "angle": -161,
+    "behind": false
+   },
+   "SE_2": {
+    "x": 146,
+    "y": 130,
+    "angle": 90,
+    "behind": false
+   },
+   "SE_3": {
+    "x": 140,
+    "y": 116,
+    "angle": 93,
+    "behind": false
+   }
+  },
+  "offHand": {
+   "S_0": {
+    "x": 51,
+    "y": 37,
+    "angle": -39,
+    "behind": false
+   },
+   "S_1": {
+    "x": 82,
+    "y": 99,
+    "angle": -96,
+    "behind": false
+   },
+   "S_2": {
+    "x": 115,
+    "y": 131,
+    "angle": 96,
+    "behind": false
+   },
+   "S_3": {
+    "x": 121,
+    "y": 119,
+    "angle": 111,
+    "behind": false
+   },
+   "SW_0": {
+    "x": 103,
+    "y": 53,
+    "angle": -79,
+    "behind": false
+   },
+   "SW_1": {
+    "x": 39,
+    "y": 96,
+    "angle": -69,
+    "behind": false
+   },
+   "SW_2": {
+    "x": 32,
+    "y": 119,
+    "angle": 136,
+    "behind": false
+   },
+   "SW_3": {
+    "x": 40,
+    "y": 107,
+    "angle": 135,
+    "behind": false
+   },
+   "W_0": {
+    "x": 70,
+    "y": 49,
+    "angle": -29,
+    "behind": false
+   },
+   "W_1": {
+    "x": 10,
+    "y": 66,
+    "angle": -62,
+    "behind": false
+   },
+   "W_2": {
+    "x": 34,
+    "y": 92,
+    "angle": 164,
+    "behind": false
+   },
+   "W_3": {
+    "x": 50,
+    "y": 86,
+    "angle": 167,
+    "behind": false
+   },
+   "NW_0": {
+    "x": 48,
+    "y": 34,
+    "angle": -3,
+    "behind": false
+   },
+   "NW_1": {
+    "x": 28,
+    "y": 34,
+    "angle": -72,
+    "behind": false
+   },
+   "NW_2": {
+    "x": 68,
+    "y": 74,
+    "angle": -174,
+    "behind": true
+   },
+   "NW_3": {
+    "x": 84,
+    "y": 74,
+    "angle": -170,
+    "behind": true
+   },
+   "N_0": {
+    "x": 129,
+    "y": 17,
+    "angle": 156,
+    "behind": false
+   },
+   "N_1": {
+    "x": 98,
+    "y": 19,
+    "angle": -80,
+    "behind": true
+   },
+   "N_2": {
+    "x": 65,
+    "y": 75,
+    "angle": -73,
+    "behind": false
+   },
+   "N_3": {
+    "x": 59,
+    "y": 79,
+    "angle": -59,
+    "behind": false
+   },
+   "NE_0": {
+    "x": 132,
+    "y": 34,
+    "angle": -177,
+    "behind": false
+   },
+   "NE_1": {
+    "x": 152,
+    "y": 34,
+    "angle": -108,
+    "behind": false
+   },
+   "NE_2": {
+    "x": 112,
+    "y": 74,
+    "angle": -6,
+    "behind": true
+   },
+   "NE_3": {
+    "x": 96,
+    "y": 74,
+    "angle": -10,
+    "behind": true
+   },
+   "E_0": {
+    "x": 110,
+    "y": 49,
+    "angle": -151,
+    "behind": false
+   },
+   "E_1": {
+    "x": 170,
+    "y": 66,
+    "angle": -118,
+    "behind": false
+   },
+   "E_2": {
+    "x": 146,
+    "y": 92,
+    "angle": 16,
+    "behind": false
+   },
+   "E_3": {
+    "x": 130,
+    "y": 86,
+    "angle": 13,
+    "behind": false
+   },
+   "SE_0": {
+    "x": 77,
+    "y": 53,
+    "angle": -101,
+    "behind": false
+   },
+   "SE_1": {
+    "x": 141,
+    "y": 96,
+    "angle": -111,
+    "behind": false
+   },
+   "SE_2": {
+    "x": 148,
+    "y": 119,
+    "angle": 44,
+    "behind": false
+   },
+   "SE_3": {
+    "x": 140,
+    "y": 107,
+    "angle": 45,
+    "behind": false
+   }
+  }
+ }
+}

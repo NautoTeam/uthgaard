@@ -399,21 +399,40 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     };
     img.src = `/sprites/anim/${key}.png?v=${version}`;
   }
-  for (const race of ["human", "elf", "minotaur", "marshwarden"]) {
-    for (let i = 0; i < 16; i++) {
-      if (race !== "human") loadFrame(`${race}-walk-${i}`, "7");
-    }
-    if (race !== "human") {
-      for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
-    }
+  const HUMAN_ANIMS = ["idle", "walk", "atk1h", "atk2h", "block", "cast1h"] as const;
+  type HumanAnim = (typeof HUMAN_ANIMS)[number];
+  const humanDur: Record<HumanAnim, number[]> = {
+    idle: [300, 300, 300, 300],
+    walk: [180, 180, 180, 180],
+    atk1h: [260, 120, 180, 300],
+    atk2h: [300, 140, 180, 320],
+    block: [160, 160, 200, 400],
+    cast1h: [260, 200, 300, 260],
+  };
+  function humanAnimMs(anim: HumanAnim) {
+    return humanDur[anim].reduce((sum, ms) => sum + ms, 0);
   }
-  for (let i = 0; i < 16; i++) {
-    loadFrame(`human-base-walk-${i}`, "8");
-    loadFrame(`human-chest-cloth-${i}`, "8");
-    loadFrame(`human-chest-hauberk-${i}`, "8");
-    loadFrame(`human-base-atk-${i}`, "1");
-    loadFrame(`human-chest-cloth-atk-${i}`, "1");
-    loadFrame(`human-chest-hauberk-atk-${i}`, "1");
+  function humanStep(anim: HumanAnim, elapsed: number, hold: boolean) {
+    const durs = humanDur[anim];
+    const total = humanAnimMs(anim);
+    if (hold && elapsed >= total) return durs.length - 1;
+    let t = hold ? Math.max(0, elapsed) : ((elapsed % total) + total) % total;
+    for (let i = 0; i < durs.length; i++) {
+      if (t < durs[i]) return i;
+      t -= durs[i];
+    }
+    return durs.length - 1;
+  }
+  const HUMAN_CELL = 112 * 1.08;
+  const FACE_FILE = ["S", "W", "E", "N"];
+  for (const race of ["elf", "minotaur", "marshwarden"]) {
+    for (let i = 0; i < 16; i++) loadFrame(`${race}-walk-${i}`, "7");
+    for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
+  }
+  for (const part of ["base", "chest-cloth"]) {
+    for (const anim of HUMAN_ANIMS) {
+      for (let i = 0; i < 16; i++) loadFrame(`human-${part}-${anim}-${i}`, "9");
+    }
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -433,6 +452,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       facing: number;
       attackUntil: number;
       castUntil: number;
+      blockAt: number;
+      blockUntil: number;
+      wasBlocking: boolean;
+      walkMs: number;
       moving: boolean;
       phase: number;
       stamp: number;
@@ -921,7 +944,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function trackActor(id: string, x: number, z: number) {
     let actor = actors.get(id);
     if (!actor) {
-      actor = { x, z, facing: 0, attackUntil: 0, castUntil: 0, moving: false, phase: 0, stamp: 0 };
+      actor = {
+        x,
+        z,
+        facing: 0,
+        attackUntil: 0,
+        castUntil: 0,
+        blockAt: 0,
+        blockUntil: 0,
+        wasBlocking: false,
+        walkMs: 0,
+        moving: false,
+        phase: 0,
+        stamp: 0,
+      };
       actors.set(id, actor);
       return actor;
     }
@@ -1048,14 +1084,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
-  type HandAnchor = {
-    x: number;
-    y: number;
-    angle: number;
-    behind: boolean;
-    scale: number;
-    facingFile?: string;
-  };
   type WeaponDef = {
     file: string;
     pivotX: number;
@@ -1064,8 +1092,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     slot?: string;
     facings?: Record<string, { file: string; pivotX: number; pivotY: number }>;
   };
-  let attackMain: HandAnchor[] = [];
-  let attackOff: HandAnchor[] = [];
   let weaponBook: Record<string, WeaponDef> = {};
   const weaponImages: Record<string, HTMLImageElement | HTMLCanvasElement> = {};
 
@@ -1106,51 +1132,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     shield: "round_shield",
   };
 
-  function walkMain(frame: number): HandAnchor {
-    const grips: Array<[number, number, number]> = [
-      [67, 104, -112],
-      [69, 110, -128],
-      [68, 104, -110],
-      [69, 108, -108],
-      [58, 96, -120],
-      [74, 102, -140],
-      [64, 108, -108],
-      [72, 106, -96],
-      [80, 102, -124],
-      [84, 106, -150],
-      [72, 98, -126],
-      [84, 104, -116],
-      [110, 100, -70],
-      [108, 102, -48],
-      [112, 104, -68],
-      [108, 100, -74],
-    ];
-    const row = grips[frame] ?? grips[1];
-    return { x: row[0], y: row[1], angle: row[2], behind: false, scale: 0.72 };
-  }
-
-  function walkOff(frame: number): HandAnchor {
-    const grips: Array<[number, number, boolean, string]> = [
-      [108, 100, false, "S"],
-      [110, 108, false, "S"],
-      [112, 108, false, "S"],
-      [108, 106, false, "S"],
-      [100, 110, true, "W"],
-      [92, 104, true, "W"],
-      [98, 102, true, "W"],
-      [92, 108, true, "W"],
-      [114, 104, false, "E"],
-      [106, 108, false, "E"],
-      [110, 100, false, "E"],
-      [106, 108, false, "E"],
-      [70, 104, false, "N"],
-      [72, 102, false, "N"],
-      [68, 100, false, "N"],
-      [70, 104, false, "N"],
-    ];
-    const row = grips[frame] ?? grips[1];
-    return { x: row[0], y: row[1], angle: 0, behind: row[2], scale: 0.72, facingFile: row[3] };
-  }
+  type HandAnchor = {
+    x: number;
+    y: number;
+    angle: number;
+    behind: boolean;
+    scale: number;
+  };
+  const handAnchors: Record<HumanAnim, { main: HandAnchor[]; off: HandAnchor[] }> = {
+    idle: { main: [], off: [] },
+    walk: { main: [], off: [] },
+    atk1h: { main: [], off: [] },
+    atk2h: { main: [], off: [] },
+    block: { main: [], off: [] },
+    cast1h: { main: [], off: [] },
+  };
 
   function loadWeaponRig() {
     for (const file of [
@@ -1165,14 +1161,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       "round_shield-N.png",
     ])
       loadWeaponFile(file);
-    void Promise.all([
-      fetch("/sprites/anim/human-anchors-atk.json").then((r) => r.json()),
-      fetch("/sprites/anim/human-offhand-atk.json").then((r) => r.json()),
-      fetch("/sprites/weapons/weapons.json").then((r) => r.json()),
-    ])
-      .then(([main, off, book]) => {
-        attackMain = Array.isArray(main?.mainHand) ? main.mainHand : [];
-        attackOff = Array.isArray(off?.offHand) ? off.offHand : [];
+    void Promise.all(
+      HUMAN_ANIMS.map(async (anim) => {
+        const data = (await fetch(`/sprites/anim/human-anchors-${anim}.json`).then((r) => r.json())) as {
+          frameDurationsMs?: number[];
+          mainHand?: HandAnchor[];
+          offHand?: HandAnchor[];
+        };
+        if (Array.isArray(data.frameDurationsMs) && data.frameDurationsMs.length >= 4)
+          humanDur[anim] = data.frameDurationsMs.slice(0, 4);
+        handAnchors[anim] = {
+          main: Array.isArray(data.mainHand) ? data.mainHand : [],
+          off: Array.isArray(data.offHand) ? data.offHand : [],
+        };
+      }),
+    )
+      .then(async () => {
+        const book = (await fetch("/sprites/weapons/weapons.json").then((r) => r.json())) as Record<string, unknown>;
         const next: Record<string, WeaponDef> = {};
         for (const [key, value] of Object.entries(book ?? {})) {
           if (key.startsWith("_") || !value || typeof value !== "object") continue;
@@ -1184,15 +1189,27 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   loadWeaponRig();
 
-  function humanChestKey(kind: "walk" | "atk", frame: number, equipment?: Record<string, string>) {
+  function anchorAt(list: HandAnchor[], frame: number): HandAnchor {
+    return list[frame] ?? list[0] ?? { x: 90, y: 110, angle: -90, behind: false, scale: 0.72 };
+  }
+
+  function humanChestKey(anim: HumanAnim, frame: number, equipment?: Record<string, string>) {
     const item = itemById(equipment?.chest ?? "");
     if (!item || item.slot !== "chest") return "";
-    const suffix = kind === "atk" ? `-atk-${frame}` : `-${frame}`;
-    if (item.id === "iron-hauberk" || item.weight === "heavy") return `human-chest-hauberk${suffix}`;
     const label = `${item.id} ${item.name}`.toLowerCase();
-    if (label.includes("cloth") || label.includes("tunic") || label.includes("linen"))
-      return `human-chest-cloth${suffix}`;
-    return "";
+    if (!(label.includes("cloth") || label.includes("tunic") || label.includes("linen"))) return "";
+    return `human-chest-cloth-${anim}-${frame}`;
+  }
+
+  function twoHanded(itemId: string) {
+    return itemId === "oak-staff" || itemId === "oak_staff" || itemId === "staff";
+  }
+
+  function isShield(itemId: string) {
+    const key = WEAPON_KEY_BY_ITEM[itemId];
+    const def = key ? weaponBook[key] : undefined;
+    if (def) return def.slot === "offhand";
+    return itemId === "round-shield" || itemId === "shield";
   }
 
   function heldWeapon(itemId: string) {
@@ -1241,7 +1258,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const img = weaponImages[file];
     if (!img) return;
     const read = weaponRead(file);
-    const sc = Math.max(anchor.scale || 0.72, 0.9) * drawScale * read;
+    const sc = (anchor.scale || 0.72) * drawScale * read;
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.imageSmoothingEnabled = read > 1;
@@ -1265,32 +1282,40 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
-  function drawHumanPaper(
-    kind: "walk" | "atk",
+  function drawHuman(
+    anim: HumanAnim,
     frame: number,
     x: number,
     z: number,
     cell: number,
     lift: number,
     filter: string,
-    equipment?: Record<string, string>,
+    equipment: Record<string, string> | undefined,
+    facingFile: string,
   ) {
-    const main = (kind === "atk" ? attackMain[frame] : undefined) ?? walkMain(frame);
-    const off = (kind === "atk" ? attackOff[frame] : undefined) ?? walkOff(frame);
+    const main = anchorAt(handAnchors[anim].main, frame);
+    const off = anchorAt(handAnchors[anim].off, frame);
     const weapon = heldWeapon(equipment?.weapon ?? "");
-    const shield = heldShield(equipment?.offhand ?? "", off?.facingFile);
+    const shield = anim === "atk2h" ? null : heldShield(equipment?.offhand ?? "", facingFile);
     const foot = worldToScreen(x, z);
     const originX = foot.x - cell / 2;
     const originY = foot.y - cell + 16 - lift;
     const drawScale = cell / 180;
-    const baseKey = kind === "atk" ? `human-base-atk-${frame}` : `human-base-walk-${frame}`;
+    const props: Array<{ file: string; anchor: HandAnchor; pivotX: number; pivotY: number; baseAngle: number }> = [];
+    if (weapon) props.push({ file: weapon.file, anchor: main, pivotX: weapon.pivotX, pivotY: weapon.pivotY, baseAngle: weapon.baseAngle });
+    if (shield) props.push({ file: shield.file, anchor: off, pivotX: shield.pivotX, pivotY: shield.pivotY, baseAngle: shield.baseAngle });
+    for (const prop of props) {
+      if (!prop.anchor.behind) continue;
+      drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
+    }
+    const baseKey = `human-base-${anim}-${frame}`;
     if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
-    const chest = humanChestKey(kind, frame, equipment);
+    const chest = humanChestKey(anim, frame, equipment);
     if (chest) drawFrame(chest, x, z, cell, lift, filter);
-    if (shield && off)
-      drawHeld(shield.file, { ...off, behind: false }, shield.pivotX, shield.pivotY, shield.baseAngle, originX, originY, drawScale, "none");
-    if (weapon && main)
-      drawHeld(weapon.file, { ...main, behind: false }, weapon.pivotX, weapon.pivotY, weapon.baseAngle, originX, originY, drawScale, "none");
+    for (const prop of props) {
+      if (prop.anchor.behind) continue;
+      drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
+    }
     return true;
   }
 
@@ -1315,10 +1340,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const kind = classKind(cls);
     const filter = classFilter[kind];
-    const cell = race === "minotaur" ? 128 : 112;
+    const cell = drawn === "minotaur" ? 128 : drawn === "human" ? HUMAN_CELL : 112;
     const lift = moving ? Math.abs(Math.sin(actor.phase * Math.PI)) * 5 : Math.sin(now / 420) * 1.2;
     const casting = now < actor.castUntil;
-    const attacking = now < actor.attackUntil;
+    const attacking = now < actor.attackUntil && !casting;
     if (cls && kind !== "fighter") {
       const foot = worldToScreen(x, z);
       ctx.save();
@@ -1332,11 +1357,33 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.restore();
     }
     const worn = gear ?? world.players.get(id)?.equipment;
-    if (attacking && drawn === "human") {
-      const t = 1 - (actor.attackUntil - now) / SWING_MS;
-      const step = Math.min(3, Math.floor(Math.max(0, t) * 4));
+    if (drawn === "human") {
+      const weaponId = worn?.weapon ?? "";
+      const swing = twoHanded(weaponId) ? "atk2h" : "atk1h";
+      const guarding = isShield(worn?.offhand ?? "") && (world.players.get(id)?.guardUntil ?? 0) > Date.now();
+      const blocking = guarding || (id === myId && now < actor.blockUntil);
+      if (blocking && !actor.wasBlocking) actor.blockAt = now;
+      actor.wasBlocking = blocking;
+      let anim: HumanAnim = "idle";
+      if (attacking) anim = swing;
+      else if (casting) anim = "cast1h";
+      else if (blocking) anim = "block";
+      else if (moving) anim = "walk";
+      const rate = id === myId ? Math.max(0.45, Math.min(1.4, lastSpeed / MOVE)) : 1;
+      if (anim === "walk") actor.walkMs += dt * 1000 * (moving ? rate : 1);
+      const elapsed =
+        anim === "walk"
+          ? actor.walkMs
+          : anim === "idle"
+            ? now
+            : anim === "block"
+              ? now - actor.blockAt
+              : anim === "cast1h"
+                ? humanAnimMs("cast1h") - (actor.castUntil - now)
+                : humanAnimMs(swing) - (actor.attackUntil - now);
+      const step = humanStep(anim, elapsed, anim === "atk1h" || anim === "atk2h" || anim === "block" || anim === "cast1h");
       const frame = actor.facing * 4 + step;
-      if (!drawHumanPaper("atk", frame, x, z, cell, lift, filter, worn))
+      if (!drawHuman(anim, frame, x, z, cell, lift, filter, worn, FACE_FILE[actor.facing] ?? "S"))
         drawSprite(drawn, x, z, 0.18);
     } else if (attacking) {
       const t = 1 - (actor.attackUntil - now) / SWING_MS;
@@ -1347,14 +1394,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       const col = moving ? Math.floor(actor.phase) % 4 : 1;
       const row = actor.facing * 4;
       const frame = row + col;
-      const drew =
-        drawn === "human"
-          ? drawHumanPaper("walk", frame, x, z, cell, lift, filter, worn)
-          : drawFrame(`${drawn}-walk-${frame}`, x, z, cell, lift, filter);
-      if (!drew) drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
+      if (!drawFrame(`${drawn}-walk-${frame}`, x, z, cell, lift, filter))
+        drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
-    if (casting) drawCast(x, z, 1 - (actor.castUntil - now) / 900);
+    if (casting) {
+      const span = drawn === "human" ? humanAnimMs("cast1h") : 900;
+      drawCast(x, z, 1 - (actor.castUntil - now) / span);
+    }
   }
 
   function townNear(x: number, z: number) {
@@ -2810,7 +2857,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!p.cooldowns) p.cooldowns = {};
     p.cooldowns.attack = cd;
     const actor = actors.get(myId);
-    if (actor) actor.attackUntil = performance.now() + SWING_MS;
+    if (actor) {
+      const swing = p.race === "Human" && twoHanded(p.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
+      actor.attackUntil = performance.now() + (p.race === "Human" ? humanAnimMs(swing) : SWING_MS);
+    }
     if (Math.random() * 100 >= hitChance(p)) {
       floatAt(peer.x, peer.z, "Miss", "#f0e2b0", 96);
       return "miss";
@@ -4321,13 +4371,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       facing: 0,
       attackUntil: 0,
       castUntil: 0,
+      blockAt: 0,
+      blockUntil: 0,
+      wasBlocking: false,
+      walkMs: 0,
       moving: false,
       phase: 0,
       stamp: 0,
     };
     const now = performance.now();
-    actor.attackUntil = now + SWING_MS;
-    if (power && power.mana > 0) actor.castUntil = now + 900;
+    const human = p?.race === "Human";
+    const swing = twoHanded(p?.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
+    if (power && power.mana > 0) {
+      actor.castUntil = now + (human ? humanAnimMs("cast1h") : 900);
+      actor.attackUntil = now;
+    } else if (skill === "shield") {
+      actor.blockAt = now;
+      actor.blockUntil = now + 8000;
+      actor.wasBlocking = true;
+      actor.attackUntil = now;
+    } else {
+      actor.attackUntil = now + (human ? humanAnimMs(swing) : SWING_MS);
+    }
     actors.set(myId, actor);
     if (
       power &&
