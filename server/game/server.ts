@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import http from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { createAuthority } from "../../src/server/authority";
@@ -66,6 +67,17 @@ function rawText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   return Buffer.from(data).toString("utf8");
+}
+
+/** Short, non-reversible tag for a user id in logs. */
+export function userTag(userId: string | null | undefined): string {
+  if (!userId) return "-";
+  return createHash("sha256").update(userId).digest("hex").slice(0, 10);
+}
+
+function logNet(event: string, userId: string | null | undefined, detail = "") {
+  if (process.env.NODE_ENV === "test") return;
+  console.log(`net ${event} user=${userTag(userId)}${detail ? ` ${detail}` : ""}`);
 }
 
 function warnSave(err: unknown) {
@@ -330,12 +342,14 @@ export function startServer(opts: {
       dropped++;
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code) => {
+      if (conn.userId) logNet("close", conn.userId, `code=${code}`);
       conn.dead = true;
       track(forget());
     });
 
     function reject(reason: "bad token" | "not ready") {
+      logNet("reject", conn.userId, `reason=${reason}`);
       conn.dead = true;
       send(socket, { t: "error", reason });
       clearTimeout(helloTimer);
@@ -395,7 +409,7 @@ export function startServer(opts: {
       if (!parsed.success) {
         const kind = raw && typeof raw === "object" ? (raw as { t?: unknown }).t : undefined;
         if (kind === "hello") {
-          send(socket, { t: "error", reason: "bad_create" });
+          logNet("bad_create", null, "stage=parse"); send(socket, { t: "error", reason: "bad_create" });
           return;
         }
         noteBad();
@@ -409,6 +423,7 @@ export function startServer(opts: {
           return;
         }
         const claims = await verifyGameToken(tokenSecret, hello.token);
+        logNet("hello", claims?.userId, `create=${hello.create ? 1 : 0}`);
         if (conn.replaced || conn.dead) return;
         if (!claims) {
           reject("bad token");
@@ -423,6 +438,7 @@ export function startServer(opts: {
           if (conn.playerId || conn.replaced || conn.dead || !characters) return;
           const prev = byUser.get(claims.userId);
           if (prev && prev !== conn) {
+            logNet("replaced", claims.userId);
             prev.replaced = true;
             await dropConn(prev);
             prev.socket.close(4409, "replaced");
@@ -434,19 +450,19 @@ export function startServer(opts: {
           if (!loaded) {
             const choice = validateCreate(hello.create);
             if (!hello.create) {
-              send(socket, { t: "error", reason: "need_create" });
+              logNet("need_create", claims.userId); send(socket, { t: "error", reason: "need_create" });
               armHello(CREATE_MS);
               return;
             }
             if (!choice) {
-              send(socket, { t: "error", reason: "bad_create" });
+              logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
               return;
             }
             const imported =
               hello.import && loaded == null ? clampImport(hello.import, now()) : null;
             input = joinInputFor(claims.userId, null, choice, imported);
             if (!input) {
-              send(socket, { t: "error", reason: "bad_create" });
+              logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
               return;
             }
             const player = authority.world.join(input);
@@ -458,12 +474,12 @@ export function startServer(opts: {
             } catch (err) {
               authority.world.leave(player.id);
               warnSave(err);
-              send(socket, { t: "error", reason: "join_failed" });
+              logNet("join_failed", claims.userId); send(socket, { t: "error", reason: "join_failed" });
               return;
             }
             if (created === "name_taken") {
               authority.world.leave(player.id);
-              send(socket, { t: "error", reason: "name_taken" });
+              logNet("name_taken", claims.userId); send(socket, { t: "error", reason: "name_taken" });
               return;
             }
             rev = created;
@@ -471,7 +487,7 @@ export function startServer(opts: {
             conn.savedHash = JSON.stringify(record);
           }
           if (!input) {
-            send(socket, { t: "error", reason: "need_create" });
+            logNet("need_create", claims.userId); send(socket, { t: "error", reason: "need_create" });
             armHello(CREATE_MS);
             return;
           }
@@ -494,6 +510,7 @@ export function startServer(opts: {
           conn.rev = rev;
           conn.alive = player.hp > 0;
           byUser.set(claims.userId, conn);
+          logNet("welcome", claims.userId, `new=${!loaded} online=${byUser.size}`);
           send(socket, { t: "welcome", playerId: player.id });
         });
         return;
@@ -549,14 +566,14 @@ export function startServer(opts: {
         if (row) viewer = row;
         break;
       }
+      // A socket gets world state only after its hero has joined.
+      if (!viewer) continue;
       const seen = viewer;
-      const ids = seen
-        ? full.players
-            .filter((p) => sameZone(seen, p))
-            .map((p) => p.id)
-            .sort()
-            .join(",")
-        : "";
+      const ids = full.players
+        .filter((p) => sameZone(seen, p))
+        .map((p) => p.id)
+        .sort()
+        .join(",");
       client.send(packet(ids));
     }
   }, TICK_MS);

@@ -13,7 +13,7 @@ import { createWorld } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
 import { applyIntent, MOVE_ALLOW } from "./dispatch";
 import { clampImport } from "./persist";
-import { originAllowed, startServer } from "./server";
+import { originAllowed, startServer, userTag } from "./server";
 
 const maxStep = MOVE_ALLOW;
 /** A short step. Must stay inside one normal walk report. */
@@ -377,6 +377,33 @@ test("garbage and oversize frames do not kill /healthz", async () => {
     assert.ok(game.dropped >= 1);
   } finally {
     ws.close();
+    await game.close();
+  }
+});
+
+test("a socket that has not joined receives no snaps", async () => {
+  const game = startServer({ ...gameOpts(), now: () => 5_000, rand: mulberry32(7) });
+  const port = await game.ready;
+  const ada = new WebSocket(`ws://127.0.0.1:${port}`);
+  const lurker = new WebSocket(`ws://127.0.0.1:${port}`);
+  const adaMsgs: Array<{ t?: string }> = [];
+  const lurkMsgs: Array<{ t?: string }> = [];
+  ada.on("message", (data) => adaMsgs.push(JSON.parse(data.toString())));
+  lurker.on("message", (data) => lurkMsgs.push(JSON.parse(data.toString())));
+  ada.on("error", () => undefined);
+  lurker.on("error", () => undefined);
+  try {
+    await Promise.all([opened(ada), opened(lurker)]);
+    await hello(ada, "user-ada", "Ada");
+    await until(() => adaMsgs.find((m) => m.t === "snap"));
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(lurkMsgs.some((m) => m.t === "snap"), false);
+    await hello(lurker, "user-lurk", "Lurk");
+    await until(() => lurkMsgs.find((m) => m.t === "welcome"));
+    await until(() => lurkMsgs.find((m) => m.t === "snap"));
+  } finally {
+    ada.close();
+    lurker.close();
     await game.close();
   }
 });
@@ -1274,6 +1301,14 @@ test("an import is clamped once and a second import is ignored", async () => {
     await game.close();
     await pg.close();
   }
+});
+
+test("log tags hide the user id", () => {
+  const tag = userTag("user-ada");
+  assert.match(tag, /^[0-9a-f]{10}$/);
+  assert.equal(tag.includes("ada"), false);
+  assert.equal(userTag("user-ada"), tag);
+  assert.equal(userTag(null), "-");
 });
 
 

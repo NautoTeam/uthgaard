@@ -87,19 +87,33 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   }, [email, isPending, probeNonce]);
 
   async function enter(next?: CharacterSave) {
+    let signedIn = email;
+    try {
+      const fresh = await authClient.getSession();
+      const mail = fresh.data?.user?.email;
+      if (typeof mail === "string") signedIn = mail;
+      else if (fresh.data == null) signedIn = "";
+    } catch {
+      /* keep the session already on screen */
+    }
     let online = false;
-    let offlineNote: string | undefined;
-    if (email && SERVER) {
-      const result = probeRef.current ? await probeRef.current : linkRef.current;
+    let reason = "You're not signed in.";
+    if (signedIn && SERVER) {
+      const result = await probeGameLink(SERVER);
       online = result.online;
-      if (!online && result.reason) offlineNote = `${result.reason} Playing offline.`;
+      reason = result.reason || (online ? "" : "The game server can't be reached.");
+      const nextLink = { online: result.online, reason: result.reason, ready: true };
+      linkRef.current = nextLink;
+      setLink(nextLink);
+    } else if (signedIn) {
+      reason = "The game server isn't set.";
     }
     onEnter({
       username: (next?.username ?? name).trim().slice(0, 16) || "Hero",
       race: next?.race ?? race,
       baseClass: next?.baseClass ?? path,
       online,
-      offlineNote,
+      offlineNote: online ? undefined : `Playing offline: ${reason}`,
     });
   }
 

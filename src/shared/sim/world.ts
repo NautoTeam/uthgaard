@@ -97,7 +97,7 @@ function levelUp(p: PlayerState) {
 }
 
 /** Walk pace in tiles per second. Keys, the stick, and click-to-walk all use this. */
-export const MAX_SPEED = 3.5;
+export const MAX_SPEED = 4.55;
 
 export function createWorld(opts: { now?: () => number; rand?: () => number } = {}) {
   const now = opts.now ?? Date.now;
