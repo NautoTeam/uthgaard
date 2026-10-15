@@ -275,6 +275,8 @@ export const ServerMsg = z.discriminatedUnion("t", [
     .object({
       t: z.literal("snap"),
       tick: z.number().int().nonnegative(),
+      /** Connected heroes, including ones outside this client's zone. */
+      online: z.number().int().nonnegative(),
       state: PublicStateSchema,
     })
     .strict(),

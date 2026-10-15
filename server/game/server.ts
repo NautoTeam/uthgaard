@@ -4,6 +4,7 @@ import { createAuthority } from "../../src/server/authority";
 import { verifyGameToken } from "../../src/shared/net/token";
 import { ClientMsg, type ServerMsg } from "../../src/shared/net/protocol";
 import type { World } from "../../src/shared/sim/world";
+import { zoneAt } from "../../src/shared/sim/mask";
 import type { GameDb } from "./db";
 import { applyIntent } from "./dispatch";
 import { clampImport, joinInputFor, recordFromPlayer, validateCreate } from "./persist";
@@ -38,6 +39,17 @@ function warnIfOriginsUnset() {
   if (list.length > 0) return;
   originWarningLogged = true;
   console.warn("ALLOWED_ORIGINS is unset; refusing every WebSocket origin");
+}
+
+function sameZone(
+  viewer: { id: string; x: number; z: number },
+  other: { id: string; x: number; z: number },
+) {
+  if (other.id === viewer.id) return true;
+  const here = zoneAt(viewer.x, viewer.z)?.id ?? "";
+  const there = zoneAt(other.x, other.z)?.id ?? "";
+  if (here && there) return here === there;
+  return Math.hypot(viewer.x - other.x, viewer.z - other.z) <= 48;
 }
 
 export interface GameServer {
@@ -511,13 +523,41 @@ export function startServer(opts: {
       for (const conn of byUser.values()) void persist(conn, false);
     }
     if (tick % 2 !== 0) return;
-    const msg = JSON.stringify({
-      t: "snap",
-      tick,
-      state: authority.snapshot(),
-    } satisfies ServerMsg);
+    const full = authority.snapshot();
+    const online = byUser.size;
+    const encoded = new Map<string, string>();
+    const packet = (ids: string) => {
+      const hit = encoded.get(ids);
+      if (hit) return hit;
+      const want = new Set(ids ? ids.split(",") : []);
+      const players = ids ? full.players.filter((p) => want.has(p.id)) : full.players;
+      const msg = JSON.stringify({
+        t: "snap",
+        tick,
+        online,
+        state: { ...full, players },
+      } satisfies ServerMsg);
+      encoded.set(ids, msg);
+      return msg;
+    };
     for (const client of wss.clients) {
-      if (client.readyState === WebSocket.OPEN) client.send(msg);
+      if (client.readyState !== WebSocket.OPEN) continue;
+      let viewer: { id: string; x: number; z: number } | undefined;
+      for (const conn of byUser.values()) {
+        if (conn.socket !== client || !conn.playerId) continue;
+        const row = full.players.find((p) => p.id === conn.playerId);
+        if (row) viewer = row;
+        break;
+      }
+      const seen = viewer;
+      const ids = seen
+        ? full.players
+            .filter((p) => sameZone(seen, p))
+            .map((p) => p.id)
+            .sort()
+            .join(",")
+        : "";
+      client.send(packet(ids));
     }
   }, TICK_MS);
 

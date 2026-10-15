@@ -9,15 +9,15 @@ import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protoco
 import type { CharacterRecord } from "../../src/shared/persist/store";
 import { blocked, cityAt, TREES } from "../../src/shared/sim/geo";
 import { attrsFor } from "../../src/shared/sim/types";
-import { createWorld, MAX_SPEED } from "../../src/shared/sim/world";
+import { createWorld } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
-import { applyIntent, TICK_DT } from "./dispatch";
+import { applyIntent, MOVE_ALLOW } from "./dispatch";
 import { clampImport } from "./persist";
 import { originAllowed, startServer } from "./server";
 
-const maxStep = MAX_SPEED * TICK_DT * 1.5;
-/** A legal walk. Must stay under one tick of MAX_SPEED. */
-const step = Math.min(0.2, maxStep * 0.85);
+const maxStep = MOVE_ALLOW;
+/** A short step. Must stay inside one normal walk report. */
+const step = 0.2;
 const SECRET = "test-secret-test-secret-test-secret";
 
 function gameOpts(extra: { characters?: GameDb } = {}) {
@@ -233,6 +233,30 @@ test("move rejects a jump past max speed and a blocked tile", () => {
   assert.equal(hero.x, before.x);
   assert.equal(hero.z, before.z);
 
+  let walked = false;
+  for (const [dx, dz] of [
+    [0.45, 0],
+    [0, 0.45],
+    [-0.45, 0],
+    [0, -0.45],
+    [0.3, 0.3],
+  ] as const) {
+    if (blocked(hero.x + dx, hero.z + dz)) continue;
+    const walk = applyIntent(world, hero.id, {
+      op: "move",
+      x: hero.x + dx,
+      z: hero.z + dz,
+      rotation: 0,
+    });
+    assert.equal(walk.ok, true, walk.reason ?? "walk");
+    assert.ok(Math.hypot(hero.x - before.x, hero.z - before.z) > 0.2);
+    walked = true;
+    break;
+  }
+  assert.equal(walked, true);
+  hero.x = before.x;
+  hero.z = before.z;
+
   const tree = TREES[0];
   assert.ok(tree, "a tree solid exists");
   let stand: { x: number; z: number } | null = null;
@@ -413,6 +437,104 @@ test("two clients both receive a snap that contains both heroes", async () => {
       ),
     );
     assert.equal((ack as { result: { ok: boolean } }).result.ok, false);
+  } finally {
+    ada.close();
+    bea.close();
+    await game.close();
+  }
+});
+
+test("two clients each receive the other's position", async () => {
+  const game = startServer({ ...gameOpts(), now: () => 6_000, rand: mulberry32(52) });
+  const port = await game.ready;
+  const ada = new WebSocket(`ws://127.0.0.1:${port}`);
+  const bea = new WebSocket(`ws://127.0.0.1:${port}`);
+  const adaMsgs: Msg[] = [];
+  const beaMsgs: Msg[] = [];
+  ada.on("message", (data) => adaMsgs.push(JSON.parse(data.toString())));
+  bea.on("message", (data) => beaMsgs.push(JSON.parse(data.toString())));
+  ada.on("error", () => undefined);
+  bea.on("error", () => undefined);
+  const hero = (msgs: Msg[], name: string) => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const row = msgs[i].state?.players?.find((p) => p.username === name);
+      if (row) return row;
+    }
+    return undefined;
+  };
+  try {
+    await Promise.all([opened(ada), opened(bea)]);
+    await hello(ada, "user-ada", "Ada");
+    await hello(bea, "user-bea", "Bea");
+    const spawnA = await until(() => hero(beaMsgs, "Ada"));
+    const spawnB = await until(() => hero(adaMsgs, "Bea"));
+    assert.ok(Math.hypot(spawnA.x - spawnB.x, spawnA.z - spawnB.z) > 1, "heroes share a tile");
+    const from = { x: spawnA.x, z: spawnA.z };
+    let dest: { x: number; z: number } | null = null;
+    for (const [dx, dz] of [
+      [0.6, 0],
+      [0, 0.6],
+      [-0.6, 0],
+      [0, -0.6],
+      [0.4, 0.4],
+    ] as const) {
+      if (blocked(from.x + dx, from.z + dz)) continue;
+      dest = { x: from.x + dx, z: from.z + dz };
+      break;
+    }
+    assert.ok(dest, "no open step");
+    ada.send(
+      JSON.stringify({
+        t: "intent",
+        seq: 1,
+        intent: { op: "move", x: dest.x, z: dest.z, rotation: 0.4 },
+      }),
+    );
+    const ack = await until(() => adaMsgs.find((m) => m.t === "ack" && m.seq === 1));
+    assert.equal(ack.result?.ok, true, JSON.stringify(ack.result));
+    const moved = game.world.players.get("user-ada");
+    assert.ok(moved);
+    assert.ok(Math.hypot(moved.x - from.x, moved.z - from.z) > 0.2);
+    await until(() => {
+      const row = hero(beaMsgs, "Ada");
+      if (!row) return undefined;
+      return Math.hypot(row.x - moved.x, row.z - moved.z) < 0.05 ? row : undefined;
+    });
+
+    const liveBea = game.world.players.get("user-bea");
+    assert.ok(liveBea);
+    const beaStart = { x: liveBea.x, z: liveBea.z };
+    let beaDest: { x: number; z: number } | null = null;
+    for (const [dx, dz] of [
+      [-0.6, 0],
+      [0, -0.6],
+      [0.6, 0],
+      [0, 0.6],
+    ] as const) {
+      if (blocked(liveBea.x + dx, liveBea.z + dz)) continue;
+      beaDest = { x: liveBea.x + dx, z: liveBea.z + dz };
+      break;
+    }
+    assert.ok(beaDest, "no open step for Bea");
+    bea.send(
+      JSON.stringify({
+        t: "intent",
+        seq: 1,
+        intent: { op: "move", x: beaDest.x, z: beaDest.z, rotation: 1 },
+      }),
+    );
+    const ackB = await until(() => beaMsgs.find((m) => m.t === "ack" && m.seq === 1));
+    assert.equal(ackB.result?.ok, true, JSON.stringify(ackB.result));
+    const movedB = game.world.players.get("user-bea");
+    assert.ok(movedB);
+    assert.ok(Math.hypot(movedB.x - beaStart.x, movedB.z - beaStart.z) > 0.2);
+    await until(() => {
+      const row = hero(adaMsgs, "Bea");
+      if (!row) return undefined;
+      return Math.hypot(row.x - movedB.x, row.z - movedB.z) < 0.05 ? row : undefined;
+    });
+    const withOnline = [...beaMsgs].reverse().find((m) => m.t === "snap") as { online?: number } | undefined;
+    assert.equal(withOnline?.online, 2);
   } finally {
     ada.close();
     bea.close();

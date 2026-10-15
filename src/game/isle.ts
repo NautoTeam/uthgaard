@@ -510,6 +510,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let remote: PublicState | null = null;
   let lastHeard = performance.now();
   const snaps: Array<{ at: number; state: PublicState }> = [];
+  let playersOnline = 1;
   let remoteSession: RemoteHandle | null = null;
   let intentSeq = 0;
   const sentIntents = new Map<number, Intent>();
@@ -757,10 +758,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       local.x = mine.x;
       local.z = mine.z;
       local.rotation = mine.rotation;
-    } else if (!placed || Math.hypot(local.x - mine.x, local.z - mine.z) > 1.5) {
-      local.x = mine.x;
-      local.z = mine.z;
-      local.rotation = mine.rotation;
+    } else {
+      const gap = Math.hypot(local.x - mine.x, local.z - mine.z);
+      if (!placed || gap > 2.5) {
+        local.x = mine.x;
+        local.z = mine.z;
+        local.rotation = mine.rotation;
+      } else if (gap > 0.9) {
+        local.x += (mine.x - local.x) * 0.5;
+        local.z += (mine.z - local.z) * 0.5;
+      }
     }
     placed = true;
     local.hp = mine.hp;
@@ -1491,9 +1498,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           : zone
             ? `${zone.name} · Lv ${zone.levels[0]}–${zone.levels[1]}${pvp}${where}`
             : (islandAt(p.x, p.z)?.name ?? "The Reach");
+    const onlineN = remotePlay ? Math.max(1, playersOnline) : 1;
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
       `<div class="zone-line">${zoneLabel}</div>` +
+      `<div class="online-line">Players online: ${onlineN}</div>` +
       `<div class="gold-line">Gold ${p.gold}</div>` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(hp)}/${maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(mana)}/${maxMana}</span></div>` +
@@ -5073,7 +5082,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     remoteSession = connectRemote({
       url: SERVER,
       choice: { username: profile.username, race: profile.race, baseClass: profile.baseClass },
-      onSnap: (state) => takeSnap(state),
+      onSnap: (state, online) => {
+        if (typeof online === "number" && online >= 0) playersOnline = online;
+        takeSnap(state);
+      },
       onWelcome: (playerId) => {
         claimServerId(playerId);
         const latest = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === playerId);
@@ -5084,6 +5096,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       onAck: (seq, result) => {
         const intent = sentIntents.get(seq);
         sentIntents.delete(seq);
+        if (intent?.op === "move" && result.ok === false) {
+          const server = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === myId);
+          const local = localPlayer();
+          if (server && local) {
+            local.x = server.x;
+            local.z = server.z;
+            local.rotation = server.rotation;
+          }
+        }
         if (!intent) {
           if (result.reason) note(result.reason);
           return;

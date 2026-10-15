@@ -7,8 +7,16 @@ import type { Intent } from "../../src/shared/net/protocol";
 export const TICK_DT = 1 / 20;
 
 /**
+ * Furthest a single move intent may land from the hero.
+ * The client walks at MAX_SPEED and reports a position about every 70ms.
+ * Half a second of that pace covers send jitter and a dropped packet.
+ * A multi-tile teleport still fails.
+ */
+export const MOVE_ALLOW = MAX_SPEED * 0.5;
+
+/**
  * Apply one client intent. `move` is rejected when it jumps farther than
- * 1.5 ticks of walk speed, or when the destination tile is not walkable.
+ * {@link MOVE_ALLOW}, or when the destination tile is not walkable.
  */
 export function applyIntent(world: World, playerId: string, intent: Intent): ActionResult {
   switch (intent.op) {
@@ -16,7 +24,7 @@ export function applyIntent(world: World, playerId: string, intent: Intent): Act
       const p = world.players.get(playerId);
       if (!p || p.hp <= 0) return { ok: false, reason: "You cannot move." };
       const dist = Math.hypot(intent.x - p.x, intent.z - p.z);
-      if (dist > MAX_SPEED * TICK_DT * 1.5) return { ok: false, reason: "Too fast." };
+      if (dist > MOVE_ALLOW) return { ok: false, reason: "Too fast." };
       if (blocked(intent.x, intent.z)) return { ok: false, reason: "Blocked." };
       return world.move(playerId, intent.x, intent.z, intent.rotation);
     }

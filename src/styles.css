@@ -959,6 +959,13 @@ body {
   margin: 2px 0 4px;
 }
 
+.online-line {
+  color: #c6d38a;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  margin: -2px 0 4px;
+}
+
 #travelButtons button[disabled] {
   opacity: 0.45;
   cursor: not-allowed;

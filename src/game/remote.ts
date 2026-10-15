@@ -171,7 +171,7 @@ function defaultOpen(url: string): SocketLike {
 export function connectRemote(opts: {
   url: string;
   choice: HelloChoice;
-  onSnap: (state: PublicState) => void;
+  onSnap: (state: PublicState, online?: number) => void;
   onWelcome: (playerId: string) => void;
   onError: (reason: string) => void;
   onAck?: (seq: number, result: { ok: boolean; reason?: string }) => void;
@@ -269,6 +269,7 @@ export function connectRemote(opts: {
           seq?: number;
           result?: { ok: boolean; reason?: string };
           state?: PublicState;
+          online?: number;
         };
         try {
           msg = JSON.parse(raw) as typeof msg;
@@ -285,7 +286,8 @@ export function connectRemote(opts: {
           return;
         }
         if (msg.t === "snap" && msg.state) {
-          opts.onSnap(msg.state);
+          const online = typeof msg.online === "number" ? msg.online : msg.state.players?.length;
+          opts.onSnap(msg.state, online);
           return;
         }
         if (msg.t === "ack" && typeof msg.seq === "number" && msg.result) {

@@ -434,8 +434,16 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     const matched =
       prestige && PRESTIGE_OF[input.baseClass] === prestige ? prestige : "";
     const home = hearthOf(input.race);
-    const spot =
-      typeof input.x === "number" && typeof input.z === "number" ? nearestOpen(input.x, input.z) : arrivalAt(home.x, home.z);
+    const occupied = [...players.values()]
+      .filter((p) => p.hp > 0)
+      .map((p) => ({ x: p.x, z: p.z }));
+    let spot =
+      typeof input.x === "number" && typeof input.z === "number"
+        ? nearestOpen(input.x, input.z)
+        : arrivalAt(home.x, home.z, occupied, arrivalSalt(input.id));
+    if (occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 0.85)) {
+      spot = arrivalAt(home.x, home.z, occupied, arrivalSalt(input.id));
+    }
     const player: PlayerState = {
       id: input.id,
       username: input.username.slice(0, 16),
