@@ -692,17 +692,16 @@ body {
 
 #targetFrame {
   position: absolute;
-  left: 50%;
-  top: 78px;
-  transform: translateX(-50%);
+  left: 252px;
+  top: max(8px, env(safe-area-inset-top));
   z-index: 5;
-  width: min(240px, 70vw);
-  pointer-events: none;
+  width: min(240px, calc(100vw - 268px));
+  pointer-events: auto;
   background: rgba(12, 14, 12, 0.88);
   border: 1px solid #a84838;
   color: #f0e2b0;
-  padding: 6px 10px 8px;
-  text-align: center;
+  padding: 6px 28px 8px 10px;
+  text-align: left;
 }
 
 #targetFrame[hidden] {
@@ -711,8 +710,32 @@ body {
 
 #targetFrame b {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   color: #fff6d8;
+}
+
+#targetFrame .target-sub {
+  font-size: 12px;
+  color: #d7c28a;
+  margin-bottom: 4px;
+}
+
+#targetFrame .target-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 20px;
+  background: transparent;
+  color: #f0e2b0;
+  border: 1px solid #6a5a38;
+}
+
+#view:focus {
+  outline: none;
 }
 
 #guildBody input {
@@ -1241,6 +1264,11 @@ body {
   #stats {
     font-size: 12px;
     max-width: calc(100vw - 148px);
+  }
+  #targetFrame {
+    left: 8px;
+    top: 148px;
+    width: min(220px, calc(100vw - 148px));
   }
   #skills {
     width: 124px;

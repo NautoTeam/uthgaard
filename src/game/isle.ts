@@ -427,7 +427,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     return durs.length - 1;
   }
-  const HUMAN_CELL = 112 * 1.08;
+  const HUMAN_CELL = 112 * 1.16;
   const MINOTAUR_CELL = HUMAN_CELL * 1.26;
   const FACE_FILE = ["S", "W", "E", "N"];
   for (const race of ["elf", "marshwarden"]) {
@@ -452,6 +452,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const bolts: Array<{ x0: number; z0: number; x1: number; z1: number; born: number }> = [];
   let pinnedId: string | null = null;
+  let selected: { kind: "mob" | "player" | "npc"; id: string } | null = null;
   const actors = new Map<
     string,
     {
@@ -1764,33 +1765,58 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return id;
   }
 
-  function targetRange() {
-    const p = me();
-    if (!p) return 4.6;
-    if (p.baseClass === "Mage" || p.prestigeClass === "Wizard") return 9;
-    return 4.6;
-  }
-
   function currentTarget() {
     const p = me();
-    if (!p) return null;
+    if (!p || selected?.kind !== "mob") return null;
     const monsters = view().monsters.filter((m) => m.hp > 0);
-    if (pinnedId) {
-      const pin = monsters.find((m) => m.id === pinnedId);
-      if (pin && Math.hypot(pin.x - p.x, pin.z - p.z) < 14) return pin;
-      pinnedId = null;
-    }
-    const range = targetRange();
-    let best: (typeof monsters)[number] | null = null;
-    let bestD = range;
-    for (const m of monsters) {
+    const pin = monsters.find((m) => m.id === selected?.id);
+    if (!pin) return null;
+    if (Math.hypot(pin.x - p.x, pin.z - p.z) < 18) return pin;
+    return pin;
+  }
+
+  function clearTarget() {
+    selected = null;
+    pinnedId = null;
+    chaseId = null;
+    pvpId = null;
+  }
+
+  function nearbyHostiles() {
+    const p = me();
+    if (!p) return [] as Array<{ kind: "mob" | "player"; id: string; d: number }>;
+    const rows: Array<{ kind: "mob" | "player"; id: string; d: number }> = [];
+    for (const m of view().monsters) {
+      if (m.hp <= 0) continue;
       const d = Math.hypot(m.x - p.x, m.z - p.z);
-      if (d < bestD) {
-        bestD = d;
-        best = m;
-      }
+      if (d <= 18) rows.push({ kind: "mob", id: m.id, d });
     }
-    return best;
+    const hostilePlayers = pvpOpen(p.x, p.z);
+    for (const pl of view().players) {
+      if (!hostilePlayers || pl.id === myId || pl.hp <= 0) continue;
+      if (!pvpOpen(pl.x, pl.z)) continue;
+      const d = Math.hypot(pl.x - p.x, pl.z - p.z);
+      if (d <= 18) rows.push({ kind: "player", id: pl.id, d });
+    }
+    rows.sort((a, b) => a.d - b.d || a.id.localeCompare(b.id));
+    return rows;
+  }
+
+  function cycleTarget() {
+    const rows = nearbyHostiles();
+    if (!rows.length) return;
+    const at = rows.findIndex((row) => selected && row.kind === selected.kind && row.id === selected.id);
+    const next = rows[(at + 1) % rows.length];
+    if (next.kind === "mob") {
+      selected = { kind: "mob", id: next.id };
+      pinnedId = next.id;
+      pvpId = null;
+    } else {
+      selected = { kind: "player", id: next.id };
+      pinnedId = null;
+      chaseId = null;
+      pvpId = null;
+    }
   }
 
   function livingMonster(id: string | null) {
@@ -1874,10 +1900,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       keys.has("ArrowRight") ||
       stickActive;
     if (keys.has("Space")) {
-      const aimed = currentTarget();
-      if (aimed) {
-        pinnedId = aimed.id;
-        chaseId = aimed.id;
+      if (selected?.kind === "player") tryEngagePlayer(false);
+      else {
+        const aimed = currentTarget();
+        if (aimed) {
+          pinnedId = aimed.id;
+          chaseId = aimed.id;
+        }
       }
     }
     const chase = livingMonster(chaseId);
@@ -2218,6 +2247,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           const held =
             npc.name === "Marta" ? { weapon: "dagger", offhand: "round-shield" } : undefined;
           drawHero(npc.race, npc.id, npc.x, npc.z, undefined, held);
+          if (selected?.kind === "npc" && selected.id === npc.id) markTarget(npc.x, npc.z);
           const tag = npc.role === "smith"
             ? "SMITH"
             : vendor
@@ -2270,7 +2300,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         draw: () => drawCityPlot(plot),
       });
     }
-    const aimed = currentTarget();
+    const aimedId = selected?.kind === "mob" ? selected.id : null;
     const myLevel = me()?.level ?? 1;
     for (const m of state.monsters) {
       if (m.hp <= 0) continue;
@@ -2280,7 +2310,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           shadowAt(m.x, m.z, 14);
           if (!drawSprite(m.type.toLowerCase(), m.x, m.z, mobByType(m.type).scale || 0.18))
             drawFallback(m.type, m.x, m.z);
-          if (aimed && aimed.id === m.id) markTarget(m.x, m.z);
+          if (aimedId === m.id) markTarget(m.x, m.z);
           const pt = worldToScreen(m.x, m.z);
           const barW = 48;
           const barY = pt.y - 108;
@@ -2337,8 +2367,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.fillStyle = "#e6c56a";
           ctx.font = "12px Georgia";
           ctx.textAlign = "center";
-          const lift = race === "minotaur" ? 176 : 136;
+          const lift = nameLift(race);
           drawOverhead(pt.x, pt.y, pl.username, pl.prestigeClass || pl.baseClass, lift, pl.id === myId ? "#f0e2b0" : "#ddd");
+          if (selected?.kind === "player" && selected.id === pl.id) markTarget(pl.x, pl.z);
         },
       });
     }
@@ -2352,9 +2383,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           const pt = worldToScreen(peer.x, peer.z);
           ctx.font = "13px Georgia";
           ctx.textAlign = "center";
-          drawOverhead(pt.x, pt.y, peer.name, "", 136, "#d5e6ff");
+          drawOverhead(pt.x, pt.y, peer.name, "", nameLift(race), "#d5e6ff");
+          if (
+            selected?.kind === "player" &&
+            selected.id === peer.id &&
+            !state.players.some((pl) => pl.id === peer.id)
+          )
+            markTarget(peer.x, peer.z);
           if (peer.id !== pvpId) return;
-          markTarget(peer.x, peer.z);
           const barW = 48;
           const barY = pt.y - 108;
           const pct = peer.maxHp > 0 ? Math.max(0, Math.min(1, peer.hp / peer.maxHp)) : 0;
@@ -2818,13 +2854,53 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return best;
   }
 
+  function asPeer(pl: { id: string; username?: string; name?: string; level: number; hp: number; maxHp: number; x: number; z: number; race?: string }): GroupPeer {
+    const known = freshPeers().find((row) => row.id === pl.id);
+    if (known) return { ...known, x: pl.x, z: pl.z, hp: pl.hp, maxHp: pl.maxHp, level: pl.level };
+    return {
+      id: pl.id,
+      name: pl.username || pl.name || "Hero",
+      level: pl.level,
+      hp: pl.hp,
+      maxHp: pl.maxHp,
+      x: pl.x,
+      z: pl.z,
+      race: pl.race || "human",
+      group: null,
+      seen: Date.now(),
+    };
+  }
+
+  function tryEngagePlayer(announce: boolean) {
+    const p = localPlayer();
+    if (!p || selected?.kind !== "player") return;
+    const pl = view().players.find((row) => row.id === selected?.id && row.hp > 0);
+    const peer = pl
+      ? asPeer(pl)
+      : (freshPeers().find((row) => row.id === selected?.id && row.hp > 0) ?? null);
+    if (!peer) return;
+    const haven = !pvpOpen(p.x, p.z) || !pvpOpen(peer.x, peer.z);
+    const grouped = !!(myGroup && peer.group === myGroup);
+    if (haven || grouped) {
+      pvpId = null;
+      if (announce) {
+        if (grouped && !haven) note("You cannot strike a group member.");
+        else note("This is a haven. No fighting here.");
+      }
+      return;
+    }
+    pvpId = peer.id;
+    pressPvp();
+  }
+
   function pressPvp() {
     const p = localPlayer();
     if (!p || p.hp <= 0) {
       pvpId = null;
       return;
     }
-    const peer = freshPeers().find((row) => row.id === pvpId) ?? null;
+    const pl = view().players.find((row) => row.id === pvpId && row.hp > 0);
+    const peer = pl ? asPeer(pl) : (freshPeers().find((row) => row.id === pvpId) ?? null);
     if (!peer) {
       pvpId = null;
       return;
@@ -2845,6 +2921,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     dest = null;
     path = [];
     strikePeer(peer);
+  }
+
+  function playerAt(sx: number, sy: number) {
+    let best: PublicState["players"][number] | null = null;
+    let bestD = 1e9;
+    for (const pl of view().players) {
+      if (pl.id === myId || pl.hp <= 0) continue;
+      if (!spriteHit(sx, sy, pl.x, pl.z, 150)) continue;
+      const sp = worldToScreen(pl.x, pl.z);
+      const d = Math.hypot(sx - sp.x, sy - sp.y);
+      if (d < bestD) {
+        bestD = d;
+        best = pl;
+      }
+    }
+    return best;
   }
 
   function peerAt(sx: number, sy: number) {
@@ -2929,6 +3021,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.fillText(name, x, y - (sub ? lift - 16 : lift));
   }
 
+  function nameLift(race: string) {
+    if (race === "minotaur") return 188;
+    if (race === "human") return 145;
+    return 136;
+  }
+
   function plateName(name: string) {
     const tag = guildTag(name);
     return tag ? `[${tag}] ${name}` : name;
@@ -2937,18 +3035,86 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function paintTarget() {
     if (!targetFrame) return;
     const self = me();
-    const foe = pvpId ? freshPeers().find((peer) => peer.id === pvpId && peer.hp > 0) : null;
-    if (!self || !foe || !pvpOpen(self.x, self.z) || !pvpOpen(foe.x, foe.z)) {
+    const hide = () => {
       if (!targetFrame.hidden) {
         targetFrame.hidden = true;
         targetFrame.innerHTML = "";
       }
+    };
+    if (!self || !selected) {
+      hide();
       return;
     }
-    const pct = Math.max(0, Math.min(100, (foe.hp / Math.max(1, foe.maxHp)) * 100));
+    let name = "";
+    let sub = "";
+    let hp = 0;
+    let maxHp = 0;
+    let mana: number | null = null;
+    let maxMana = 0;
+    if (selected.kind === "mob") {
+      const mob = view().monsters.find((m) => m.id === selected?.id && m.hp > 0);
+      if (!mob) {
+        clearTarget();
+        hide();
+        return;
+      }
+      name = mobLabel(mob.type);
+      sub = `Lv ${mob.level} · ${mob.type}`;
+      hp = mob.hp;
+      maxHp = mob.maxHp;
+    } else if (selected.kind === "player") {
+      const pl = view().players.find((row) => row.id === selected?.id && row.hp > 0);
+      const peer = pl ? null : freshPeers().find((row) => row.id === selected?.id && row.hp > 0);
+      if (!pl && !peer) {
+        clearTarget();
+        hide();
+        return;
+      }
+      if (pl) {
+        name = pl.username;
+        sub = `Lv ${pl.level} · ${pl.race} ${pl.prestigeClass || pl.baseClass}`;
+        hp = pl.hp;
+        maxHp = pl.maxHp;
+        mana = pl.mana;
+        maxMana = pl.maxMana;
+      } else if (peer) {
+        name = peer.name;
+        sub = `Lv ${peer.level}`;
+        hp = peer.hp;
+        maxHp = peer.maxHp;
+      }
+    } else {
+      const npc = NPCS.find((row) => row.id === selected?.id);
+      if (!npc) {
+        clearTarget();
+        hide();
+        return;
+      }
+      const role =
+        npc.role === "smith"
+          ? "Smith"
+          : npc.role === "vendor"
+            ? "Vendor"
+            : npc.role === "trainer"
+              ? "Trainer"
+              : npc.role === "registrar"
+                ? "Registrar"
+                : "Wayfarer";
+      name = npc.name;
+      sub = role;
+    }
+    const bars =
+      maxHp > 0
+        ? `<div class="bar hp"><i style="width:${Math.max(0, Math.min(100, (hp / maxHp) * 100))}%"></i><span>HP ${Math.ceil(hp)}/${Math.ceil(maxHp)}</span></div>` +
+          (mana != null
+            ? `<div class="bar mp"><i style="width:${Math.max(0, Math.min(100, (mana / Math.max(1, maxMana)) * 100))}%"></i><span>MP ${Math.ceil(mana)}/${Math.ceil(maxMana)}</span></div>`
+            : "")
+        : "";
     const html =
-      `<b>${escapeHtml(plateName(foe.name))}</b>` +
-      `<div class="bar hp"><i style="width:${pct}%"></i><span>HP ${Math.ceil(foe.hp)}/${Math.ceil(foe.maxHp)}</span></div>`;
+      `<button type="button" id="targetClear" class="target-x" aria-label="Clear target">×</button>` +
+      `<b>${escapeHtml(plateName(name))}</b>` +
+      `<div class="target-sub">${escapeHtml(sub)}</div>` +
+      bars;
     targetFrame.hidden = false;
     if (targetFrame.innerHTML !== html) targetFrame.innerHTML = html;
   }
@@ -3638,15 +3804,49 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let groupChannel: BroadcastChannel | null = null;
   let guildChannel: BroadcastChannel | null = null;
 
+  function moveCode(e: KeyboardEvent): string | null {
+    const known = ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"];
+    if (known.includes(e.code)) return e.code;
+    const map: Record<string, string> = {
+      w: "KeyW",
+      a: "KeyA",
+      s: "KeyS",
+      d: "KeyD",
+      arrowup: "ArrowUp",
+      arrowdown: "ArrowDown",
+      arrowleft: "ArrowLeft",
+      arrowright: "ArrowRight",
+    };
+    if (e.key === " ") return "Space";
+    return map[e.key.toLowerCase()] ?? null;
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     touchInput();
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (e.key === "Escape") {
+      if (typing) {
+        (e.target as HTMLElement).blur();
+        canvas.focus({ preventScroll: true });
+        e.preventDefault();
+        return;
+      }
       if (closeTopPanel()) {
         e.preventDefault();
         return;
       }
+      if (selected) {
+        clearTarget();
+        e.preventDefault();
+        return;
+      }
     }
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (typing) return;
+    if (e.key === "Tab" || e.code === "Tab") {
+      e.preventDefault();
+      cycleTarget();
+      return;
+    }
     const digit = /^Digit([1-8])$/.exec(e.code) || /^Numpad([1-8])$/.exec(e.code);
     if (digit) {
       e.preventDefault();
@@ -3664,7 +3864,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       else openRoster();
       return;
     }
-    if (e.code === "KeyI") {
+    if (e.code === "KeyI" || e.key === "i" || e.key === "I") {
       e.preventDefault();
       const open = bag.hidden;
       setOpen(bag, open);
@@ -3674,30 +3874,24 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
-    if (!e.repeat && e.code === "Backquote") {
+    if (!e.repeat && (e.code === "Backquote" || e.key === "`")) {
       e.preventDefault();
       if (clickDebugToggle) clickDebugToggle.checked = !clickDebugToggle.checked;
       paintClickDebug();
       return;
     }
-    if (
-      [
-        "KeyW",
-        "KeyA",
-        "KeyS",
-        "KeyD",
-        "ArrowUp",
-        "ArrowDown",
-        "ArrowLeft",
-        "ArrowRight",
-        "Space",
-      ].includes(e.code)
-    ) {
+    const move = moveCode(e);
+    if (move) {
       e.preventDefault();
+      keys.add(move);
+      if (move === "Space" && !e.repeat && selected?.kind === "player") tryEngagePlayer(true);
+      return;
     }
     keys.add(e.code);
   }
   function onKeyUp(e: KeyboardEvent) {
+    const move = moveCode(e);
+    if (move) keys.delete(move);
     keys.delete(e.code);
   }
   function onBlur() {
@@ -3848,6 +4042,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let pendingMove: { x: number; z: number } | null = null;
   let consumeClick = false;
   function onPointer(e: PointerEvent) {
+    canvas.focus({ preventScroll: true });
     if (ctxMenu) ctxMenu.hidden = true;
     if (e.button !== 0 || !mapOverlay.hidden) return;
     if (e.target !== canvas) return;
@@ -3900,6 +4095,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (pickedNpc) {
       const dist = Math.hypot(pickedNpc.x - p.x, pickedNpc.z - p.z);
       chaseId = null;
+      pvpId = null;
+      pinnedId = null;
+      selected = { kind: "npc", id: pickedNpc.id };
       pendingMove = null;
       consumeClick = true;
       rememberClick(e, hit, pickedNpc);
@@ -3914,35 +4112,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
-    const peer = peerAt(sx, sy);
-    if (peer) {
+    const clicked = playerAt(sx, sy);
+    const peer = clicked ? null : peerAt(sx, sy);
+    if (clicked || peer) {
+      selected = { kind: "player", id: (clicked ?? peer)!.id };
       pinnedId = null;
       chaseId = null;
+      pvpId = null;
       lootGrave = null;
-      rememberClick(e, hit, peer);
-      const dist = Math.hypot(peer.x - p.x, peer.z - p.z);
-      const range = powerById("attack")?.range ?? 7.6;
+      dest = null;
+      path = [];
       pendingMove = null;
       consumeClick = true;
-      const haven = !pvpOpen(p.x, p.z) || !pvpOpen(peer.x, peer.z);
-      const grouped = !!(myGroup && peer.group === myGroup);
-      if (haven || grouped) {
-        dest = null;
-        path = [];
-        pvpId = null;
-        if (grouped && !haven) note("You cannot strike a group member.");
-        else note("This is a haven. No fighting here.");
-        return;
-      }
-      pvpId = peer.id;
-      if (dist > range) {
-        const step = Math.min(dist - range * 0.65, 6);
-        goTo(p.x + ((peer.x - p.x) / dist) * step, p.z + ((peer.z - p.z) / dist) * step, null);
-      } else {
-        dest = null;
-        path = [];
-        strikePeer(peer);
-      }
+      rememberClick(e, hit, clicked ?? peer!);
       return;
     }
     let picked: string | null = null;
@@ -3967,6 +4149,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (picked) {
       pinnedId = picked;
+      selected = { kind: "mob", id: picked };
       chaseId = picked;
       pvpId = null;
       const m = view().monsters.find((mon) => mon.id === picked);
@@ -4011,6 +4194,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return;
     }
     pinnedId = null;
+    selected = null;
     chaseId = null;
     pvpId = null;
     lootGrave = null;
@@ -4250,6 +4434,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function act(skill: string) {
+    if ((skill === "attack" || skill === "stab") && selected?.kind === "player") {
+      tryEngagePlayer(true);
+      return;
+    }
     const power = powerById(skill);
     const selfCast =
       !power ||
@@ -4607,6 +4795,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   travelPanel.addEventListener("pointerdown", onTravelPointerDown, true);
   travelClose.addEventListener("pointerup", onTravelClose);
   respawnBtn.addEventListener("pointerup", onRespawn);
+  canvas.tabIndex = 0;
   chatInput.addEventListener("keydown", onChatKey);
   canvas.addEventListener("pointerdown", onPointer);
   canvas.addEventListener("pointerup", onWorldUp);
@@ -4618,6 +4807,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   stick.addEventListener("pointercancel", resetStick);
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  targetFrame?.addEventListener("pointerdown", (e) => {
+    const btn = (e.target as HTMLElement).closest("#targetClear");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    clearTarget();
+  });
   window.addEventListener("blur", onBlur);
   window.addEventListener("resize", resize);
   root.addEventListener("contextmenu", onContextMenu);
@@ -4769,6 +4967,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!linkGate || !linkGateText) return;
     if (worldMayStart(gate)) {
       linkGate.hidden = true;
+      if (!(document.activeElement instanceof HTMLInputElement) && !(document.activeElement instanceof HTMLTextAreaElement))
+        canvas.focus({ preventScroll: true });
       return;
     }
     linkGate.hidden = false;

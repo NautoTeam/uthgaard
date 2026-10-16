@@ -452,7 +452,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
           </button>
         </div>
       </div>
-      <canvas id="view" />
+      <canvas id="view" tabIndex={0} />
       <div id="clickDebug" hidden></div>
       <div id="debugHud" hidden>
         <label>
