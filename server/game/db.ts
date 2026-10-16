@@ -40,7 +40,24 @@ export interface GraveDb {
   deleteGrave(id: string): Promise<void>;
 }
 
-export type GameDb = CharacterDb & GraveDb;
+export interface StoredGuild {
+  id: string;
+  userId: string;
+  name: string;
+  tag: string;
+  kind: string;
+  crest: string;
+  rank: "leader" | "officer" | "member";
+}
+
+export type GuildWrite = "ok" | "name_taken" | "tag_taken" | "already";
+
+export interface GuildDb {
+  listGuilds(): Promise<StoredGuild[]>;
+  insertGuild(row: StoredGuild): Promise<GuildWrite>;
+}
+
+export type GameDb = CharacterDb & GraveDb & GuildDb;
 
 type Query = (text: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
 
@@ -123,6 +140,7 @@ export async function applyGameMigrations(query: Query): Promise<void> {
 export function memoryCharacters(): GameDb {
   const rows = new Map<string, { save: CharacterRecord; rev: number; name: string; slot: number; userId: string }>();
   const graves = new Map<string, GraveState>();
+  const guilds: StoredGuild[] = [];
   const keyOf = (userId: string, slot: number) => `${userId}\0${slot}`;
   const nameTaken = (name: string, except?: { userId: string; slot: number }) => {
     const key = name.trim().toLowerCase();
@@ -180,6 +198,16 @@ export function memoryCharacters(): GameDb {
     },
     async deleteGrave(id) {
       graves.delete(id);
+    },
+    async listGuilds() {
+      return guilds.map((row) => ({ ...row }));
+    },
+    async insertGuild(row) {
+      if (guilds.some((guild) => guild.userId === row.userId)) return "already";
+      if (guilds.some((guild) => guild.name.toLowerCase() === row.name.toLowerCase())) return "name_taken";
+      if (guilds.some((guild) => guild.tag.toLowerCase() === row.tag.toLowerCase())) return "tag_taken";
+      guilds.push({ ...row });
+      return "ok";
     },
   };
 }
@@ -246,6 +274,50 @@ export function characterStore(query: Query): GameDb {
     },
     async deleteGrave(id) {
       await query("delete from graves where id = $1", [id]);
+    },
+    async listGuilds() {
+      const result = await query(
+        `select g.id, g.name, g.tag, g.kind, g.crest, m.user_id, m.rank
+         from guild_members m
+         join guilds g on g.id = m.guild_id`,
+      );
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        userId: String(row.user_id),
+        name: String(row.name),
+        tag: String(row.tag),
+        kind: String(row.kind),
+        crest: String(row.crest),
+        rank: row.rank === "officer" || row.rank === "member" ? row.rank : "leader",
+      }));
+    },
+    async insertGuild(row) {
+      const name = await query("select 1 from guilds where lower(name) = lower($1)", [row.name]);
+      if (name.rows.length) return "name_taken";
+      const tag = await query("select 1 from guilds where lower(tag) = lower($1)", [row.tag]);
+      if (tag.rows.length) return "tag_taken";
+      const member = await query("select 1 from guild_members where user_id = $1", [row.userId]);
+      if (member.rows.length) return "already";
+      try {
+        await query(
+          `with inserted as (
+             insert into guilds (id, name, tag, kind, crest) values ($1, $2, $3, $4, $5)
+             returning id
+           )
+           insert into guild_members (guild_id, user_id, rank)
+           select id, $6, $7 from inserted`,
+          [row.id, row.name, row.tag, row.kind, row.crest, row.userId, row.rank],
+        );
+        return "ok";
+      } catch (err) {
+        if (pgCode(err) === "23505") {
+          const constraint = pgConstraint(err);
+          if (constraint.includes("tag")) return "tag_taken";
+          if (constraint.includes("name")) return "name_taken";
+          return "already";
+        }
+        throw err;
+      }
     },
   };
 }

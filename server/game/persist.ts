@@ -46,6 +46,7 @@ export function recordFromPlayer(p: PlayerState): CharacterRecord {
     shroudUntil: p.shroudUntil,
     attunedGates: p.attunedGates ? [...p.attunedGates] : undefined,
     deathSettled: p.hp <= 0 && p.graveDropped,
+    charter: p.charter === true,
   };
 }
 
@@ -81,6 +82,7 @@ export function joinInputFor(
       shroudUntil: save.shroudUntil,
       attunedGates: save.attunedGates,
       deathSettled: save.deathSettled,
+      charter: save.charter === true,
     };
   }
   if (!create) return null;

@@ -6,8 +6,9 @@ import { verifyGameToken } from "../../src/shared/net/token";
 import { ClientMsg, type ServerMsg } from "../../src/shared/net/protocol";
 import type { World } from "../../src/shared/sim/world";
 import { zoneAt } from "../../src/shared/sim/mask";
-import type { GameDb } from "./db";
+import type { GameDb, StoredGuild } from "./db";
 import { applyIntent } from "./dispatch";
+import { createGuildBook, foundGuild } from "./guilds";
 import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
 
@@ -38,6 +39,8 @@ const KNOWN_OPS = new Set([
   "partyAccept",
   "partyDecline",
   "partyLeave",
+  "buyCharter",
+  "foundGuild",
 ]);
 
 /** A well-formed intent envelope whose op is not in the protocol. Schema failures of real ops stay malformed. */
@@ -157,6 +160,7 @@ export function startServer(opts: {
   const allowedOrigins = opts.allowedOrigins ?? process.env.ALLOWED_ORIGINS;
   const nodeEnv = opts.nodeEnv ?? process.env.NODE_ENV;
   const authority = createAuthority({ now, rand });
+  const guilds = createGuildBook();
   warnIfOriginsUnset();
   let tick = 0;
   let dropped = 0;
@@ -624,6 +628,7 @@ export function startServer(opts: {
           }
           const player = createdNow ? authority.world.players.get(claims.userId) : authority.world.join(input);
           if (!player) return;
+          if (guilds.hasUser(player.id)) player.charter = false;
           if (!createdNow) {
             const record = recordFromPlayer(player);
             conn.savedHash = JSON.stringify(record);
@@ -645,10 +650,18 @@ export function startServer(opts: {
         noteDrop();
         return;
       }
-      const result = applyIntent(authority.world, conn.playerId, parsed.data.intent);
+      if (parsed.data.intent.op === "foundGuild") {
+        const store = characters;
+        const write = store ? (row: StoredGuild) => store.insertGuild(row) : undefined;
+        const result = await foundGuild(authority.world, guilds, conn.playerId, parsed.data.intent, write);
+        send(socket, { t: "ack", seq: parsed.data.seq, result });
+        if (result.ok) void persist(conn, true);
+        return;
+      }
+      const result = applyIntent(authority.world, conn.playerId, parsed.data.intent, guilds);
       send(socket, { t: "ack", seq: parsed.data.seq, result });
-      if (parsed.data.intent.op === "respawn" && result.ok) {
-        conn.alive = true;
+      if (result.ok && (parsed.data.intent.op === "respawn" || parsed.data.intent.op === "buyCharter")) {
+        if (parsed.data.intent.op === "respawn") conn.alive = true;
         void persist(conn, true);
       }
     }
@@ -673,8 +686,12 @@ export function startServer(opts: {
       const hit = encoded.get(key);
       if (hit) return hit;
       const want = new Set(ids ? ids.split(",") : []);
-      const players = ids ? full.players.filter((p) => want.has(p.id)) : full.players;
+      const players = (ids ? full.players.filter((p) => want.has(p.id)) : full.players).map((row) => {
+        const tag = guilds.tag(row.id);
+        return tag ? { ...row, guildTag: tag } : row;
+      });
       const social = authority.world.social(viewerId);
+      const live = authority.world.players.get(viewerId);
       const msg = JSON.stringify({
         t: "snap",
         tick,
@@ -684,6 +701,8 @@ export function startServer(opts: {
           players,
           party: social.party,
           pendingInvite: social.pendingInvite,
+          charter: live?.charter === true,
+          guild: guilds.view(viewerId),
         },
       } satisfies ServerMsg);
       encoded.set(key, msg);
@@ -710,17 +729,20 @@ export function startServer(opts: {
     }
   }, TICK_MS);
 
-  const ready = new Promise<number>((resolve, rejectReady) => {
-    httpServer.once("error", rejectReady);
-    httpServer.listen(opts.port, () => {
-      httpServer.removeAllListeners("error");
-      httpServer.on("error", () => {
-        dropped++;
+  const ready = (async () => {
+    if (characters) guilds.load(await characters.listGuilds());
+    return await new Promise<number>((resolve, rejectReady) => {
+      httpServer.once("error", rejectReady);
+      httpServer.listen(opts.port, () => {
+        httpServer.removeAllListeners("error");
+        httpServer.on("error", () => {
+          dropped++;
+        });
+        const addr = httpServer.address();
+        resolve(typeof addr === "object" && addr ? addr.port : opts.port);
       });
-      const addr = httpServer.address();
-      resolve(typeof addr === "object" && addr ? addr.port : opts.port);
     });
-  });
+  })();
 
   return {
     ready,

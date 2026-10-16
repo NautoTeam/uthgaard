@@ -75,6 +75,10 @@ export function toServerIntent(intent: {
   graveId?: string;
   toName?: string;
   fromId?: string;
+  name?: string;
+  tag?: string;
+  kind?: string;
+  crest?: string;
 }): Record<string, unknown> | null {
   switch (intent.op) {
     case "move":
@@ -129,6 +133,16 @@ export function toServerIntent(intent: {
       return { op: "partyDecline", fromId: intent.fromId };
     case "partyLeave":
       return { op: "partyLeave" };
+    case "buyCharter":
+      return { op: "buyCharter" };
+    case "foundGuild":
+      return {
+        op: "foundGuild",
+        name: intent.name ?? "",
+        tag: intent.tag ?? "",
+        kind: intent.kind ?? "",
+        crest: intent.crest ?? "",
+      };
     default:
       return null;
   }

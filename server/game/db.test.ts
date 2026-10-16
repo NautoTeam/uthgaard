@@ -78,14 +78,14 @@ test("graves round-trip through the table", async () => {
   await pg.close();
 });
 
-test("migrations run twice and apply 0001, 0002, and 0003 once each", async () => {
+test("migrations run twice and apply 0001 through 0004 once each", async () => {
   const { pg, query } = await openDb();
   await applyGameMigrations(query);
   await applyGameMigrations(query);
   const rows = await pg.query<{ name: string }>("select name from _game_migrations order by name");
   assert.deepEqual(
     rows.rows.map((row) => row.name),
-    ["0001_characters.sql", "0002_name_rev.sql", "0003_slots.sql"],
+    ["0001_characters.sql", "0002_name_rev.sql", "0003_slots.sql", "0004_guilds.sql"],
   );
   await pg.close();
 });
@@ -130,5 +130,38 @@ test("existing characters fill slots in creation order", async () => {
   assert.equal((await store.load("user-ada", 0))?.save.username, "First");
   assert.equal((await store.load("user-ada", 1))?.save.username, "Second");
   assert.equal(await store.load("user-ada", 2), null);
+  await pg.close();
+});
+
+test("a guild row survives a new store and rejects a duplicate name or tag", async () => {
+  const { pg, query } = await openDb();
+  await applyGameMigrations(query);
+  const store = characterStore(query);
+  const row = {
+    id: "g1",
+    userId: "user-ada",
+    name: "Ash Watch",
+    tag: "ASH",
+    kind: "Warband",
+    crest: "ash",
+    rank: "leader" as const,
+  };
+  assert.equal(await store.insertGuild(row), "ok");
+  const restarted = characterStore(query);
+  const listed = await restarted.listGuilds();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.name, "Ash Watch");
+  assert.equal(listed[0]?.tag, "ASH");
+  assert.equal(listed[0]?.rank, "leader");
+  assert.equal(listed[0]?.userId, "user-ada");
+  assert.equal(
+    await restarted.insertGuild({ ...row, id: "g2", userId: "user-bea", name: "ash watch", tag: "BEA" }),
+    "name_taken",
+  );
+  assert.equal(
+    await restarted.insertGuild({ ...row, id: "g3", userId: "user-cal", name: "Tide Watch", tag: "ash" }),
+    "tag_taken",
+  );
+  assert.equal((await restarted.listGuilds()).length, 1);
   await pg.close();
 });

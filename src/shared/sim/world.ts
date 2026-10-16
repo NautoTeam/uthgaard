@@ -52,6 +52,8 @@ export interface JoinInput {
   hp?: number;
   /** Death already took gold and XP. A reload must not take them again. */
   deathSettled?: boolean;
+  /** Unspent guild charter. */
+  charter?: boolean;
 }
 
 function applyStats(p: PlayerState) {
@@ -394,7 +396,11 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
 
   function snapshot(): PublicState {
     return {
-      players: [...players.values()].map((p) => ({ ...p })),
+      players: [...players.values()].map((p) => {
+        const copy = { ...p };
+        delete copy.charter;
+        return copy;
+      }),
       monsters: [...monsters.values()]
         .filter((m) => {
           for (const p of players.values()) {
@@ -491,6 +497,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       shroudUntil: input.shroudUntil ?? 0,
       graveDropped: false,
       attunedGates: input.attunedGates?.length ? [...input.attunedGates] : [...DEFAULT_ATTUNED],
+      charter: input.charter === true,
     };
     const ownedWeapon = ["iron-sword", "dagger", "mace", "oak-staff"].some(
       (id) => player.equipment.weapon === id || (player.inventory[id] ?? 0) > 0,

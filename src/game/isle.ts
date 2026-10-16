@@ -76,11 +76,9 @@ import {
   admit,
   demoteMember,
   depart,
-  foundGuild,
   guildAtPlot,
   guildChat,
   guildOf,
-  guildTag,
   invalidateGuildChat,
   invalidateGuilds,
   kickMember,
@@ -141,6 +139,8 @@ type Intent =
   | { op: "partyAccept"; fromId: string }
   | { op: "partyDecline"; fromId: string }
   | { op: "partyLeave" }
+  | { op: "buyCharter" }
+  | { op: "foundGuild"; name: string; tag: string; kind: string; crest: string }
   | { op: "setLevel"; id: string; level: number }
   | { op: "setHp"; id: string; hp: number }
   | { op: "buy"; id: string; itemId: string }
@@ -503,8 +503,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     race: profile.race,
     baseClass: profile.baseClass,
   };
-  let charterHeld = false;
-
   const world = createWorld();
   world.join(joinBody);
 
@@ -2471,7 +2469,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.font = "12px Georgia";
           ctx.textAlign = "center";
           const lift = nameLift(race);
-          drawOverhead(pt.x, pt.y, pl.username, pl.prestigeClass || pl.baseClass, lift, pl.id === myId ? "#f0e2b0" : "#ddd");
+          drawOverhead(
+            pt.x,
+            pt.y,
+            pl.username,
+            pl.prestigeClass || pl.baseClass,
+            lift,
+            pl.id === myId ? "#f0e2b0" : "#ddd",
+            pl.guildTag ?? "",
+          );
           if (selected?.kind === "player" && selected.id === pl.id) markTarget(pl.x, pl.z);
         },
       });
@@ -2568,7 +2574,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       p.xp,
       p.level,
       p.trainPoints ?? 0,
-      charterHeld ? 1 : 0,
       JSON.stringify(p.inventory ?? {}),
       JSON.stringify(p.equipment ?? {}),
       JSON.stringify(p.skills ?? {}),
@@ -2907,8 +2912,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     sub: string,
     lift: number,
     nameColor: string,
+    tag = "",
   ) {
-    const tag = guildTag(name);
     ctx.textAlign = "center";
     if (tag) {
       ctx.font = "bold 12px Georgia";
@@ -2933,8 +2938,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return 136;
   }
 
-  function plateName(name: string) {
-    const tag = guildTag(name);
+  function plateName(name: string, tag = "") {
     return tag ? `[${tag}] ${name}` : name;
   }
 
@@ -2957,6 +2961,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     let maxHp = 0;
     let mana: number | null = null;
     let maxMana = 0;
+    let plateTag = "";
     if (selected.kind === "mob") {
       const mob = view().monsters.find((m) => m.id === selected?.id && m.hp > 0);
       if (!mob) {
@@ -2976,6 +2981,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         return;
       }
       name = pl.username;
+      plateTag = pl.guildTag ?? "";
       sub = `Lv ${pl.level} · ${pl.race} ${pl.prestigeClass || pl.baseClass}`;
       hp = pl.hp;
       maxHp = pl.maxHp;
@@ -3010,67 +3016,46 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         : "";
     const html =
       `<button type="button" id="targetClear" class="target-x" aria-label="Clear target">×</button>` +
-      `<b>${escapeHtml(plateName(name))}</b>` +
+      `<b>${escapeHtml(plateName(name, plateTag))}</b>` +
       `<div class="target-sub">${escapeHtml(sub)}</div>` +
       bars;
     targetFrame.hidden = false;
     if (targetFrame.innerHTML !== html) targetFrame.innerHTML = html;
   }
 
-  function rosterHtml(name: string) {
-    const guild = guildOf(name);
-    if (!guild) return `<p>You belong to no guild.</p>`;
-    const actor = memberRank(name);
-    const rows = guild.members
-      .map((member) => {
-        const self = member.name.toLowerCase() === name.toLowerCase();
-        const who = escapeHtml(member.name);
-        const buttons: string[] = [];
-        if (!self && actor === "Leader" && member.rank === "Member") {
-          buttons.push(`<button type="button" data-act="promote" data-who="${who}">Promote</button>`);
-        }
-        if (!self && actor === "Leader" && member.rank === "Officer") {
-          buttons.push(`<button type="button" data-act="demote" data-who="${who}">Demote</button>`);
-        }
-        if (
-          !self &&
-          member.rank !== "Leader" &&
-          (actor === "Leader" || (actor === "Officer" && member.rank === "Member"))
-        ) {
-          buttons.push(`<button type="button" data-act="kick" data-who="${who}">Kick</button>`);
-        }
-        return `<li><span>${who} — ${member.rank}</span>${buttons.join("")}</li>`;
-      })
-      .join("");
-    return (
-      `<p><i class="crest crest-${guild.crest}"></i><b>${escapeHtml(guild.name)}</b></p>` +
-      `<p>[${escapeHtml(guild.tag)}] · ${escapeHtml(guild.kind)}</p>` +
-      `<ul class="guild-roster">${rows}</ul>`
-    );
+  function myGuild() {
+    return view().guild ?? null;
+  }
+
+  function myCharter() {
+    return view().charter === true;
   }
 
   function paintGuild() {
     if (guildPanel.hidden) return;
     const p = me();
     if (!p) return;
-    if (guildOf(p.username)) charterHeld = false;
-    const mine = guildOf(p.username);
-    const sig = `${guildMode}|${charterHeld}|${p.gold}|${pickedKind}|${pickedCrest}|${mine ? JSON.stringify(mine) : ""}`;
+    const guild = myGuild();
+    const charter = myCharter();
+    const sig = `${guildMode}|${charter ? 1 : 0}|${p.gold}|${pickedKind}|${pickedCrest}|${guild ? JSON.stringify(guild) : ""}`;
     if (sig === guildSig) return;
     guildSig = sig;
     if (guildTitle) guildTitle.textContent = guildMode === "desk" ? "Registrar" : "Guild";
-    if (mine) {
-      guildBody.innerHTML = rosterHtml(p.username);
+    if (guild) {
+      guildBody.innerHTML =
+        `<p><i class="crest crest-${guild.crest}"></i><b>${escapeHtml(guild.name)}</b></p>` +
+        `<p>[${escapeHtml(guild.tag)}] · ${escapeHtml(guild.kind)}</p>` +
+        `<p>You are ${escapeHtml(guild.rank)}.</p>`;
       return;
     }
     if (guildMode === "roster") {
-      const charter = charterHeld
+      const line = charter
         ? `<p>Your charter is unspent. Speak to a Registrar in Caldrenmoor or Fenhollow.</p>`
         : `<p>A charter costs ${CHARTER_GOLD} gold. Speak to the Registrar in Caldrenmoor or Fenhollow.</p>`;
-      guildBody.innerHTML = `<p>You belong to no guild.</p>${charter}`;
+      guildBody.innerHTML = `<p>You belong to no guild.</p>${line}`;
       return;
     }
-    if (!charterHeld) {
+    if (!charter) {
       guildBody.innerHTML =
         `<p class="guild-warn">A charter costs ${CHARTER_GOLD} gold. You have ${p.gold}.</p>` +
         `<button type="button" data-act="charter">Buy charter — ${CHARTER_GOLD}g</button>`;
@@ -3115,55 +3100,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function buyCharter() {
-    const p = localPlayer();
-    if (!p || p.hp <= 0) return;
-    if (guildOf(p.username)) {
-      note("You already belong to a guild.");
-      return;
-    }
-    if (charterHeld) {
-      note("You already hold a charter.");
-      return;
-    }
-    if (p.gold < CHARTER_GOLD) {
-      note(`A charter costs ${CHARTER_GOLD} gold. You have ${p.gold}.`);
-      return;
-    }
-    p.gold -= CHARTER_GOLD;
-    charterHeld = true;
-    touchInput();
-    persist();
-    note("The Registrar seals your charter.");
+    send({ op: "buyCharter" });
     guildSig = "";
   }
 
   function foundFromDesk() {
-    const p = localPlayer();
-    if (!p || p.hp <= 0) return;
-    if (!charterHeld) {
-      note("Buy a charter first.");
-      return;
-    }
     captureDraft();
-    const result = foundGuild({
-      leader: p.username,
+    send({
+      op: "foundGuild",
       name: draftName,
       tag: draftTag,
       kind: pickedKind,
       crest: pickedCrest,
     });
-    if (!result.ok) {
-      note(result.reason);
-      return;
-    }
-    charterHeld = false;
-    draftName = "";
-    draftTag = "";
-    touchInput();
-    persist();
-    note(`You found [${result.guild.tag}] ${result.guild.name}. You are Leader.`);
-    seenGuild = result.guild.id;
-    seenRank = "Leader";
     guildSig = "";
   }
 
@@ -3318,9 +3267,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       hideGuildToast();
       return;
     }
-    charterHeld = false;
-    touchInput();
-    persist();
     note(`You join [${result.guild.tag}] ${result.guild.name}.`);
     seenGuild = result.guild.id;
     seenRank = "Member";

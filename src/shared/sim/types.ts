@@ -47,6 +47,10 @@ export interface PlayerState extends PlayerInit {
   graveDropped: boolean;
   /** Ley Gate stones this hero has stood beside. Missing on old saves. */
   attunedGates?: string[];
+  /** Paid the Registrar and has not founded yet. Stripped from public snaps. */
+  charter?: boolean;
+  /** Set on the snap only, so nameplates can show another hero's tag. */
+  guildTag?: string;
 }
 
 export interface MonsterState {
@@ -98,6 +102,16 @@ export interface PendingInvite {
   fromName: string;
 }
 
+/** The viewer's own guild. Absent from the shared world snapshot. */
+export interface GuildView {
+  id: string;
+  name: string;
+  tag: string;
+  kind: string;
+  crest: string;
+  rank: "Leader" | "Officer" | "Member";
+}
+
 export interface PublicState {
   players: PlayerState[];
   monsters: MonsterState[];
@@ -106,6 +120,9 @@ export interface PublicState {
   /** Present only on the snap sent to one player. Not stored. */
   party?: PartyView | null;
   pendingInvite?: PendingInvite | null;
+  /** Present only on the snap sent to one player. Not stored. */
+  charter?: boolean;
+  guild?: GuildView | null;
 }
 
 export interface ActionResult {

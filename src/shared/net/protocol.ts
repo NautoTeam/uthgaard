@@ -130,6 +130,22 @@ const partyLeave = z
   })
   .strict();
 
+const buyCharter = z
+  .object({
+    op: z.literal("buyCharter"),
+  })
+  .strict();
+
+const foundGuild = z
+  .object({
+    op: z.literal("foundGuild"),
+    name: z.string().max(48),
+    tag: z.string().max(8),
+    kind: z.string().max(32),
+    crest: z.string().max(32),
+  })
+  .strict();
+
 /** Client intents. No player id — the socket is the identity. Debug ops are absent. */
 export const IntentSchema = z.discriminatedUnion("op", [
   move,
@@ -150,6 +166,8 @@ export const IntentSchema = z.discriminatedUnion("op", [
   partyAccept,
   partyDecline,
   partyLeave,
+  buyCharter,
+  foundGuild,
 ]);
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -227,6 +245,7 @@ const playerState = z
     shroudUntil: z.number(),
     graveDropped: z.boolean(),
     attunedGates: z.array(z.string()).optional(),
+    guildTag: z.string().max(4).optional(),
   })
   .strict();
 
@@ -286,6 +305,17 @@ const pendingInviteView = z
   })
   .strict();
 
+const guildView = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    tag: z.string(),
+    kind: z.string(),
+    crest: z.string(),
+    rank: z.enum(["Leader", "Officer", "Member"]),
+  })
+  .strict();
+
 export const PublicStateSchema = z
   .object({
     players: z.array(playerState),
@@ -294,6 +324,8 @@ export const PublicStateSchema = z
     logs: z.array(z.string()),
     party: partyView.nullable().optional(),
     pendingInvite: pendingInviteView.nullable().optional(),
+    charter: z.boolean().optional(),
+    guild: guildView.nullable().optional(),
   })
   .strict();
 

@@ -2,6 +2,7 @@ import { blocked } from "../../src/shared/sim/geo";
 import { MAX_SPEED, type World } from "../../src/shared/sim/world";
 import type { ActionResult } from "../../src/shared/sim/types";
 import type { Intent } from "../../src/shared/net/protocol";
+import { buyCharter, foundGuildNow, type GuildBook } from "./guilds";
 
 /** One authoritative tick. 20 Hz, matching the server loop. */
 export const TICK_DT = 1 / 20;
@@ -18,7 +19,12 @@ export const MOVE_ALLOW = MAX_SPEED * 0.5;
  * Apply one client intent. `move` is rejected when it jumps farther than
  * {@link MOVE_ALLOW}, or when the destination tile is not walkable.
  */
-export function applyIntent(world: World, playerId: string, intent: Intent): ActionResult {
+export function applyIntent(
+  world: World,
+  playerId: string,
+  intent: Intent,
+  guilds?: GuildBook,
+): ActionResult {
   switch (intent.op) {
     case "move": {
       const p = world.players.get(playerId);
@@ -62,6 +68,11 @@ export function applyIntent(world: World, playerId: string, intent: Intent): Act
       return world.partyDecline(playerId, intent.fromId);
     case "partyLeave":
       return world.partyLeave(playerId);
+    case "buyCharter":
+      return buyCharter(world, playerId, guilds);
+    case "foundGuild":
+      if (!guilds) return { ok: false, reason: "You cannot do that." };
+      return foundGuildNow(world, guilds, playerId, intent);
     default:
       return { ok: false, reason: "unknown op" };
   }
