@@ -1059,60 +1059,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return true;
   }
 
-  function drawClassMark(
-    kind: string,
-    x: number,
-    z: number,
-    facing: number,
-    phase: number,
-    casting: boolean,
-  ) {
-    const p = worldToScreen(x, z);
-    const side = facing === 1 || facing === 3 ? -1 : 1;
-    const bob = Math.sin(phase * Math.PI) * 5;
-    ctx.save();
-    ctx.translate(p.x + side * 22, p.y - 78 + bob);
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    if (kind === "mage") {
-      ctx.strokeStyle = "#d7ecff";
-      ctx.beginPath();
-      ctx.moveTo(0, 28);
-      ctx.lineTo(-side * 6, -26);
-      ctx.stroke();
-      ctx.fillStyle = casting ? "#fff6c2" : "#7ec8ff";
-      ctx.beginPath();
-      ctx.arc(-side * 6, -30, casting ? 7 : 5, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (kind === "rogue") {
-      ctx.strokeStyle = "#e8e8e8";
-      ctx.beginPath();
-      ctx.moveTo(-6, 10);
-      ctx.lineTo(8, -16);
-      ctx.moveTo(6, 12);
-      ctx.lineTo(-4, -12);
-      ctx.stroke();
-    } else if (kind === "healer") {
-      ctx.strokeStyle = "#fff4c8";
-      ctx.fillStyle = "rgba(255, 236, 170, .85)";
-      ctx.beginPath();
-      ctx.arc(0, -8, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0, -16);
-      ctx.lineTo(0, 2);
-      ctx.moveTo(-7, -7);
-      ctx.lineTo(7, -7);
-      ctx.stroke();
-    } else {
-      ctx.strokeStyle = "#d7c28a";
-      ctx.beginPath();
-      ctx.arc(-side * 8, 4, 9, 0.4, Math.PI * 1.7);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
   function drawCast(x: number, z: number, t: number) {
     const p = worldToScreen(x, z);
     ctx.save();
@@ -1483,7 +1429,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (!drawFrame(`${drawn}-walk-${frame}`, x, z, cell, lift, filter))
         drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     }
-    if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
     if (casting) {
       const span = rig ? rigMs(rig, "cast1h") : 900;
       drawCast(x, z, 1 - (actor.castUntil - now) / span);
