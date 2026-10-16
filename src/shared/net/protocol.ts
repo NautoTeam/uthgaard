@@ -146,6 +146,56 @@ const foundGuild = z
   })
   .strict();
 
+const guildInvite = z
+  .object({
+    op: z.literal("guildInvite"),
+    toName: z.string().trim().min(1).max(16),
+  })
+  .strict();
+
+const guildAccept = z
+  .object({
+    op: z.literal("guildAccept"),
+    guildId: z.string().min(1).max(40),
+  })
+  .strict();
+
+const guildDecline = z
+  .object({
+    op: z.literal("guildDecline"),
+    guildId: z.string().min(1).max(40),
+  })
+  .strict();
+
+const guildLeave = z
+  .object({
+    op: z.literal("guildLeave"),
+  })
+  .strict();
+
+const guildUserName = z.string().trim().min(1).max(16);
+
+const guildKick = z
+  .object({
+    op: z.literal("guildKick"),
+    userName: guildUserName,
+  })
+  .strict();
+
+const guildPromote = z
+  .object({
+    op: z.literal("guildPromote"),
+    userName: guildUserName,
+  })
+  .strict();
+
+const guildDemote = z
+  .object({
+    op: z.literal("guildDemote"),
+    userName: guildUserName,
+  })
+  .strict();
+
 /** Client intents. No player id — the socket is the identity. Debug ops are absent. */
 export const IntentSchema = z.discriminatedUnion("op", [
   move,
@@ -168,6 +218,13 @@ export const IntentSchema = z.discriminatedUnion("op", [
   partyLeave,
   buyCharter,
   foundGuild,
+  guildInvite,
+  guildAccept,
+  guildDecline,
+  guildLeave,
+  guildKick,
+  guildPromote,
+  guildDemote,
 ]);
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -305,6 +362,14 @@ const pendingInviteView = z
   })
   .strict();
 
+const guildMemberView = z
+  .object({
+    name: z.string(),
+    rank: z.enum(["Leader", "Officer", "Member"]),
+    online: z.boolean(),
+  })
+  .strict();
+
 const guildView = z
   .object({
     id: z.string(),
@@ -313,6 +378,16 @@ const guildView = z
     kind: z.string(),
     crest: z.string(),
     rank: z.enum(["Leader", "Officer", "Member"]),
+    members: z.array(guildMemberView).optional(),
+  })
+  .strict();
+
+const pendingGuildInviteView = z
+  .object({
+    guildId: z.string(),
+    fromName: z.string(),
+    guildName: z.string(),
+    tag: z.string(),
   })
   .strict();
 
@@ -326,6 +401,7 @@ export const PublicStateSchema = z
     pendingInvite: pendingInviteView.nullable().optional(),
     charter: z.boolean().optional(),
     guild: guildView.nullable().optional(),
+    pendingGuildInvite: pendingGuildInviteView.nullable().optional(),
   })
   .strict();
 

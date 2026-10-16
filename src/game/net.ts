@@ -79,6 +79,8 @@ export function toServerIntent(intent: {
   tag?: string;
   kind?: string;
   crest?: string;
+  guildId?: string;
+  userName?: string;
 }): Record<string, unknown> | null {
   switch (intent.op) {
     case "move":
@@ -143,6 +145,26 @@ export function toServerIntent(intent: {
         kind: intent.kind ?? "",
         crest: intent.crest ?? "",
       };
+    case "guildInvite":
+      if (!intent.toName) return null;
+      return { op: "guildInvite", toName: intent.toName };
+    case "guildAccept":
+      if (!intent.guildId) return null;
+      return { op: "guildAccept", guildId: intent.guildId };
+    case "guildDecline":
+      if (!intent.guildId) return null;
+      return { op: "guildDecline", guildId: intent.guildId };
+    case "guildLeave":
+      return { op: "guildLeave" };
+    case "guildKick":
+      if (!intent.userName) return null;
+      return { op: "guildKick", userName: intent.userName };
+    case "guildPromote":
+      if (!intent.userName) return null;
+      return { op: "guildPromote", userName: intent.userName };
+    case "guildDemote":
+      if (!intent.userName) return null;
+      return { op: "guildDemote", userName: intent.userName };
     default:
       return null;
   }

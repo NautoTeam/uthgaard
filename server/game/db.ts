@@ -48,13 +48,24 @@ export interface StoredGuild {
   kind: string;
   crest: string;
   rank: "leader" | "officer" | "member";
+  /** Character name. Not its own column; filled from the hero or the characters table. */
+  username?: string;
+  /** Join order. Milliseconds from the server clock, or the row's joined_at. */
+  joinedAt?: number;
 }
 
 export type GuildWrite = "ok" | "name_taken" | "tag_taken" | "already";
+export type MemberWrite = "ok" | "already" | "missing";
 
 export interface GuildDb {
   listGuilds(): Promise<StoredGuild[]>;
   insertGuild(row: StoredGuild): Promise<GuildWrite>;
+  addMember(row: StoredGuild): Promise<MemberWrite>;
+  setMemberRank(userId: string, rank: StoredGuild["rank"]): Promise<void>;
+  removeMember(userId: string): Promise<void>;
+  /** Promote `toId` and drop `fromId` in one statement. */
+  handoffLeader(guildId: string, toId: string, fromId: string): Promise<void>;
+  deleteGuild(guildId: string): Promise<void>;
 }
 
 export type GameDb = CharacterDb & GraveDb & GuildDb;
@@ -104,6 +115,16 @@ function asSave(raw: unknown): CharacterRecord {
 
 function asGrave(raw: unknown): GraveState {
   return typeof raw === "string" ? (JSON.parse(raw) as GraveState) : (raw as GraveState);
+}
+
+function joinedAtOf(raw: unknown): number {
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw) {
+    const n = Date.parse(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
 }
 
 function sqlStatements(text: string): string[] {
@@ -200,7 +221,9 @@ export function memoryCharacters(): GameDb {
       graves.delete(id);
     },
     async listGuilds() {
-      return guilds.map((row) => ({ ...row }));
+      return guilds
+        .map((row) => ({ ...row }))
+        .sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0) || a.userId.localeCompare(b.userId));
     },
     async insertGuild(row) {
       if (guilds.some((guild) => guild.userId === row.userId)) return "already";
@@ -208,6 +231,38 @@ export function memoryCharacters(): GameDb {
       if (guilds.some((guild) => guild.tag.toLowerCase() === row.tag.toLowerCase())) return "tag_taken";
       guilds.push({ ...row });
       return "ok";
+    },
+    async addMember(row) {
+      if (guilds.some((guild) => guild.userId === row.userId)) return "already";
+      const guild = guilds.find((entry) => entry.id === row.id);
+      if (!guild) return "missing";
+      guilds.push({
+        ...guild,
+        userId: row.userId,
+        rank: row.rank,
+        username: row.username,
+        joinedAt: row.joinedAt,
+      });
+      return "ok";
+    },
+    async setMemberRank(userId, rank) {
+      const row = guilds.find((guild) => guild.userId === userId);
+      if (row) row.rank = rank;
+    },
+    async removeMember(userId) {
+      const index = guilds.findIndex((guild) => guild.userId === userId);
+      if (index >= 0) guilds.splice(index, 1);
+    },
+    async handoffLeader(guildId, toId, fromId) {
+      const heir = guilds.find((guild) => guild.id === guildId && guild.userId === toId);
+      if (heir) heir.rank = "leader";
+      const index = guilds.findIndex((guild) => guild.id === guildId && guild.userId === fromId);
+      if (index >= 0) guilds.splice(index, 1);
+    },
+    async deleteGuild(guildId) {
+      for (let i = guilds.length - 1; i >= 0; i--) {
+        if (guilds[i]?.id === guildId) guilds.splice(i, 1);
+      }
     },
   };
 }
@@ -277,9 +332,11 @@ export function characterStore(query: Query): GameDb {
     },
     async listGuilds() {
       const result = await query(
-        `select g.id, g.name, g.tag, g.kind, g.crest, m.user_id, m.rank
+        `select g.id, g.name, g.tag, g.kind, g.crest, m.user_id, m.rank, m.joined_at,
+                (select c.name from characters c where c.user_id = m.user_id order by c.updated_at desc limit 1) as username
          from guild_members m
-         join guilds g on g.id = m.guild_id`,
+         join guilds g on g.id = m.guild_id
+         order by m.joined_at asc, m.user_id asc`,
       );
       return result.rows.map((row) => ({
         id: String(row.id),
@@ -288,7 +345,9 @@ export function characterStore(query: Query): GameDb {
         tag: String(row.tag),
         kind: String(row.kind),
         crest: String(row.crest),
-        rank: row.rank === "officer" || row.rank === "member" ? row.rank : "leader",
+        rank: (row.rank === "officer" || row.rank === "member" ? row.rank : "leader") as StoredGuild["rank"],
+        username: typeof row.username === "string" ? row.username : "",
+        joinedAt: joinedAtOf(row.joined_at),
       }));
     },
     async insertGuild(row) {
@@ -304,9 +363,9 @@ export function characterStore(query: Query): GameDb {
              insert into guilds (id, name, tag, kind, crest) values ($1, $2, $3, $4, $5)
              returning id
            )
-           insert into guild_members (guild_id, user_id, rank)
-           select id, $6, $7 from inserted`,
-          [row.id, row.name, row.tag, row.kind, row.crest, row.userId, row.rank],
+           insert into guild_members (guild_id, user_id, rank, joined_at)
+           select id, $6, $7, coalesce(to_timestamp($8::double precision / 1000.0), now()) from inserted`,
+          [row.id, row.name, row.tag, row.kind, row.crest, row.userId, row.rank, row.joinedAt ?? null],
         );
         return "ok";
       } catch (err) {
@@ -318,6 +377,48 @@ export function characterStore(query: Query): GameDb {
         }
         throw err;
       }
+    },
+    async addMember(row) {
+      const guild = await query("select 1 from guilds where id = $1", [row.id]);
+      if (!guild.rows.length) return "missing";
+      const member = await query("select 1 from guild_members where user_id = $1", [row.userId]);
+      if (member.rows.length) return "already";
+      try {
+        await query(
+          `insert into guild_members (guild_id, user_id, rank, joined_at)
+           values ($1, $2, $3, coalesce(to_timestamp($4::double precision / 1000.0), now()))`,
+          [row.id, row.userId, row.rank, row.joinedAt ?? null],
+        );
+        return "ok";
+      } catch (err) {
+        if (pgCode(err) === "23505") return "already";
+        if (pgCode(err) === "23503") return "missing";
+        throw err;
+      }
+    },
+    async setMemberRank(userId, rank) {
+      await query("update guild_members set rank = $2 where user_id = $1", [userId, rank]);
+    },
+    async removeMember(userId) {
+      await query("delete from guild_members where user_id = $1", [userId]);
+    },
+    async handoffLeader(guildId, toId, fromId) {
+      await query(
+        `with promoted as (
+           update guild_members set rank = 'leader' where guild_id = $1 and user_id = $2
+         )
+         delete from guild_members where guild_id = $1 and user_id = $3`,
+        [guildId, toId, fromId],
+      );
+    },
+    async deleteGuild(guildId) {
+      await query(
+        `with dropped as (
+           delete from guild_members where guild_id = $1
+         )
+         delete from guilds where id = $1`,
+        [guildId],
+      );
     },
   };
 }

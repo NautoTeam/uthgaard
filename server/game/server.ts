@@ -8,7 +8,7 @@ import type { World } from "../../src/shared/sim/world";
 import { zoneAt } from "../../src/shared/sim/mask";
 import type { GameDb, StoredGuild } from "./db";
 import { applyIntent } from "./dispatch";
-import { createGuildBook, foundGuild } from "./guilds";
+import { createGuildBook, commitGuildAct, foundGuild } from "./guilds";
 import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
 
@@ -41,6 +41,13 @@ const KNOWN_OPS = new Set([
   "partyLeave",
   "buyCharter",
   "foundGuild",
+  "guildInvite",
+  "guildAccept",
+  "guildDecline",
+  "guildLeave",
+  "guildKick",
+  "guildPromote",
+  "guildDemote",
 ]);
 
 /** A well-formed intent envelope whose op is not in the protocol. Schema failures of real ops stay malformed. */
@@ -658,6 +665,26 @@ export function startServer(opts: {
         if (result.ok) void persist(conn, true);
         return;
       }
+      if (
+        parsed.data.intent.op === "guildInvite" ||
+        parsed.data.intent.op === "guildAccept" ||
+        parsed.data.intent.op === "guildDecline" ||
+        parsed.data.intent.op === "guildLeave" ||
+        parsed.data.intent.op === "guildKick" ||
+        parsed.data.intent.op === "guildPromote" ||
+        parsed.data.intent.op === "guildDemote"
+      ) {
+        const result = await commitGuildAct(
+          authority.world,
+          guilds,
+          conn.playerId,
+          parsed.data.intent,
+          characters,
+        );
+        send(socket, { t: "ack", seq: parsed.data.seq, result });
+        if (result.ok && parsed.data.intent.op === "guildAccept") void persist(conn, true);
+        return;
+      }
       const result = applyIntent(authority.world, conn.playerId, parsed.data.intent, guilds);
       send(socket, { t: "ack", seq: parsed.data.seq, result });
       if (result.ok && (parsed.data.intent.op === "respawn" || parsed.data.intent.op === "buyCharter")) {
@@ -680,6 +707,10 @@ export function startServer(opts: {
     if (tick % 2 !== 0) return;
     const full = authority.snapshot();
     const online = byUser.size;
+    const onlineIds = new Set<string>();
+    for (const conn of byUser.values()) {
+      if (conn.playerId) onlineIds.add(conn.playerId);
+    }
     const encoded = new Map<string, string>();
     const packet = (ids: string, viewerId: string) => {
       const key = `${viewerId}\n${ids}`;
@@ -702,7 +733,11 @@ export function startServer(opts: {
           party: social.party,
           pendingInvite: social.pendingInvite,
           charter: live?.charter === true,
-          guild: guilds.view(viewerId),
+          guild: guilds.view(viewerId, {
+            online: onlineIds,
+            name: (id) => authority.world.players.get(id)?.username,
+          }),
+          pendingGuildInvite: guilds.pending(viewerId),
         },
       } satisfies ServerMsg);
       encoded.set(key, msg);

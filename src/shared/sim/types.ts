@@ -103,6 +103,12 @@ export interface PendingInvite {
 }
 
 /** The viewer's own guild. Absent from the shared world snapshot. */
+export interface GuildMemberView {
+  name: string;
+  rank: "Leader" | "Officer" | "Member";
+  online: boolean;
+}
+
 export interface GuildView {
   id: string;
   name: string;
@@ -110,6 +116,15 @@ export interface GuildView {
   kind: string;
   crest: string;
   rank: "Leader" | "Officer" | "Member";
+  members?: GuildMemberView[];
+}
+
+/** A guild invite waiting on this player. Not stored on the shared snapshot. */
+export interface PendingGuildInvite {
+  guildId: string;
+  fromName: string;
+  guildName: string;
+  tag: string;
 }
 
 export interface PublicState {
@@ -123,6 +138,7 @@ export interface PublicState {
   /** Present only on the snap sent to one player. Not stored. */
   charter?: boolean;
   guild?: GuildView | null;
+  pendingGuildInvite?: PendingGuildInvite | null;
 }
 
 export interface ActionResult {

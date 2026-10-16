@@ -2,7 +2,7 @@ import { blocked } from "../../src/shared/sim/geo";
 import { MAX_SPEED, type World } from "../../src/shared/sim/world";
 import type { ActionResult } from "../../src/shared/sim/types";
 import type { Intent } from "../../src/shared/net/protocol";
-import { buyCharter, foundGuildNow, type GuildBook } from "./guilds";
+import { buyCharter, foundGuildNow, guildAct, type GuildBook } from "./guilds";
 
 /** One authoritative tick. 20 Hz, matching the server loop. */
 export const TICK_DT = 1 / 20;
@@ -73,6 +73,15 @@ export function applyIntent(
     case "foundGuild":
       if (!guilds) return { ok: false, reason: "You cannot do that." };
       return foundGuildNow(world, guilds, playerId, intent);
+    case "guildInvite":
+    case "guildAccept":
+    case "guildDecline":
+    case "guildLeave":
+    case "guildKick":
+    case "guildPromote":
+    case "guildDemote":
+      if (!guilds) return { ok: false, reason: "You cannot do that." };
+      return guildAct(world, guilds, playerId, intent);
     default:
       return { ok: false, reason: "unknown op" };
   }

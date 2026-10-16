@@ -10,7 +10,7 @@ import { CHARTER_GOLD } from "../../src/shared/sim/guild";
 import { createWorld, type World } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters } from "./db";
 import { applyIntent } from "./dispatch";
-import { createGuildBook, foundGuild } from "./guilds";
+import { commitGuildAct, createGuildBook, foundGuild } from "./guilds";
 import { joinInputFor, recordFromPlayer } from "./persist";
 import { startServer } from "./server";
 
@@ -53,6 +53,17 @@ test("protocol accepts a charter purchase and a founding", () => {
     toServerIntent({ op: "foundGuild", name: "Ash Watch", tag: "ash", kind: "Warband", crest: "ash" }),
     { op: "foundGuild", name: "Ash Watch", tag: "ash", kind: "Warband", crest: "ash" },
   );
+  assert.equal(IntentSchema.safeParse({ op: "guildInvite", toName: "Bea" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildAccept", guildId: "g1" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildDecline", guildId: "g1" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildLeave" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildKick", userName: "Bea" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildPromote", userName: "Bea" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildDemote", userName: "Bea" }).success, true);
+  assert.equal(IntentSchema.safeParse({ op: "guildInvite", toName: "" }).success, false);
+  assert.deepEqual(toServerIntent({ op: "guildInvite", toName: "Bea" }), { op: "guildInvite", toName: "Bea" });
+  assert.deepEqual(toServerIntent({ op: "guildKick", userName: "Bea" }), { op: "guildKick", userName: "Bea" });
+  assert.deepEqual(toServerIntent({ op: "guildLeave" }), { op: "guildLeave" });
 });
 
 test("a charter costs gold and only at the registrar", () => {
@@ -314,7 +325,13 @@ test("a snap shows the buyer's charter and the public guild tag", async () => {
     result?: { ok: boolean; reason?: string };
     state?: {
       charter?: boolean;
-      guild?: { tag?: string; rank?: string; name?: string } | null;
+      guild?: {
+        tag?: string;
+        rank?: string;
+        name?: string;
+        members?: Array<{ name: string; rank: string; online: boolean }>;
+      } | null;
+      pendingGuildInvite?: { guildId: string; fromName: string; guildName: string; tag: string } | null;
       players?: Array<{ id: string; guildTag?: string; charter?: boolean }>;
     };
   }> = [];
@@ -401,9 +418,203 @@ test("a snap shows the buyer's charter and the public guild tag", async () => {
     assert.equal(plate ? Object.hasOwn(plate, "charter") : false, false);
     assert.equal(ServerMsg.safeParse(views.adaSnap).success, true);
     assert.equal(ServerMsg.safeParse(views.beaSnap).success, true);
+
+    ada.send(JSON.stringify({ t: "intent", seq: 3, intent: { op: "guildInvite", toName: "Bea" } }));
+    const invited = await until(() => adaMsgs.find((m) => m.t === "ack" && m.seq === 3));
+    assert.equal(invited.result?.ok, true, invited.result?.reason);
+    const toast = await until(() =>
+      [...beaMsgs].reverse().find((m) => m.t === "snap" && m.state?.pendingGuildInvite?.tag === "ASH"),
+    );
+    assert.equal(ServerMsg.safeParse(toast).success, true);
+    assert.equal(toast.state?.pendingGuildInvite?.fromName, "Ada");
+    assert.equal(toast.state?.pendingGuildInvite?.guildName, "Ash Watch");
+    const guildId = toast.state?.pendingGuildInvite?.guildId;
+    assert.ok(guildId);
+    bea.send(JSON.stringify({ t: "intent", seq: 4, intent: { op: "guildAccept", guildId } }));
+    const joined = await until(() => beaMsgs.find((m) => m.t === "ack" && m.seq === 4));
+    assert.equal(joined.result?.ok, true, joined.result?.reason);
+    const roster = await until(() =>
+      [...adaMsgs].reverse().find((m) => m.state?.guild?.members?.some((member) => member.name === "Bea" && member.online)),
+    );
+    assert.equal(ServerMsg.safeParse(roster).success, true);
+    assert.equal(roster.state?.guild?.members?.find((member) => member.name === "Bea")?.rank, "Member");
+    const stored = await characters.listGuilds();
+    assert.equal(stored.length, 2);
+    assert.equal(stored.find((row) => row.userId === "user-bea")?.rank, "member");
   } finally {
     ada.close();
     bea.close();
     await game.close();
+  }
+});
+
+function foundHouse(world: World, book: ReturnType<typeof createGuildBook>, id: string, username: string, name: string, tag: string) {
+  hero(world, id, username);
+  const p = world.players.get(id);
+  assert.ok(p);
+  p.charter = true;
+  const result = applyIntent(world, id, { op: "foundGuild", name, tag, kind: "Warband", crest: "ash" }, book);
+  assert.equal(result.ok, true, result.reason);
+  const view = book.view(id);
+  assert.ok(view);
+  return view;
+}
+
+function acceptInvite(world: World, book: ReturnType<typeof createGuildBook>, fromId: string, toId: string, toName: string) {
+  const guildId = book.view(fromId)?.id;
+  assert.ok(guildId);
+  const invited = applyIntent(world, fromId, { op: "guildInvite", toName }, book);
+  assert.equal(invited.ok, true, invited.reason);
+  const accepted = applyIntent(world, toId, { op: "guildAccept", guildId }, book);
+  assert.equal(accepted.ok, true, accepted.reason);
+}
+
+test("each rank can invite, kick, promote, and demote only as allowed", () => {
+  const world = worldAt();
+  const book = createGuildBook();
+  foundHouse(world, book, "a", "Ada", "Ash Watch", "ASH");
+  hero(world, "b", "Bea");
+  hero(world, "c", "Cal");
+  hero(world, "d", "Dee");
+  acceptInvite(world, book, "a", "b", "Bea");
+  acceptInvite(world, book, "a", "c", "Cal");
+  assert.equal(book.view("b")?.rank, "Member");
+
+  const memberInvite = applyIntent(world, "b", { op: "guildInvite", toName: "Dee" }, book);
+  assert.equal(memberInvite.ok, false);
+  assert.equal(memberInvite.reason, "Only a Leader or Officer can invite.");
+  assert.equal(applyIntent(world, "b", { op: "guildKick", userName: "Cal" }, book).reason, "Members cannot kick.");
+  assert.equal(applyIntent(world, "b", { op: "guildKick", userName: "Ada" }, book).reason, "The Leader cannot be kicked.");
+  assert.equal(applyIntent(world, "b", { op: "guildPromote", userName: "Cal" }, book).reason, "Only the Leader can promote.");
+  assert.equal(applyIntent(world, "b", { op: "guildDemote", userName: "Ada" }, book).reason, "Only the Leader can demote.");
+
+  assert.equal(applyIntent(world, "a", { op: "guildPromote", userName: "Bea" }, book).reason, "Bea is now an Officer.");
+  assert.equal(book.view("b")?.rank, "Officer");
+  assert.equal(applyIntent(world, "b", { op: "guildKick", userName: "Cal" }, book).reason, "Cal was removed from the guild.");
+  assert.equal(book.hasUser("c"), false);
+
+  acceptInvite(world, book, "a", "c", "Cal");
+  assert.equal(applyIntent(world, "a", { op: "guildPromote", userName: "Cal" }, book).ok, true);
+  assert.equal(applyIntent(world, "b", { op: "guildKick", userName: "Cal" }, book).reason, "Officers can only kick Members.");
+  assert.equal(applyIntent(world, "b", { op: "guildDemote", userName: "Cal" }, book).reason, "Only the Leader can demote.");
+  assert.equal(applyIntent(world, "b", { op: "guildPromote", userName: "Cal" }, book).reason, "Only the Leader can promote.");
+  assert.equal(book.hasUser("c"), true);
+
+  assert.equal(applyIntent(world, "a", { op: "guildDemote", userName: "Cal" }, book).reason, "Cal is now a Member.");
+  assert.equal(book.view("c")?.rank, "Member");
+  assert.equal(applyIntent(world, "a", { op: "guildKick", userName: "Cal" }, book).ok, true);
+  assert.equal(applyIntent(world, "a", { op: "guildPromote", userName: "Bea" }, book).reason, "Only a Member can be promoted to Officer.");
+  assert.equal(applyIntent(world, "c", { op: "guildInvite", toName: "Dee" }, book).reason, "You are not in a guild.");
+});
+
+test("a leader's leave hands leadership to the oldest officer, then the oldest member, else disbands", () => {
+  const world = worldAt();
+  const book = createGuildBook();
+  foundHouse(world, book, "a", "Ada", "Ash Watch", "ASH");
+  hero(world, "b", "Bea");
+  hero(world, "c", "Cal");
+  hero(world, "d", "Dee");
+  acceptInvite(world, book, "a", "b", "Bea");
+  acceptInvite(world, book, "a", "c", "Cal");
+  acceptInvite(world, book, "a", "d", "Dee");
+  assert.equal(applyIntent(world, "a", { op: "guildPromote", userName: "Cal" }, book).ok, true);
+
+  const handed = applyIntent(world, "a", { op: "guildLeave" }, book);
+  assert.equal(handed.ok, true);
+  assert.equal(handed.reason, "You leave the guild. Cal is now Leader.");
+  assert.equal(book.hasUser("a"), false);
+  assert.equal(book.view("c")?.rank, "Leader");
+  assert.equal(book.view("b")?.rank, "Member");
+  assert.equal(book.tag("d"), "ASH");
+
+  const noOfficer = applyIntent(world, "c", { op: "guildLeave" }, book);
+  assert.equal(noOfficer.reason, "You leave the guild. Bea is now Leader.");
+  assert.equal(book.view("b")?.rank, "Leader");
+  assert.equal(book.view("d")?.rank, "Member");
+
+  assert.equal(applyIntent(world, "b", { op: "guildLeave" }, book).reason, "You leave the guild. Dee is now Leader.");
+  assert.equal(applyIntent(world, "d", { op: "guildLeave" }, book).reason, "The guild is disbanded.");
+  assert.equal(book.view("d"), null);
+  assert.equal(book.hasUser("b"), false);
+});
+
+test("an invite to someone already in a guild is rejected", () => {
+  const world = worldAt();
+  const book = createGuildBook();
+  const ash = foundHouse(world, book, "a", "Ada", "Ash Watch", "ASH");
+  foundHouse(world, book, "e", "Eve", "Tide Watch", "TIDE");
+  hero(world, "b", "Bea");
+  const taken = applyIntent(world, "a", { op: "guildInvite", toName: "Eve" }, book);
+  assert.equal(taken.ok, false);
+  assert.equal(taken.reason, "They already belong to a guild.");
+  assert.equal(book.pending("e"), null);
+  assert.equal(book.view("e")?.tag, "TIDE");
+
+  acceptInvite(world, book, "a", "b", "Bea");
+  const again = applyIntent(world, "e", { op: "guildInvite", toName: "Bea" }, book);
+  assert.equal(again.reason, "They already belong to a guild.");
+  assert.equal(book.view("b")?.id, ash.id);
+  const declined = applyIntent(world, "b", { op: "guildDecline", guildId: ash.id }, book);
+  assert.equal(declined.reason, "No invite.");
+});
+
+test("membership is written through and a reloaded book hands off the oldest officer", async () => {
+  const pg = new PGlite();
+  await pg.waitReady;
+  const query = async (text: string, params?: unknown[]) => {
+    const result = await pg.query(text, params);
+    return { rows: result.rows as Array<Record<string, unknown>> };
+  };
+  try {
+    await applyGameMigrations(query);
+    const store = characterStore(query);
+    const world = worldAt();
+    const book = createGuildBook();
+    hero(world, "a", "Ada");
+    hero(world, "b", "Bea");
+    hero(world, "c", "Cal");
+    const ada = world.players.get("a");
+    assert.ok(ada);
+    ada.charter = true;
+    const found = await foundGuild(
+      world,
+      book,
+      "a",
+      { name: "Ash Watch", tag: "ASH", kind: "Warband", crest: "ash" },
+      (row) => store.insertGuild(row),
+    );
+    assert.equal(found.ok, true, found.reason);
+    assert.equal((await commitGuildAct(world, book, "a", { op: "guildInvite", toName: "Bea" }, store)).ok, true);
+    assert.equal((await commitGuildAct(world, book, "b", { op: "guildAccept", guildId: book.view("a")!.id }, store)).ok, true);
+    assert.equal((await commitGuildAct(world, book, "a", { op: "guildInvite", toName: "Cal" }, store)).ok, true);
+    assert.equal((await commitGuildAct(world, book, "c", { op: "guildAccept", guildId: book.view("a")!.id }, store)).ok, true);
+    assert.equal(
+      (await commitGuildAct(world, book, "a", { op: "guildPromote", userName: "Bea" }, store)).reason,
+      "Bea is now an Officer.",
+    );
+
+    const reloaded = createGuildBook();
+    const store2 = characterStore(query);
+    reloaded.load(await store2.listGuilds());
+    assert.equal(reloaded.view("b")?.rank, "Officer");
+    assert.equal(reloaded.view("c")?.rank, "Member");
+    const left = await commitGuildAct(world, reloaded, "a", { op: "guildLeave" }, store2);
+    assert.equal(left.reason, "You leave the guild. Bea is now Leader.");
+
+    const after = createGuildBook();
+    const store3 = characterStore(query);
+    after.load(await store3.listGuilds());
+    assert.equal(after.view("a"), null);
+    assert.equal(after.view("b")?.rank, "Leader");
+    assert.equal(after.view("c")?.rank, "Member");
+    assert.equal((await commitGuildAct(world, after, "b", { op: "guildLeave" }, store3)).reason, "You leave the guild. Cal is now Leader.");
+    const last = createGuildBook();
+    const store4 = characterStore(query);
+    last.load(await store4.listGuilds());
+    assert.equal(last.view("c")?.rank, "Leader");
+    assert.equal((await commitGuildAct(world, last, "c", { op: "guildLeave" }, store4)).reason, "The guild is disbanded.");
+    assert.deepEqual(await store4.listGuilds(), []);
+  } finally {
+    await pg.close();
   }
 });

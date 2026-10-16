@@ -72,20 +72,14 @@ import {
   GUILD_CHAT_KEY,
   GUILD_KEY,
   GUILD_KINDS,
-  LEADER_LEAVE,
-  admit,
-  demoteMember,
-  depart,
   guildAtPlot,
   guildChat,
   guildOf,
   invalidateGuildChat,
   invalidateGuilds,
-  kickMember,
   memberRank,
   plantCornerstone,
   postGuildChat,
-  promoteMember,
   removeCornerstone,
   type CrestId,
   type GuildKind,
@@ -141,6 +135,13 @@ type Intent =
   | { op: "partyLeave" }
   | { op: "buyCharter" }
   | { op: "foundGuild"; name: string; tag: string; kind: string; crest: string }
+  | { op: "guildInvite"; toName: string }
+  | { op: "guildAccept"; guildId: string }
+  | { op: "guildDecline"; guildId: string }
+  | { op: "guildLeave" }
+  | { op: "guildKick"; userName: string }
+  | { op: "guildPromote"; userName: string }
+  | { op: "guildDemote"; userName: string }
   | { op: "setLevel"; id: string; level: number }
   | { op: "setHp"; id: string; hp: number }
   | { op: "buy"; id: string; itemId: string }
@@ -533,8 +534,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let draftTag = "";
   let pickedKind: GuildKind = "Warband";
   let pickedCrest: CrestId = "ash";
-  let pendingGuild: { guildId: string; fromName: string; guildName: string; tag: string } | null =
-    null;
   let repaths = 0;
   let stuckFor = 0;
   let lastSpeed = 0;
@@ -1670,6 +1669,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     paintTarget();
     paintGuild();
     paintGuildChat();
+    paintGuildToast();
+    watchGuildSnap();
     paintPlotPrompt();
     watchBind();
     const plotNow = CITY_PLOTS.map((plot) => `${plot.id}:${guildAtPlot(plot.id)?.tag ?? ""}`).join("|");
@@ -3042,10 +3043,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     guildSig = sig;
     if (guildTitle) guildTitle.textContent = guildMode === "desk" ? "Registrar" : "Guild";
     if (guild) {
-      guildBody.innerHTML =
-        `<p><i class="crest crest-${guild.crest}"></i><b>${escapeHtml(guild.name)}</b></p>` +
-        `<p>[${escapeHtml(guild.tag)}] · ${escapeHtml(guild.kind)}</p>` +
-        `<p>You are ${escapeHtml(guild.rank)}.</p>`;
+      guildBody.innerHTML = rosterHtml(guild);
       return;
     }
     if (guildMode === "roster") {
@@ -3122,19 +3120,69 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let plotSig = "";
   let seenBind = "";
 
-  function syncGuildNote() {
-    const beforeId = seenGuild;
-    const beforeRank = seenRank;
-    invalidateGuilds();
-    const after = guildOf(myName());
-    const afterId = after?.id ?? "";
-    const afterRank = after ? (memberRank(myName()) ?? "") : "";
-    if (beforeId && !afterId) note("You were removed from the guild. Your tag is cleared.");
-    else if (beforeRank && afterRank && beforeRank !== afterRank) note(`You are now ${afterRank}.`);
+  function rosterHtml(guild: NonNullable<ReturnType<typeof myGuild>>) {
+    const mine = myName().toLowerCase();
+    const rows = (guild.members ?? [])
+      .map((member) => {
+        const buttons: string[] = [];
+        const self = member.name.toLowerCase() === mine;
+        if (!self && guild.rank === "Leader" && member.rank === "Member") {
+          buttons.push(`<button type="button" data-act="promote" data-who="${escapeHtml(member.name)}">Promote</button>`);
+        }
+        if (!self && guild.rank === "Leader" && member.rank === "Officer") {
+          buttons.push(`<button type="button" data-act="demote" data-who="${escapeHtml(member.name)}">Demote</button>`);
+        }
+        if (!self && member.rank !== "Leader") {
+          if (guild.rank === "Leader" || (guild.rank === "Officer" && member.rank === "Member")) {
+            buttons.push(`<button type="button" data-act="kick" data-who="${escapeHtml(member.name)}">Kick</button>`);
+          }
+        }
+        return (
+          `<li><b>${escapeHtml(member.name)}</b> · ${escapeHtml(member.rank)} · ${member.online ? "online" : "offline"}` +
+          buttons.join("") +
+          `</li>`
+        );
+      })
+      .join("");
+    return (
+      `<p><i class="crest crest-${guild.crest}"></i><b>${escapeHtml(guild.name)}</b></p>` +
+      `<p>[${escapeHtml(guild.tag)}] · ${escapeHtml(guild.kind)}</p>` +
+      `<p>You are ${escapeHtml(guild.rank)}.</p>` +
+      `<ul class="guild-roster">${rows}</ul>` +
+      `<button type="button" data-act="leave">Leave guild</button>`
+    );
+  }
+
+  function paintGuildToast() {
+    const invite = view().pendingGuildInvite ?? null;
+    if (!guildToast) return;
+    if (!invite) {
+      guildToast.hidden = true;
+      return;
+    }
+    if (guildToastText) {
+      guildToastText.textContent = `${invite.fromName} invites you to [${invite.tag}] ${invite.guildName}.`;
+    }
+    guildToast.hidden = false;
+  }
+
+  let guildNoted = false;
+
+  function watchGuildSnap() {
+    if (snaps.length === 0) return;
+    const guild = view().guild ?? null;
+    const afterId = guild?.id ?? "";
+    const afterRank = guild?.rank ?? "";
+    if (!guildNoted) {
+      guildNoted = true;
+      seenGuild = afterId;
+      seenRank = afterRank;
+      return;
+    }
+    if (seenGuild && !afterId) note("You were removed from the guild. Your tag is cleared.");
+    else if (seenRank && afterRank && seenRank !== afterRank) note(`You are now ${afterRank}.`);
     seenGuild = afterId;
     seenRank = afterRank;
-    guildSig = "";
-    paintGuild();
   }
 
   function paintGuildChat() {
@@ -3178,39 +3226,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function rankMember(act: "promote" | "demote" | "kick", who: string) {
-    if (act === "promote") {
-      const result = promoteMember(myName(), who);
-      if (!result.ok) {
-        note(result.reason);
-        return;
-      }
-      note(`${who} is now an Officer.`);
-      postGuild({ t: "grank", name: who, rank: "Officer", guildId: result.guild.id });
-      seenGuild = result.guild.id;
-    } else if (act === "demote") {
-      const result = demoteMember(myName(), who);
-      if (!result.ok) {
-        note(result.reason);
-        return;
-      }
-      note(`${who} is now a Member.`);
-      postGuild({ t: "grank", name: who, rank: "Member", guildId: result.guild.id });
-      seenGuild = result.guild.id;
-    } else {
-      const result = kickMember(myName(), who);
-      if (!result.ok) {
-        note(result.reason);
-        return;
-      }
-      note(`${result.name} was removed from the guild.`);
-      postGuild({ t: "gkick", name: result.name, guildId: result.guild.id });
-      seenGuild = result.guild.id;
-    }
-    seenRank = memberRank(myName()) ?? "";
+    if (act === "promote") send({ op: "guildPromote", userName: who });
+    else if (act === "demote") send({ op: "guildDemote", userName: who });
+    else send({ op: "guildKick", userName: who });
     guildSig = "";
-    touchInput();
-    persist();
-    paintGuild();
   }
 
   function postGuild(msg: {
@@ -3226,133 +3245,42 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     guildChannel?.postMessage(msg);
   }
 
-  function hideGuildToast() {
-    pendingGuild = null;
-    if (guildToast) guildToast.hidden = true;
-  }
-
   function inviteGuild(raw: string) {
-    const p = me();
-    if (!p) return;
-    const guild = guildOf(p.username);
-    if (!guild || memberRank(p.username) !== "Leader") {
-      note("Only a Leader can invite.");
-      return;
-    }
     const pl = findPlayer(raw);
     if (!pl) {
       note("No one nearby by that name.");
       return;
     }
-    if (guildOf(pl.username)) {
-      note(`${pl.username} already belongs to a guild.`);
-      return;
-    }
-    postGuild({
-      t: "ginvite",
-      guildId: guild.id,
-      fromName: p.username,
-      toName: pl.username,
-      guildName: guild.name,
-      tag: guild.tag,
-    });
-    note(`You invite ${pl.username} to [${guild.tag}].`);
+    send({ op: "guildInvite", toName: pl.username });
   }
 
   function acceptGuild() {
-    if (!pendingGuild) return;
-    const result = admit(pendingGuild.guildId, myName());
-    if (!result.ok) {
-      note(result.reason);
-      hideGuildToast();
-      return;
-    }
-    note(`You join [${result.guild.tag}] ${result.guild.name}.`);
-    seenGuild = result.guild.id;
-    seenRank = "Member";
-    postGuild({ t: "gjoin", name: myName(), guildId: result.guild.id, tag: result.guild.tag });
-    hideGuildToast();
+    const invite = view().pendingGuildInvite;
+    if (!invite) return;
+    send({ op: "guildAccept", guildId: invite.guildId });
     guildSig = "";
-    paintGuild();
   }
 
   function declineGuild() {
-    if (!pendingGuild) return;
-    postGuild({ t: "gdecline", fromName: pendingGuild.fromName, name: myName() });
-    note("You decline the guild invitation.");
-    hideGuildToast();
+    const invite = view().pendingGuildInvite;
+    if (!invite) return;
+    send({ op: "guildDecline", guildId: invite.guildId });
   }
 
   function leaveGuild() {
-    const result = depart(myName());
-    if (!result.ok) {
-      note(result.reason);
-      return;
-    }
-    note(
-      result.closed
-        ? `${LEADER_LEAVE} Your tag is cleared.`
-        : `You leave the guild. Your tag is cleared. ${LEADER_LEAVE}`,
-    );
-    postGuild({ t: "gleave", name: myName(), tag: result.tag });
-    seenGuild = "";
-    seenRank = "";
-    touchInput();
-    persist();
+    if (!view().guild) return;
+    send({ op: "guildLeave" });
     guildSig = "";
-    paintGuild();
   }
 
   function onGuildMessage(ev: MessageEvent) {
     const msg = ev.data as {
       t?: string;
       guildId?: string;
-      fromName?: string;
-      toName?: string;
-      name?: string;
-      guildName?: string;
-      tag?: string;
-      rank?: string;
     };
     if (!msg || typeof msg.t !== "string") return;
-    if (
-      msg.t === "ginvite" &&
-      msg.toName &&
-      msg.toName.toLowerCase() === myName().toLowerCase() &&
-      msg.fromName &&
-      msg.guildId
-    ) {
-      if (guildOf(myName())) {
-        postGuild({ t: "gdecline", fromName: msg.fromName, name: myName() });
-        return;
-      }
-      pendingGuild = {
-        guildId: msg.guildId,
-        fromName: msg.fromName,
-        guildName: msg.guildName || "a guild",
-        tag: msg.tag || "",
-      };
-      if (guildToastText)
-        guildToastText.textContent = `${msg.fromName} invites you to [${pendingGuild.tag}] ${pendingGuild.guildName}.`;
-      if (guildToast) guildToast.hidden = false;
-      return;
-    }
-    if (
-      msg.t === "gdecline" &&
-      msg.fromName &&
-      msg.fromName.toLowerCase() === myName().toLowerCase() &&
-      msg.name
-    ) {
-      note(`${msg.name} declines.`);
-      return;
-    }
-    if (msg.t === "gjoin" || msg.t === "gleave" || msg.t === "gkick" || msg.t === "grank" || msg.t === "gstone") {
-      syncGuildNote();
-      if (msg.t === "gjoin" && msg.name && msg.tag && guildOf(myName())?.tag === msg.tag)
-        note(`${msg.name} joins [${msg.tag}].`);
-      return;
-    }
-    if (msg.t === "gchat") {
+    if (msg.t === "gchat" || msg.t === "gstone") {
+      if (msg.t === "gstone") invalidateGuilds();
       invalidateGuildChat();
       guildChatSig = "";
       paintGuildChat();
@@ -3361,7 +3289,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onGuildStorage(e: StorageEvent) {
     if (e.key && e.key !== GUILD_KEY && e.key !== GUILD_CHAT_KEY) return;
-    if (!e.key || e.key === GUILD_KEY) syncGuildNote();
+    if (!e.key || e.key === GUILD_KEY) invalidateGuilds();
     if (!e.key || e.key === GUILD_CHAT_KEY) {
       invalidateGuildChat();
       guildChatSig = "";
@@ -3380,6 +3308,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     captureDraft();
     const act = btn.dataset.act;
     if (act === "charter") buyCharter();
+    else if (act === "leave") leaveGuild();
     else if (act === "promote" || act === "demote" || act === "kick") {
       const who = btn.dataset.who || "";
       if (who) rankMember(act, who);
