@@ -15,6 +15,8 @@ import {
   nearestOpen,
   nearestTrainer,
   nearestRegistrar,
+  offCampfire,
+  onCampfire,
   routeTo,
   underHall,
 } from "./geo";
@@ -400,8 +402,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const HUMAN_ANIMS = ["idle", "walk", "atk1h", "atk2h", "block", "cast1h"] as const;
   type HumanAnim = (typeof HUMAN_ANIMS)[number];
-  type RigRace = "human" | "minotaur";
-  const RIG_RACES: RigRace[] = ["human", "minotaur"];
+  type RigRace = "human" | "elf" | "minotaur";
+  const RIG_RACES: RigRace[] = ["human", "elf", "minotaur"];
   function freshDur(): Record<HumanAnim, number[]> {
     return {
       idle: [300, 300, 300, 300],
@@ -414,6 +416,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const rigDur: Record<RigRace, Record<HumanAnim, number[]>> = {
     human: freshDur(),
+    elf: freshDur(),
     minotaur: freshDur(),
   };
   function rigMs(race: RigRace, anim: HumanAnim) {
@@ -431,15 +434,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return durs.length - 1;
   }
   const HUMAN_CELL = 112 * 1.16;
+  const ELF_CELL = HUMAN_CELL * 1.1;
   const MINOTAUR_CELL = HUMAN_CELL * 1.26;
   const FACE_FILE = ["S", "W", "E", "N"];
-  for (const race of ["elf", "marshwarden"]) {
+  for (const race of ["marshwarden"]) {
     for (let i = 0; i < 16; i++) loadFrame(`${race}-walk-${i}`, "7");
     for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
   }
-  for (const part of ["base", "chest-cloth"]) {
-    for (const anim of HUMAN_ANIMS) {
-      for (let i = 0; i < 16; i++) loadFrame(`human-${part}-${anim}-${i}`, "9");
+  for (const race of ["human", "elf"] as const) {
+    for (const part of ["base", "chest-cloth"]) {
+      for (const anim of HUMAN_ANIMS) {
+        for (let i = 0; i < 16; i++) loadFrame(`${race}-${part}-${anim}-${i}`, "10");
+      }
     }
   }
   for (const anim of HUMAN_ANIMS) {
@@ -661,6 +667,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   let serverBound = false;
   let placed = false;
+  /** Last position the server has actually confirmed. */
+  let authX = 0;
+  let authZ = 0;
+  let haveAuth = false;
+  /** Desired velocity this frame. Facing follows this, not a reconciliation yank. */
+  let wishX = 0;
+  let wishZ = 0;
+  let faceHold = 0;
+  const SEND_CAP = MOVE * 0.49;
 
   function claimServerId(nextId: string) {
     if (!nextId || nextId === myId) {
@@ -729,21 +744,58 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       });
       local = world.players.get(myId);
       if (!local) return;
+    }
+    authX = mine.x;
+    authZ = mine.z;
+    haveAuth = true;
+    const gap = Math.hypot(local.x - mine.x, local.z - mine.z);
+    const spawnedOnFire = (!placed || onCampfire(local.x, local.z)) && onCampfire(mine.x, mine.z);
+    if (spawnedOnFire) {
+      const clear = offCampfire(mine.x, mine.z);
+      local.x = clear.x;
+      local.z = clear.z;
+      faceHold = performance.now() + 200;
+    } else if (!placed || gap > 8) {
       local.x = mine.x;
       local.z = mine.z;
       local.rotation = mine.rotation;
-    } else {
-      const gap = Math.hypot(local.x - mine.x, local.z - mine.z);
-      if (!placed || gap > 2.5) {
-        local.x = mine.x;
-        local.z = mine.z;
-        local.rotation = mine.rotation;
-      } else if (gap > 0.9) {
-        local.x += (mine.x - local.x) * 0.5;
-        local.z += (mine.z - local.z) * 0.5;
+      faceHold = performance.now() + 200;
+    } else if (gap > 0.08) {
+      const errX = mine.x - local.x;
+      const errZ = mine.z - local.z;
+      const speed = Math.hypot(wishX, wishZ);
+      let fixX = 0;
+      let fixZ = 0;
+      if (speed > 0.2) {
+        const ux = wishX / speed;
+        const uz = wishZ / speed;
+        const along = errX * ux + errZ * uz;
+        const sideX = errX - along * ux;
+        const sideZ = errZ - along * uz;
+        const ahead = -Math.min(0, along);
+        const budget = speed * 0.6 + 0.45;
+        if (ahead > budget) {
+          const excess = ahead - budget;
+          fixX -= ux * excess * 0.5;
+          fixZ -= uz * excess * 0.5;
+        } else if (along > 0.2) {
+          fixX += ux * along * 0.45;
+          fixZ += uz * along * 0.45;
+        }
+        fixX += sideX * 0.5;
+        fixZ += sideZ * 0.5;
+      } else if (!(onCampfire(mine.x, mine.z) && !onCampfire(local.x, local.z))) {
+        fixX = errX * 0.35;
+        fixZ = errZ * 0.35;
+      }
+      if (fixX || fixZ) {
+        faceHold = performance.now() + 120;
+        local.x += fixX;
+        local.z += fixZ;
       }
     }
     placed = true;
+    if (spawnedOnFire) pushMove(true);
     local.hp = mine.hp;
     local.maxHp = mine.maxHp;
     local.mana = mine.mana;
@@ -834,6 +886,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!remoteSession.send({ t: "intent", seq, intent: wire })) return { ok: false };
     sentIntents.set(seq, intent);
     return { ok: false };
+  }
+
+  function pushMove(force = false) {
+    const p = localPlayer();
+    if (!p || !serverBound || !placed || !myId || !haveAuth) return;
+    const now = performance.now();
+    if (!force && now - lastSend < 70) return;
+    let x = p.x;
+    let z = p.z;
+    const dist = Math.hypot(x - authX, z - authZ);
+    if (dist > SEND_CAP) {
+      x = authX + ((x - authX) / dist) * SEND_CAP;
+      z = authZ + ((z - authZ) / dist) * SEND_CAP;
+    }
+    lastSend = now;
+    send({ op: "move", id: myId, x, z, rotation: p.rotation });
   }
 
   let drawScaleX = 1;
@@ -970,12 +1038,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const dx = x - actor.x;
     const dz = z - actor.z;
     actor.moving = Math.hypot(dx, dz) > 0.02;
-    if (actor.moving) {
+    const nowFace = performance.now();
+    const wish = Math.hypot(wishX, wishZ);
+    if (id === myId && nowFace < faceHold) {
+      // A reconciliation step must not flip the sprite.
+    } else if (id === myId && wish > 0.2) {
+      const sx = wishX - wishZ;
+      const sy = wishX + wishZ;
+      actor.facing = Math.abs(sy) >= Math.abs(sx) ? (sy > 0 ? 0 : 3) : sx > 0 ? 2 : 1;
+    } else if (actor.moving) {
       const sx = dx - dz;
       const sy = dx + dz;
       actor.facing = Math.abs(sy) >= Math.abs(sx) ? (sy > 0 ? 0 : 3) : sx > 0 ? 2 : 1;
     }
-    if (id === myId) {
+    if (id === myId && nowFace >= faceHold && wish <= 0.2) {
       const foe = livingMonster(chaseId);
       if (foe) {
         const sx = foe.x - x - (foe.z - z);
@@ -1157,6 +1233,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const rigAnchors: Record<RigRace, Record<HumanAnim, { main: HandAnchor[]; off: HandAnchor[] }>> = {
     human: emptyAnchors(),
+    elf: emptyAnchors(),
     minotaur: emptyAnchors(),
   };
 
@@ -1207,12 +1284,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return list[frame] ?? list[0] ?? { x: 90, y: 110, angle: -90, behind: false, scale: 0.72 };
   }
 
-  function humanChestKey(anim: HumanAnim, frame: number, equipment?: Record<string, string>) {
-    const item = itemById(equipment?.chest ?? "");
-    if (!item || item.slot !== "chest") return "";
-    const label = `${item.id} ${item.name}`.toLowerCase();
-    if (!(label.includes("cloth") || label.includes("tunic") || label.includes("linen"))) return "";
-    return `human-chest-cloth-${anim}-${frame}`;
+  function clothKey(race: RigRace, anim: HumanAnim, frame: number) {
+    if (race !== "human" && race !== "elf") return "";
+    return `${race}-chest-cloth-${anim}-${frame}`;
   }
 
   function twoHanded(itemId: string) {
@@ -1326,15 +1400,18 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const baseKey = `${race}-base-${anim}-${frame}`;
     if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
-    if (race === "human") {
-      const chest = humanChestKey(anim, frame, equipment);
-      if (chest) drawFrame(chest, x, z, cell, lift, filter);
-    }
+    const chest = clothKey(race, anim, frame);
+    if (chest) drawFrame(chest, x, z, cell, lift, filter);
     for (const prop of props) {
       if (prop.anchor.behind) continue;
       drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
     }
     return true;
+  }
+
+  function asRig(race: string): RigRace | null {
+    if (race === "human" || race === "elf" || race === "minotaur") return race;
+    return null;
   }
 
   function drawHero(
@@ -1358,7 +1435,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const kind = classKind(cls);
     const filter = classFilter[kind];
-    const cell = drawn === "minotaur" ? MINOTAUR_CELL : drawn === "human" ? HUMAN_CELL : 112;
+    const rig = asRig(drawn);
+    const cell = rig === "minotaur" ? MINOTAUR_CELL : rig === "elf" ? ELF_CELL : rig === "human" ? HUMAN_CELL : 112;
     const lift = moving ? Math.abs(Math.sin(actor.phase * Math.PI)) * 5 : Math.sin(now / 420) * 1.2;
     const casting = now < actor.castUntil;
     const attacking = now < actor.attackUntil && !casting;
@@ -1375,7 +1453,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.restore();
     }
     const worn = gear ?? world.players.get(id)?.equipment;
-    if (drawn === "human" || drawn === "minotaur") {
+    if (rig) {
       const weaponId = worn?.weapon ?? "";
       const swing = twoHanded(weaponId) ? "atk2h" : "atk1h";
       const guarding = isShield(worn?.offhand ?? "") && (world.players.get(id)?.guardUntil ?? 0) > Date.now();
@@ -1397,11 +1475,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
             : anim === "block"
               ? now - actor.blockAt
               : anim === "cast1h"
-                ? rigMs(drawn, "cast1h") - (actor.castUntil - now)
-                : rigMs(drawn, swing) - (actor.attackUntil - now);
-      const step = rigStep(drawn, anim, elapsed, anim === "atk1h" || anim === "atk2h" || anim === "block" || anim === "cast1h");
+                ? rigMs(rig, "cast1h") - (actor.castUntil - now)
+                : rigMs(rig, swing) - (actor.attackUntil - now);
+      const step = rigStep(rig, anim, elapsed, anim === "atk1h" || anim === "atk2h" || anim === "block" || anim === "cast1h");
       const frame = actor.facing * 4 + step;
-      if (!drawRig(drawn, anim, frame, x, z, cell, lift, filter, worn, FACE_FILE[actor.facing] ?? "S"))
+      if (!drawRig(rig, anim, frame, x, z, cell, lift, filter, worn, FACE_FILE[actor.facing] ?? "S"))
         drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     } else if (attacking) {
       const t = 1 - (actor.attackUntil - now) / SWING_MS;
@@ -1417,7 +1495,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
     if (casting) {
-      const span = drawn === "human" || drawn === "minotaur" ? rigMs(drawn, "cast1h") : 900;
+      const span = rig ? rigMs(rig, "cast1h") : 900;
       drawCast(x, z, 1 - (actor.castUntil - now) / span);
     }
   }
@@ -1814,6 +1892,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       selected = { kind: "mob", id: next.id };
       pinnedId = next.id;
       pvpId = null;
+      if (chaseId) {
+        dest = null;
+        path = [];
+      }
+      chaseId = null;
     } else {
       selected = { kind: "player", id: next.id };
       pinnedId = null;
@@ -1939,7 +2022,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       pressPvp();
       return;
     }
-    const foe = chase ?? currentTarget();
+    const foe = chase;
     if (!foe) return;
     const dist = Math.hypot(foe.x - p.x, foe.z - p.z);
     if (ranged && dist <= 8 && p.mana >= 10 && Date.now() >= (p.cooldowns?.fireball ?? 0)) {
@@ -2009,6 +2092,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = localPlayer();
     if (!p || p.hp <= 0 || !mapOverlay.hidden) {
       lastSpeed = 0;
+      wishX = 0;
+      wishZ = 0;
       return;
     }
     let ix = 0;
@@ -2126,6 +2211,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         }
       }
     }
+    wishX = vx;
+    wishZ = vz;
     const next = resolveMove(p.x, p.z, p.x + vx * dt, p.z + vz * dt);
     const nx = next.x;
     const nz = next.z;
@@ -2146,21 +2233,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         if (npcId) openNpc(npcId);
       }
       lastSpeed = 0;
+      if (haveAuth && Math.hypot(p.x - authX, p.z - authZ) > 0.2) pushMove();
       return;
     }
     stuckFor = 0;
     repaths = 0;
     lastSpeed = stuck ? 0 : Math.hypot(vx, vz);
-    if (stuck) return;
+    if (stuck) {
+      if (haveAuth && Math.hypot(p.x - authX, p.z - authZ) > 0.2) pushMove();
+      return;
+    }
     if (nx !== p.x || nz !== p.z) dirty = true;
     p.x = nx;
     p.z = nz;
     p.rotation = Math.atan2(vx, vz);
-    const now = performance.now();
-    if (now - lastSend > 70) {
-      lastSend = now;
-      if (serverBound && placed && myId) send({ op: "move", id: myId, x: p.x, z: p.z, rotation: p.rotation });
-    }
+    pushMove();
   }
 
   function frame(now: number) {
@@ -2985,6 +3072,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     e.preventDefault();
     if (!mapOverlay.hidden) return;
     const hit = readClick(e);
+    const mob = mobAt(hit.sx, hit.sy, { x: hit.x, z: hit.z });
+    if (mob) {
+      if (ctxMenu) ctxMenu.hidden = true;
+      engageMob(mob);
+      return;
+    }
     showCtx(e.clientX, e.clientY, peerAt(hit.sx, hit.sy));
   }
 
@@ -3026,6 +3119,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function nameLift(race: string) {
     if (race === "minotaur") return 188;
+    if (race === "elf") return 160;
     if (race === "human") return 145;
     return 136;
   }
@@ -4042,6 +4136,46 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (above >= -12 && above <= 112 && dx <= 44) return true;
     return false;
   }
+  let lastMobId: string | null = null;
+  let lastMobAt = 0;
+  function mobAt(sx: number, sy: number, w: { x: number; z: number }) {
+    for (const m of view().monsters) {
+      if (m.hp <= 0) continue;
+      if (spriteHit(sx, sy, m.x, m.z, 96)) return m.id;
+    }
+    let picked: string | null = null;
+    let best = 1.7;
+    for (const m of view().monsters) {
+      if (m.hp <= 0) continue;
+      const d = Math.hypot(m.x - w.x, m.z - w.z);
+      const sp = worldToScreen(m.x, m.z);
+      if (d < best && Math.hypot(sp.x - sx, sp.y - sy) < 80) {
+        best = d;
+        picked = m.id;
+      }
+    }
+    return picked;
+  }
+  function engageMob(id: string) {
+    const p = localPlayer();
+    if (!p || p.hp <= 0) return;
+    pinnedId = id;
+    selected = { kind: "mob", id };
+    chaseId = id;
+    pvpId = null;
+    const m = view().monsters.find((mon) => mon.id === id && mon.hp > 0);
+    if (!m) return;
+    const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
+    const dist = Math.hypot(m.x - p.x, m.z - p.z);
+    const inRange = mage ? dist <= 7.2 : dist <= 2.65;
+    if (!inRange) {
+      const spot = mage ? rangedStand(m.x, m.z, p.x, p.z) : adjacentStand(m.x, m.z, p.x, p.z);
+      goTo(spot.x, spot.z, null, true);
+    } else {
+      dest = null;
+      path = [];
+    }
+  }
   let pendingMove: { x: number; z: number } | null = null;
   let consumeClick = false;
   function onPointer(e: PointerEvent) {
@@ -4130,46 +4264,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       rememberClick(e, hit, clicked ?? peer!);
       return;
     }
-    let picked: string | null = null;
-    for (const m of view().monsters) {
-      if (m.hp <= 0) continue;
-      if (spriteHit(sx, sy, m.x, m.z, 96)) {
-        picked = m.id;
-        break;
-      }
-    }
-    if (!picked) {
-      let best = 1.7;
-      for (const m of view().monsters) {
-        if (m.hp <= 0) continue;
-        const d = Math.hypot(m.x - w.x, m.z - w.z);
-        const sp = worldToScreen(m.x, m.z);
-        if (d < best && Math.hypot(sp.x - sx, sp.y - sy) < 80) {
-          best = d;
-          picked = m.id;
-        }
-      }
-    }
+    const picked = mobAt(sx, sy, w);
     if (picked) {
+      const attack = e.detail >= 2 || (lastMobId === picked && performance.now() - lastMobAt < 350);
+      lastMobId = picked;
+      lastMobAt = performance.now();
       pinnedId = picked;
       selected = { kind: "mob", id: picked };
-      chaseId = picked;
       pvpId = null;
-      const m = view().monsters.find((mon) => mon.id === picked);
-      if (m) {
-        const mage = p.baseClass === "Mage" || p.prestigeClass === "Wizard";
-        const dist = Math.hypot(m.x - p.x, m.z - p.z);
-        const inRange = mage ? dist <= 7.2 : dist <= 2.65;
-        if (!inRange) {
-          const spot = mage ? rangedStand(m.x, m.z, p.x, p.z) : adjacentStand(m.x, m.z, p.x, p.z);
-          rememberClick(e, hit, spot);
-          goTo(spot.x, spot.z, null, true);
-        } else {
-          rememberClick(e, hit, m);
+      pendingMove = null;
+      consumeClick = true;
+      if (!attack) {
+        if (chaseId) {
           dest = null;
           path = [];
         }
+        chaseId = null;
+        return;
       }
+      engageMob(picked);
       return;
     }
     const plot = plotAtScreen(sx, sy);
@@ -4477,7 +4590,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       stamp: 0,
     };
     const now = performance.now();
-    const rig = p?.race === "Minotaur" ? "minotaur" : p?.race === "Human" ? "human" : null;
+    const rig = asRig((p?.race || "").toLowerCase());
     const swing = twoHanded(p?.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
     if (power && power.mana > 0) {
       actor.castUntil = now + (rig ? rigMs(rig, "cast1h") : 900);
@@ -5012,14 +5125,26 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       onAck: (seq, result) => {
         const intent = sentIntents.get(seq);
         sentIntents.delete(seq);
-        if (intent?.op === "move" && result.ok === false) {
-          const server = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === myId);
-          const local = localPlayer();
-          if (server && local) {
-            local.x = server.x;
-            local.z = server.z;
-            local.rotation = server.rotation;
+        if (intent?.op === "move") {
+          if (result.ok === false) {
+            const server = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === myId);
+            const local = localPlayer();
+            if (server) {
+              authX = server.x;
+              authZ = server.z;
+              haveAuth = true;
+            }
+            // "Too fast" means the prediction ran ahead of an accepted step.
+            // The next packet is clamped. Snapping here is what made WASD stutter.
+            if (result.reason !== "Too fast" && server && local) {
+              if (!(onCampfire(server.x, server.z) && !onCampfire(local.x, local.z))) {
+                local.x = server.x;
+                local.z = server.z;
+                faceHold = performance.now() + 180;
+              }
+            }
           }
+          return;
         }
         if (!intent) {
           if (result.reason) note(result.reason);

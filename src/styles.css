@@ -246,9 +246,13 @@ body {
   box-sizing: border-box;
 }
 
-#login #joinBtn {
+#login #joinBtn,
+#login #cancelCreate {
   width: min(280px, 90vw);
   margin-top: 14px;
+}
+
+#login #joinBtn {
   background: #3d4a28;
 }
 

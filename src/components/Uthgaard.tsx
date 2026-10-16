@@ -33,7 +33,7 @@ function heroSprite(race: string) {
   const key = race.toLowerCase();
   if (key === "human") return "/sprites/anim/human-base-idle-0.png";
   if (key === "minotaur") return "/sprites/anim/minotaur-base-idle-0.png";
-  if (key === "elf") return "/sprites/anim/elf-walk-0.png";
+  if (key === "elf") return "/sprites/anim/elf-base-idle-0.png";
   if (key === "marshwarden") return "/sprites/anim/marshwarden-walk-0.png";
   return `/sprites/${key}.png`;
 }
@@ -519,7 +519,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
               <button id="joinBtn" type="submit" disabled={locked || isPending}>
                 Create hero
               </button>
-              <button type="button" className="account-switch" onClick={() => setCreating(null)}>
+              <button id="cancelCreate" type="button" onClick={() => setCreating(null)}>
                 Cancel
               </button>
             </>
@@ -537,6 +537,14 @@ function Isle({ profile }: { profile: IsleProfile }) {
     if (!root) return;
     return mountIsle(root, profile);
   }, [profile]);
+
+  async function signOutGame() {
+    try {
+      await signOut("/");
+    } catch {
+      profile.onSignOut?.();
+    }
+  }
 
   return (
     <div id="game">
@@ -597,7 +605,7 @@ function Isle({ profile }: { profile: IsleProfile }) {
       <div id="ctxMenu" hidden />
       <div id="stats" />
       <div id="legend">
-        W up the screen, S down, A left, D right. Click a tile to walk. Click a creature, then Space or Attack. Halls, trees, and water block you.
+        W up the screen, S down, A left, D right. Click a tile to walk. Click a creature to select it. Double-click, right-click, or Space to attack.
       </div>
       <div id="stick" aria-hidden="true">
         <div id="knob" />
@@ -642,6 +650,9 @@ function Isle({ profile }: { profile: IsleProfile }) {
         </button>
         <button id="chatToggle" type="button">
           Chat
+        </button>
+        <button id="signOutBtn" type="button" onClick={() => void signOutGame()}>
+          Sign out
         </button>
       </div>
       <div id="mapOverlay" hidden>

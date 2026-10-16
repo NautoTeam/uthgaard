@@ -328,6 +328,23 @@ export function resolveMove(x: number, z: number, nx: number, nz: number) {
   if (!blocked(nx, nz)) return { x: nx, z: nz };
   if (!blocked(nx, z)) return { x: nx, z };
   if (!blocked(x, nz)) return { x, z: nz };
+  // Already inside a solid (a campfire, a tree). A short step never clears
+  // the radius, so WASD used to turn in place. Step out along the input,
+  // no farther than one accepted move.
+  if (blocked(x, z)) {
+    const dx = nx - x;
+    const dz = nz - z;
+    const step = Math.hypot(dx, dz);
+    if (step > 1e-4) {
+      const ux = dx / step;
+      const uz = dz / step;
+      for (let d = Math.max(0.45, step); d <= 2.001; d += 0.3) {
+        const tx = clampX(x + ux * d);
+        const tz = clampZ(z + uz * d);
+        if (!blocked(tx, tz)) return { x: tx, z: tz };
+      }
+    }
+  }
   return { x, z };
 }
 
@@ -398,6 +415,64 @@ export function arrivalSalt(id: string) {
   return h >>> 0;
 }
 
+/**
+ * The campfire graphic is much taller than its solid (r=0.7). A legal tile
+ * up-screen of the logs still draws the hero standing on the flame.
+ */
+export function onCampfire(x: number, z: number) {
+  const halfW = (424 * 0.16) / 2 + 28;
+  const top = 520 * 0.16 - 10 + 36;
+  for (const [fx, fz] of FIRES) {
+    const dx = x - fx;
+    const dz = z - fz;
+    const gx = (dx - dz) * 24;
+    const gy = (dx + dz) * 12;
+    if (Math.abs(gx) <= halfW && gy <= 18 && gy >= -top) return true;
+  }
+  return false;
+}
+
+/** Nearest walkable tile that is not standing on a campfire sprite. */
+export function offCampfire(x: number, z: number) {
+  if (!onCampfire(x, z) && !blocked(x, z)) return { x, z };
+  let best: { x: number; z: number } | null = null;
+  let bestD = 99;
+  for (let r = 0.5; r <= 2.25; r += 0.2) {
+    for (let a = 0; a < 24; a++) {
+      const ang = (a / 24) * Math.PI * 2;
+      const nx = x + Math.cos(ang) * r;
+      const nz = z + Math.sin(ang) * r;
+      if (blocked(nx, nz) || onCampfire(nx, nz) || underHall(nx, nz)) continue;
+      if (r < bestD) {
+        bestD = r;
+        best = { x: nx, z: nz };
+      }
+    }
+  }
+  if (best) return best;
+  let fx = x;
+  let fz = z;
+  let fd = 1e9;
+  for (const [cx, cz] of FIRES) {
+    const d = Math.hypot(x - cx, z - cz);
+    if (d < fd) {
+      fd = d;
+      fx = cx;
+      fz = cz;
+    }
+  }
+  let dx = x - fx;
+  let dz = z - fz;
+  if (dx === 0 && dz === 0) dx = 1;
+  const len = Math.hypot(dx, dz) || 1;
+  for (let d = 2.2; d >= 0.6; d -= 0.2) {
+    const nx = x + (dx / len) * d;
+    const nz = z + (dz / len) * d;
+    if (!blocked(nx, nz) && !onCampfire(nx, nz)) return { x: nx, z: nz };
+  }
+  return { x, z };
+}
+
 export function arrivalAt(
   x: number,
   z: number,
@@ -415,7 +490,7 @@ export function arrivalAt(
       const far = Math.hypot(spot.x - x, spot.z - z);
       if (far < 1.8 || far > 6.2) continue;
       if (blocked(spot.x, spot.z) || underHall(spot.x, spot.z)) continue;
-      if (FIRES.some(([fx, fz]) => Math.hypot(spot.x - fx, spot.z - fz) < 3.4)) continue;
+      if (onCampfire(spot.x, spot.z)) continue;
       if (NPCS.some((n) => Math.hypot(spot.x - n.x, spot.z - n.z) < 3.6)) continue;
       const away = -((spot.x - x) * nx + (spot.z - z) * nz);
       const down = spot.x - x + (spot.z - z);
@@ -441,11 +516,22 @@ export function arrivalAt(
       base.z + Math.sin(ang) * (2 + n * 0.2),
       3,
     );
-    if (!free(nudged) || blocked(nudged.x, nudged.z)) continue;
+    if (!free(nudged) || blocked(nudged.x, nudged.z) || onCampfire(nudged.x, nudged.z)) continue;
     if (Math.hypot(nudged.x - x, nudged.z - z) < 1.8) continue;
     return nudged;
   }
-  return base;
+  if (!onCampfire(base.x, base.z) && !blocked(base.x, base.z)) return base;
+  for (let r = 2.4; r <= 9; r += 0.6) {
+    for (let a = 0; a < 16; a++) {
+      const ang = ((salt + a * 23) / 16) * Math.PI * 2;
+      const spot = nearestOpen(x + Math.cos(ang) * r, z + Math.sin(ang) * r, 2);
+      if (blocked(spot.x, spot.z) || onCampfire(spot.x, spot.z) || underHall(spot.x, spot.z)) continue;
+      if (!free(spot)) continue;
+      if (Math.hypot(spot.x - x, spot.z - z) < 1.8) continue;
+      return spot;
+    }
+  }
+  return offCampfire(base.x, base.z);
 }
 
 export function clearLine(x0: number, z0: number, x1: number, z1: number) {
