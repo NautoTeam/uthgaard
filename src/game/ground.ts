@@ -1,15 +1,12 @@
 /**
- * Seamless ground, phase 1.
+ * Seamless ground.
  *
- * Chunks are baked a few scanlines at a time into a half-resolution canvas
- * and blitted instead of filling every diamond. Colour still comes from
- * tileFill / the terrain mask, so the Reach's layout does not move.
- * Click picking stays on the diamond math in iso.ts.
- *
- * Phase 2 plugs in through setTerrainArt(): a tileable texture per kind
- * and a decal list. Those replace the procedural grain at bake time.
- * invalidate() drops a chunk so dynamic ground (a Cornerstone, a scorch)
- * can rebake later. Nothing calls it yet — phase 1 ground is static.
+ * Chunks bake a few scanlines at a time and the frame blits those canvases.
+ * Corner colours still come from tileFill / the terrain mask, so layout,
+ * walkability, and click picking (iso.ts) do not move. Phase 2 samples a
+ * tileable texture per corner from public/ground/manifest.json and scatters
+ * that file's decals. A kind with no texture keeps the procedural fill.
+ * invalidate() drops a chunk so dynamic ground can rebake later.
  */
 import { CITIES, LAND, onRoad, tileFill } from "./geo";
 import { CAMPS } from "./types";
@@ -140,7 +137,7 @@ const VARIANCE: Record<string, number> = {
   plaza: 0.07,
 };
 
-const NO_DECAL = new Set(["road", "stone", "camp", "plaza", "water", "deep", "lake"]);
+const NO_DECAL = new Set(["road", "stone", "camp", "plaza", "hub", "water", "deep", "lake"]);
 
 const kindIndex = new Map<string, number>();
 const kindName: string[] = [];
@@ -488,7 +485,7 @@ function buildChunk(
   };
 }
 
-function sampleTex(tex: TexEntry, wx: number, wz: number): [number, number, number] {
+function sampleTexInto(tex: TexEntry, wx: number, wz: number, out: Float32Array): void {
   const u = wx / tex.repeat;
   const v = wz / tex.repeat;
   let x = (u - Math.floor(u)) * tex.w;
@@ -497,8 +494,68 @@ function sampleTex(tex: TexEntry, wx: number, wz: number): [number, number, numb
   if (y < 0) y += tex.h;
   const x0 = Math.min(tex.w - 1, x | 0);
   const y0 = Math.min(tex.h - 1, y | 0);
-  const i = (y0 * tex.w + x0) * 4;
-  return [tex.data[i], tex.data[i + 1], tex.data[i + 2]];
+  const x1 = (x0 + 1) % tex.w;
+  const y1 = (y0 + 1) % tex.h;
+  const fx = x - x0;
+  const fy = y - y0;
+  const d = tex.data;
+  const i00 = (y0 * tex.w + x0) * 4;
+  const i10 = (y0 * tex.w + x1) * 4;
+  const i01 = (y1 * tex.w + x0) * 4;
+  const i11 = (y1 * tex.w + x1) * 4;
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+  out[0] = d[i00] * w00 + d[i10] * w10 + d[i01] * w01 + d[i11] * w11;
+  out[1] = d[i00 + 1] * w00 + d[i10 + 1] * w10 + d[i01 + 1] * w01 + d[i11 + 1] * w11;
+  out[2] = d[i00 + 2] * w00 + d[i10 + 2] * w10 + d[i01 + 2] * w01 + d[i11 + 2] * w11;
+}
+
+/** One corner of the splat. A missing texture keeps that corner's flat colour. */
+function splatCorner(
+  art: Array<TexEntry | undefined>,
+  id: number,
+  cr: number,
+  cg: number,
+  cb: number,
+  wx: number,
+  wz: number,
+  uv: Float32Array,
+  cacheR: Float32Array,
+  cacheG: Float32Array,
+  cacheB: Float32Array,
+  cacheSeen: Int32Array,
+  stamp: number,
+): { r: number; g: number; b: number; procedural: boolean } {
+  const tex = id >= 0 && id < art.length ? art[id] : undefined;
+  if (!tex) return { r: cr, g: cg, b: cb, procedural: true };
+  if (id < cacheSeen.length) {
+    if (cacheSeen[id] !== stamp) {
+      sampleTexInto(tex, wx, wz, uv);
+      cacheR[id] = uv[0];
+      cacheG[id] = uv[1];
+      cacheB[id] = uv[2];
+      cacheSeen[id] = stamp;
+    }
+    const s = tex.strength;
+    if (s >= 0.999) return { r: cacheR[id], g: cacheG[id], b: cacheB[id], procedural: false };
+    return {
+      r: cacheR[id] * s + cr * (1 - s),
+      g: cacheG[id] * s + cg * (1 - s),
+      b: cacheB[id] * s + cb * (1 - s),
+      procedural: false,
+    };
+  }
+  sampleTexInto(tex, wx, wz, uv);
+  const s = tex.strength;
+  if (s >= 0.999) return { r: uv[0], g: uv[1], b: uv[2], procedural: false };
+  return {
+    r: uv[0] * s + cr * (1 - s),
+    g: uv[1] * s + cg * (1 - s),
+    b: uv[2] * s + cb * (1 - s),
+    procedural: false,
+  };
 }
 
 function shadeRows(
@@ -541,6 +598,12 @@ function shadeRows(
   const gwMax = gw - 2;
   const ghMax = gh - 2;
   const useArt = art !== null;
+  const cacheR = new Float32Array(64);
+  const cacheG = new Float32Array(64);
+  const cacheB = new Float32Array(64);
+  const cacheSeen = new Int32Array(64);
+  const uv = new Float32Array(3);
+  let stamp = 1;
   for (let py = y0; py < y1; py++) {
     const baseY = originY + (py + 0.5) * STEP;
     const row = py * srcW;
@@ -593,32 +656,114 @@ function shadeRows(
       let n = sampleNoise(fieldC, wx * 14, wz * 14);
       if (vary > 0.22) n = n * 0.6 + 0.4 * sampleNoise(fieldC, wx * 20, wz * 5);
       const grain = 1 + vary * (n - 0.5) * 2;
-      r *= grain;
-      g *= grain;
-      b *= grain;
       if (useArt && art) {
-        let topI = i00;
-        let topW = sa;
-        if (sb > topW) {
-          topI = i10;
-          topW = sb;
+        const k0 = kinds[i00];
+        const uniform = k0 === kinds[i10] && k0 === kinds[i01] && k0 === kinds[i11];
+        const tex = uniform && k0 < art.length ? art[k0] : undefined;
+        if (uniform && tex) {
+          sampleTexInto(tex, wx, wz, uv);
+          const s = tex.strength;
+          if (s >= 0.999) {
+            r = uv[0];
+            g = uv[1];
+            b = uv[2];
+          } else {
+            r = uv[0] * s + r * (1 - s);
+            g = uv[1] * s + g * (1 - s);
+            b = uv[2] * s + b * (1 - s);
+            const mul = 1 + (grain - 1) * (1 - s);
+            r *= mul;
+            g *= mul;
+            b *= mul;
+          }
+        } else if (uniform) {
+          r *= grain;
+          g *= grain;
+          b *= grain;
+        } else {
+          if (++stamp >= 0x7fffffff) {
+            cacheSeen.fill(0);
+            stamp = 1;
+          }
+          const c00 = splatCorner(
+            art,
+            kinds[i00],
+            cr[i00],
+            cg[i00],
+            cb[i00],
+            wx,
+            wz,
+            uv,
+            cacheR,
+            cacheG,
+            cacheB,
+            cacheSeen,
+            stamp,
+          );
+          const c10 = splatCorner(
+            art,
+            kinds[i10],
+            cr[i10],
+            cg[i10],
+            cb[i10],
+            wx,
+            wz,
+            uv,
+            cacheR,
+            cacheG,
+            cacheB,
+            cacheSeen,
+            stamp,
+          );
+          const c01 = splatCorner(
+            art,
+            kinds[i01],
+            cr[i01],
+            cg[i01],
+            cb[i01],
+            wx,
+            wz,
+            uv,
+            cacheR,
+            cacheG,
+            cacheB,
+            cacheSeen,
+            stamp,
+          );
+          const c11 = splatCorner(
+            art,
+            kinds[i11],
+            cr[i11],
+            cg[i11],
+            cb[i11],
+            wx,
+            wz,
+            uv,
+            cacheR,
+            cacheG,
+            cacheB,
+            cacheSeen,
+            stamp,
+          );
+          r = (c00.r * sa + c10.r * sb + c01.r * sc + c11.r * sd) * inv;
+          g = (c00.g * sa + c10.g * sb + c01.g * sc + c11.g * sd) * inv;
+          b = (c00.b * sa + c10.b * sb + c01.b * sc + c11.b * sd) * inv;
+          const procW =
+            (c00.procedural ? sa : 0) +
+            (c10.procedural ? sb : 0) +
+            (c01.procedural ? sc : 0) +
+            (c11.procedural ? sd : 0);
+          if (procW > 0.001) {
+            const mul = 1 + (grain - 1) * procW * inv;
+            r *= mul;
+            g *= mul;
+            b *= mul;
+          }
         }
-        if (sc > topW) {
-          topI = i01;
-          topW = sc;
-        }
-        if (sd > topW) {
-          topI = i11;
-          topW = sd;
-        }
-        const tex = art[kinds[topI]];
-        if (tex) {
-          const share = tex.strength * topW * inv;
-          const [tr, tg, tb] = sampleTex(tex, wx, wz);
-          r = r * (1 - share) + tr * share;
-          g = g * (1 - share) + tg * share;
-          b = b * (1 - share) + tb * share;
-        }
+      } else {
+        r *= grain;
+        g *= grain;
+        b *= grain;
       }
       const tintMul = 1 + tintV;
       r *= tintMul;
@@ -664,10 +809,43 @@ export interface BakedChunkImage {
   originY: number;
 }
 
-/** Bake one chunk to completion. Used by tests and the frame slicer. */
-export function bakeChunkImage(cx: number, cz: number): BakedChunkImage {
+function solidTex(r: number, g: number, b: number): TexEntry {
+  const data = new Uint8ClampedArray(2 * 2 * 4);
+  for (let i = 0; i < 4; i++) {
+    data[i * 4] = r;
+    data[i * 4 + 1] = g;
+    data[i * 4 + 2] = b;
+    data[i * 4 + 3] = 255;
+  }
+  return { data, w: 2, h: 2, strength: 1, repeat: 4 };
+}
+
+/** Bake one chunk to completion. Pass `fills` to replace those kinds with a texture. */
+export function bakeChunkImage(
+  cx: number,
+  cz: number,
+  fills?: Array<{
+    kind: string;
+    r: number;
+    g: number;
+    b: number;
+    pixels?: Uint8ClampedArray;
+    w?: number;
+    h?: number;
+  }>,
+): BakedChunkImage {
+  const art: Array<TexEntry | undefined> = [];
+  if (fills) {
+    for (const fill of fills) {
+      const entry =
+        fill.pixels && fill.w && fill.h
+          ? { data: fill.pixels, w: fill.w, h: fill.h, strength: 1, repeat: 4 }
+          : solidTex(fill.r, fill.g, fill.b);
+      art[kindId(fill.kind)] = entry;
+    }
+  }
   const chunk = buildChunk(cx, cz, sampleCorner);
-  shadeRows(chunk, 0, chunk.srcH, null);
+  shadeRows(chunk, 0, chunk.srcH, fills && fills.length ? art : null);
   return {
     data: chunk.pixels as Uint8ClampedArray,
     width: chunk.srcW,
@@ -696,45 +874,110 @@ function snapshotTexture(
   return { data: g.getImageData(0, 0, w, h).data, w, h, strength, repeat };
 }
 
-interface DecalDraw {
-  image: CanvasImageSource;
-  rate: number;
-  size: number;
-  salt: number;
+export interface ScatterRule {
+  kind: string;
+  type: string;
+  /** Per-tile chance, 0–1. */
+  density: number;
+  variants: number;
 }
 
-function paintDecals(
-  ctx: CanvasRenderingContext2D,
-  chunk: ChunkWork,
-  decals: Map<number, DecalDraw[]>,
-): void {
-  if (decals.size === 0) return;
-  const { wx0, wz0, wx1, wz1, originX, originY } = chunk;
-  const x0 = Math.floor(wx0 + 0.5);
-  const x1 = Math.floor(wx1 + 0.5);
-  const z0 = Math.floor(wz0 + 0.5);
-  const z1 = Math.floor(wz1 + 0.5);
-  for (let z = z0; z < z1; z++) {
-    for (let x = x0; x < x1; x++) {
+export interface ScatterHit {
+  x: number;
+  z: number;
+  kind: string;
+  type: string;
+  variant: number;
+}
+
+function chunkSalt(cx: number, cz: number): number {
+  return (Math.imul(cx + 4096, 73856093) ^ Math.imul(cz + 4096, 19349663)) | 0;
+}
+
+function typeSalt(type: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < type.length; i++) h = Math.imul(h ^ type.charCodeAt(i), 16777619);
+  return h | 0;
+}
+
+/**
+ * Seeded placements for one chunk. Roads, water, and building tiles are
+ * skipped even if a rule names them. The same tile always picks the same
+ * decal, so a rebake does not shuffle the scatter.
+ */
+export function scatterInChunk(cx: number, cz: number, rules: ScatterRule[]): ScatterHit[] {
+  const hits: ScatterHit[] = [];
+  if (rules.length === 0) return hits;
+  const byKind = new Map<string, ScatterRule[]>();
+  for (const rule of rules) {
+    if (NO_DECAL.has(rule.kind) || !(rule.density > 0) || rule.variants < 1) continue;
+    const list = byKind.get(rule.kind);
+    if (list) list.push(rule);
+    else byKind.set(rule.kind, [rule]);
+  }
+  if (byKind.size === 0) return hits;
+  const saltBase = chunkSalt(cx, cz);
+  const x0 = cx * GROUND_CHUNK;
+  const z0 = cz * GROUND_CHUNK;
+  for (let z = z0; z < z0 + GROUND_CHUNK; z++) {
+    for (let x = x0; x < x0 + GROUND_CHUNK; x++) {
       const sample = sampleCorner(x, z);
       if (NO_DECAL.has(sample.kind)) continue;
-      const list = decals.get(kindId(sample.kind));
+      const list = byKind.get(sample.kind);
       if (!list) continue;
       for (let i = 0; i < list.length; i++) {
-        const decal = list[i];
-        if (hashUnit(x, z, decal.salt) > decal.rate) continue;
-        const jx = (hashUnit(x, z, decal.salt + 5) - 0.5) * 0.6;
-        const jz = (hashUnit(x, z, decal.salt + 9) - 0.5) * 0.6;
-        const wx = x + jx;
-        const wz = z + jz;
-        const baseX = (wx - wz) * 24;
-        const baseY = (wx + wz) * 12;
-        const px = (baseX - originX) / STEP;
-        const py = (baseY - originY) / STEP;
-        const size = Math.max(1, decal.size / STEP);
-        ctx.drawImage(decal.image, px - size / 2, py - size / 2, size, size);
+        const rule = list[i];
+        const salt = saltBase ^ typeSalt(rule.type);
+        if (hashUnit(x, z, salt) > rule.density) continue;
+        const variant = Math.floor(hashUnit(x, z, salt ^ 17) * rule.variants) % rule.variants;
+        hits.push({ x, z, kind: sample.kind, type: rule.type, variant });
       }
     }
+  }
+  return hits;
+}
+
+interface DecalRule {
+  kind: string;
+  type: string;
+  density: number;
+  images: CanvasImageSource[];
+  widths: number[];
+  heights: number[];
+}
+
+function paintDecals(ctx: CanvasRenderingContext2D, chunk: ChunkWork, rules: DecalRule[]): void {
+  if (rules.length === 0) return;
+  const hits = scatterInChunk(
+    chunk.cx,
+    chunk.cz,
+    rules.map((rule) => ({
+      kind: rule.kind,
+      type: rule.type,
+      density: rule.density,
+      variants: rule.images.length,
+    })),
+  );
+  if (hits.length === 0) return;
+  const byKey = new Map<string, DecalRule>();
+  for (const rule of rules) byKey.set(`${rule.kind}\0${rule.type}`, rule);
+  ctx.imageSmoothingEnabled = true;
+  for (const hit of hits) {
+    const rule = byKey.get(`${hit.kind}\0${hit.type}`);
+    if (!rule) continue;
+    const image = rule.images[hit.variant];
+    if (!image) continue;
+    const jx = (hashUnit(hit.x, hit.z, 11) - 0.5) * 0.45;
+    const jz = (hashUnit(hit.x, hit.z, 13) - 0.5) * 0.45;
+    const wx = hit.x + jx;
+    const wz = hit.z + jz;
+    const baseX = (wx - wz) * 24;
+    const baseY = (wx + wz) * 12;
+    const px = (baseX - chunk.originX) / STEP;
+    const py = (baseY - chunk.originY) / STEP;
+    const w = Math.max(1, (rule.widths[hit.variant] || rule.widths[0]) / STEP);
+    const h = Math.max(1, (rule.heights[hit.variant] || rule.heights[0]) / STEP);
+    ctx.drawImage(image, px - w / 2, py - h / 2, w, h);
   }
 }
 
@@ -762,10 +1005,18 @@ export function createGround(): GroundRenderer {
   const order: string[] = [];
   const corners = new Map<number, CornerSample>();
   const textures: Array<TexEntry | undefined> = [];
-  const decals = new Map<number, DecalDraw[]>();
+  let decalRules: DecalRule[] = [];
   let artOn = false;
   let decalSalt = 1;
   let last: GroundCost = { diamonds: 0, blits: 0, baked: 0, bakeMs: 0, pending: 0 };
+
+  function rebakeAll(): void {
+    for (const chunk of cache.values()) {
+      chunk.row = 0;
+      chunk.ready = false;
+      chunk.pixels = new Uint8ClampedArray(chunk.srcW * chunk.srcH * 4);
+    }
+  }
 
   function cornerOf(x: number, z: number): CornerSample {
     const key = (x + 1024) * 4096 + (z + 1024);
@@ -802,7 +1053,7 @@ export function createGround(): GroundRenderer {
     const image = g.createImageData(chunk.srcW, chunk.srcH);
     image.data.set(chunk.pixels);
     g.putImageData(image, 0, 0);
-    if (decals.size > 0) paintDecals(g, chunk, decals);
+    if (decalRules.length > 0) paintDecals(g, chunk, decalRules);
     chunk.canvas = canvas;
     chunk.pixels = null;
     chunk.ready = true;
@@ -857,7 +1108,89 @@ export function createGround(): GroundRenderer {
     }
   }
 
-  return {
+  function loadImage(url: string): Promise<HTMLImageElement | null> {
+    return new Promise((resolve) => {
+      if (typeof Image === "undefined") {
+        resolve(null);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  }
+
+  async function loadGroundArt(): Promise<void> {
+    if (typeof document === "undefined" || typeof fetch !== "function") return;
+    let manifest: {
+      textureRepeat?: number;
+      kinds?: Record<string, string>;
+      textures?: Array<{ file: string; terrain: string }>;
+      decals?: Array<{ file: string; type: string; variant?: number; size?: [number, number] }>;
+      scatter?: Array<{ kind: string; type: string; density: number }>;
+    };
+    try {
+      const res = await fetch("/ground/manifest.json");
+      if (!res.ok) return;
+      manifest = (await res.json()) as typeof manifest;
+    } catch {
+      return;
+    }
+    const repeat = manifest.textureRepeat ?? 4;
+    const texImgs = new Map<string, HTMLImageElement>();
+    const decImgs = new Map<
+      string,
+      Array<{ img: HTMLImageElement; w: number; h: number; variant: number }>
+    >();
+    await Promise.all([
+      ...(manifest.textures ?? []).map(async (row) => {
+        const img = await loadImage(`/ground/${row.file}`);
+        if (img) texImgs.set(row.terrain, img);
+      }),
+      ...(manifest.decals ?? []).map(async (row) => {
+        const img = await loadImage(`/ground/${row.file}`);
+        if (!img) return;
+        const list = decImgs.get(row.type) ?? [];
+        list.push({
+          img,
+          w: row.size?.[0] || img.naturalWidth || 16,
+          h: row.size?.[1] || img.naturalHeight || 16,
+          variant: row.variant ?? list.length,
+        });
+        decImgs.set(row.type, list);
+      }),
+    ]);
+    let loaded = 0;
+    for (const [kind, terrain] of Object.entries(manifest.kinds ?? {})) {
+      const img = texImgs.get(terrain);
+      if (!img) continue;
+      const snap = snapshotTexture(img, 1, repeat);
+      if (!snap) continue;
+      textures[kindId(kind)] = snap;
+      loaded++;
+    }
+    const rules: DecalRule[] = [];
+    for (const row of manifest.scatter ?? []) {
+      if (NO_DECAL.has(row.kind) || !(row.density > 0)) continue;
+      const variants = (decImgs.get(row.type) ?? []).slice().sort((a, b) => a.variant - b.variant);
+      if (variants.length === 0) continue;
+      rules.push({
+        kind: row.kind,
+        type: row.type,
+        density: row.density,
+        images: variants.map((variant) => variant.img),
+        widths: variants.map((variant) => variant.w),
+        heights: variants.map((variant) => variant.h),
+      });
+    }
+    if (loaded === 0 && rules.length === 0) return;
+    decalRules = rules;
+    artOn = textures.some((tex) => tex !== undefined);
+    rebakeAll();
+  }
+
+  const api: GroundRenderer = {
     draw(ctx, view) {
       const x0 = Math.max(BOUNDS.minX, Math.floor(view.minX) - 1);
       const x1 = Math.min(BOUNDS.maxX, Math.ceil(view.maxX) + 1);
@@ -901,7 +1234,8 @@ export function createGround(): GroundRenderer {
       let blits = 0;
       for (let i = want.length - 1; i >= 0; i--) {
         const chunk = cache.get(want[i].key);
-        if (!chunk?.ready || !chunk.canvas) continue;
+        // A rebake keeps the previous canvas up until the new one finishes.
+        if (!chunk?.canvas) continue;
         const sx = chunk.originX + view.viewW / 2 - view.camX;
         const sy = chunk.originY + view.viewH / 2 - 20 - view.camZ;
         ctx.drawImage(chunk.canvas, sx, sy, chunk.screenW, chunk.screenH);
@@ -913,30 +1247,28 @@ export function createGround(): GroundRenderer {
     },
     setTerrainArt(kind, art) {
       const id = kindId(kind);
+      decalRules = decalRules.filter((rule) => rule.kind !== kind);
       if (!art) {
         textures[id] = undefined;
-        decals.delete(id);
       } else {
         textures[id] = art.texture
           ? (snapshotTexture(art.texture, art.strength ?? 1, art.repeat ?? 4) ?? undefined)
           : undefined;
         if (art.decals && art.decals.length > 0 && !NO_DECAL.has(kind)) {
-          decals.set(
-            id,
-            art.decals.map((decal) => ({
-              image: decal.image,
-              rate: decal.rate,
-              size: decal.size,
-              salt: decalSalt++,
-            })),
-          );
-        } else {
-          decals.delete(id);
+          for (const decal of art.decals) {
+            decalRules.push({
+              kind,
+              type: `custom-${decalSalt++}`,
+              density: decal.rate,
+              images: [decal.image],
+              widths: [decal.size],
+              heights: [decal.size],
+            });
+          }
         }
       }
       artOn = textures.some((tex) => tex !== undefined);
-      cache.clear();
-      order.length = 0;
+      rebakeAll();
     },
     invalidate(cx, cz) {
       if (cx === undefined || cz === undefined) {
@@ -957,4 +1289,6 @@ export function createGround(): GroundRenderer {
       return last;
     },
   };
+  void loadGroundArt();
+  return api;
 }

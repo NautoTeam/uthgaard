@@ -1,0 +1,530 @@
+{
+  "textures": [
+    {
+      "file": "textures/grass.png",
+      "terrain": "grass",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.134
+    },
+    {
+      "file": "textures/forest_floor.png",
+      "terrain": "forest_floor",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.409
+    },
+    {
+      "file": "textures/moor_heath.png",
+      "terrain": "moor_heath",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.417
+    },
+    {
+      "file": "textures/marsh_mud.png",
+      "terrain": "marsh_mud",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.219
+    },
+    {
+      "file": "textures/sand_beach.png",
+      "terrain": "sand_beach",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.451
+    },
+    {
+      "file": "textures/dirt_road.png",
+      "terrain": "dirt_road",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.259
+    },
+    {
+      "file": "textures/rock.png",
+      "terrain": "rock",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.06
+    },
+    {
+      "file": "textures/snow.png",
+      "terrain": "snow",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.197
+    },
+    {
+      "file": "textures/desert.png",
+      "terrain": "desert",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.655
+    },
+    {
+      "file": "textures/ash.png",
+      "terrain": "ash",
+      "size": [
+        256,
+        256
+      ],
+      "seamless": true,
+      "seam_error_mean": 0.618
+    }
+  ],
+  "decals": [
+    {
+      "file": "decals/grass_tuft_00.png",
+      "type": "grass_tuft",
+      "variant": 0,
+      "size": [
+        14,
+        12
+      ]
+    },
+    {
+      "file": "decals/grass_tuft_01.png",
+      "type": "grass_tuft",
+      "variant": 1,
+      "size": [
+        16,
+        14
+      ]
+    },
+    {
+      "file": "decals/grass_tuft_02.png",
+      "type": "grass_tuft",
+      "variant": 2,
+      "size": [
+        18,
+        16
+      ]
+    },
+    {
+      "file": "decals/grass_tuft_03.png",
+      "type": "grass_tuft",
+      "variant": 3,
+      "size": [
+        14,
+        18
+      ]
+    },
+    {
+      "file": "decals/flower_00.png",
+      "type": "flower",
+      "variant": 0,
+      "size": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "decals/flower_01.png",
+      "type": "flower",
+      "variant": 1,
+      "size": [
+        10,
+        10
+      ]
+    },
+    {
+      "file": "decals/flower_02.png",
+      "type": "flower",
+      "variant": 2,
+      "size": [
+        12,
+        12
+      ]
+    },
+    {
+      "file": "decals/flower_03.png",
+      "type": "flower",
+      "variant": 3,
+      "size": [
+        8,
+        8
+      ]
+    },
+    {
+      "file": "decals/flower_04.png",
+      "type": "flower",
+      "variant": 4,
+      "size": [
+        10,
+        10
+      ]
+    },
+    {
+      "file": "decals/pebble_00.png",
+      "type": "pebble",
+      "variant": 0,
+      "size": [
+        8,
+        6
+      ]
+    },
+    {
+      "file": "decals/pebble_01.png",
+      "type": "pebble",
+      "variant": 1,
+      "size": [
+        10,
+        8
+      ]
+    },
+    {
+      "file": "decals/pebble_02.png",
+      "type": "pebble",
+      "variant": 2,
+      "size": [
+        12,
+        10
+      ]
+    },
+    {
+      "file": "decals/pebble_03.png",
+      "type": "pebble",
+      "variant": 3,
+      "size": [
+        14,
+        6
+      ]
+    },
+    {
+      "file": "decals/reed_00.png",
+      "type": "reed",
+      "variant": 0,
+      "size": [
+        8,
+        16
+      ]
+    },
+    {
+      "file": "decals/reed_01.png",
+      "type": "reed",
+      "variant": 1,
+      "size": [
+        10,
+        20
+      ]
+    },
+    {
+      "file": "decals/reed_02.png",
+      "type": "reed",
+      "variant": 2,
+      "size": [
+        8,
+        24
+      ]
+    },
+    {
+      "file": "decals/reed_03.png",
+      "type": "reed",
+      "variant": 3,
+      "size": [
+        10,
+        28
+      ]
+    },
+    {
+      "file": "decals/mushroom_00.png",
+      "type": "mushroom",
+      "variant": 0,
+      "size": [
+        10,
+        10
+      ]
+    },
+    {
+      "file": "decals/mushroom_01.png",
+      "type": "mushroom",
+      "variant": 1,
+      "size": [
+        12,
+        12
+      ]
+    },
+    {
+      "file": "decals/mushroom_02.png",
+      "type": "mushroom",
+      "variant": 2,
+      "size": [
+        14,
+        14
+      ]
+    },
+    {
+      "file": "decals/twig_00.png",
+      "type": "twig",
+      "variant": 0,
+      "size": [
+        14,
+        8
+      ]
+    },
+    {
+      "file": "decals/twig_01.png",
+      "type": "twig",
+      "variant": 1,
+      "size": [
+        16,
+        10
+      ]
+    },
+    {
+      "file": "decals/twig_02.png",
+      "type": "twig",
+      "variant": 2,
+      "size": [
+        18,
+        12
+      ]
+    },
+    {
+      "file": "decals/small_rock_00.png",
+      "type": "small_rock",
+      "variant": 0,
+      "size": [
+        12,
+        9
+      ]
+    },
+    {
+      "file": "decals/small_rock_01.png",
+      "type": "small_rock",
+      "variant": 1,
+      "size": [
+        14,
+        11
+      ]
+    },
+    {
+      "file": "decals/small_rock_02.png",
+      "type": "small_rock",
+      "variant": 2,
+      "size": [
+        16,
+        13
+      ]
+    },
+    {
+      "file": "decals/small_rock_03.png",
+      "type": "small_rock",
+      "variant": 3,
+      "size": [
+        18,
+        15
+      ]
+    },
+    {
+      "file": "decals/shore_foam_00.png",
+      "type": "shore_foam",
+      "variant": 0,
+      "size": [
+        16,
+        6
+      ]
+    },
+    {
+      "file": "decals/shore_foam_01.png",
+      "type": "shore_foam",
+      "variant": 1,
+      "size": [
+        20,
+        8
+      ]
+    },
+    {
+      "file": "decals/shore_foam_02.png",
+      "type": "shore_foam",
+      "variant": 2,
+      "size": [
+        24,
+        10
+      ]
+    }
+  ],
+  "notes": {
+    "size_textures": "256x256 RGBA/RGB PNG, seamless tileable",
+    "view": "top-down flat lighting, no baked shadows or perspective",
+    "style": "muted dark-fantasy / Diablo-ish earth tones for Caldrenmoor",
+    "originality": "100% procedural original; no Shadowbane/Lakebane/game assets",
+    "scatter": "density is the per-tile chance. Roads, water, and building tiles are not listed and must not receive decals.",
+    "kinds": "game terrain id -> texture terrain. Missing kinds stay on the procedural fill."
+  },
+  "textureRepeat": 4,
+  "kinds": {
+    "meadow": "grass",
+    "scrub": "grass",
+    "forest": "forest_floor",
+    "taiga": "forest_floor",
+    "moor": "moor_heath",
+    "highland": "moor_heath",
+    "marsh": "marsh_mud",
+    "bog": "marsh_mud",
+    "beach": "sand_beach",
+    "road": "dirt_road",
+    "stone": "rock",
+    "plaza": "rock",
+    "camp": "rock",
+    "hub": "rock",
+    "barrow": "rock",
+    "snow": "snow",
+    "ice": "snow",
+    "desert": "desert",
+    "saltflat": "desert",
+    "ash": "ash",
+    "lava": "ash"
+  },
+  "scatter": [
+    {
+      "kind": "meadow",
+      "type": "grass_tuft",
+      "density": 0.07
+    },
+    {
+      "kind": "meadow",
+      "type": "flower",
+      "density": 0.02
+    },
+    {
+      "kind": "scrub",
+      "type": "grass_tuft",
+      "density": 0.05
+    },
+    {
+      "kind": "scrub",
+      "type": "flower",
+      "density": 0.015
+    },
+    {
+      "kind": "forest",
+      "type": "twig",
+      "density": 0.045
+    },
+    {
+      "kind": "forest",
+      "type": "mushroom",
+      "density": 0.025
+    },
+    {
+      "kind": "forest",
+      "type": "grass_tuft",
+      "density": 0.02
+    },
+    {
+      "kind": "taiga",
+      "type": "twig",
+      "density": 0.04
+    },
+    {
+      "kind": "taiga",
+      "type": "mushroom",
+      "density": 0.02
+    },
+    {
+      "kind": "moor",
+      "type": "small_rock",
+      "density": 0.04
+    },
+    {
+      "kind": "moor",
+      "type": "pebble",
+      "density": 0.03
+    },
+    {
+      "kind": "highland",
+      "type": "small_rock",
+      "density": 0.045
+    },
+    {
+      "kind": "highland",
+      "type": "pebble",
+      "density": 0.025
+    },
+    {
+      "kind": "marsh",
+      "type": "reed",
+      "density": 0.08
+    },
+    {
+      "kind": "bog",
+      "type": "reed",
+      "density": 0.06
+    },
+    {
+      "kind": "beach",
+      "type": "pebble",
+      "density": 0.045
+    },
+    {
+      "kind": "beach",
+      "type": "shore_foam",
+      "density": 0.05
+    },
+    {
+      "kind": "desert",
+      "type": "pebble",
+      "density": 0.03
+    },
+    {
+      "kind": "desert",
+      "type": "small_rock",
+      "density": 0.02
+    },
+    {
+      "kind": "saltflat",
+      "type": "pebble",
+      "density": 0.02
+    },
+    {
+      "kind": "ash",
+      "type": "small_rock",
+      "density": 0.03
+    },
+    {
+      "kind": "lava",
+      "type": "small_rock",
+      "density": 0.02
+    },
+    {
+      "kind": "barrow",
+      "type": "pebble",
+      "density": 0.02
+    },
+    {
+      "kind": "snow",
+      "type": "pebble",
+      "density": 0.012
+    }
+  ]
+}

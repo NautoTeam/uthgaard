@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { tileFill } from "./geo.ts";
-import { bakeChunkImage, chunkCoords, sampleCorner } from "./ground.ts";
+import { bakeChunkImage, chunkCoords, sampleCorner, scatterInChunk } from "./ground.ts";
 
 function rgb(hex: string): [number, number, number] {
   const n = Number.parseInt(hex.slice(1), 16);
@@ -88,4 +88,68 @@ test("baked ground keeps the road, the lake, and the shore", () => {
   assert.ok(foam > 80, `foam pixels ${foam}`);
   assert.ok(sand > 80, `sand pixels ${sand}`);
   assert.ok(darkWater > 30, `deep pixels ${darkWater}`);
+});
+
+test("a terrain texture replaces the procedural fill", () => {
+  let spot: [number, number] | null = null;
+  for (let z = 4; z < 28 && !spot; z++) {
+    for (let x = 4; x < 28; x++) {
+      let ok = true;
+      for (let dz = -1; dz <= 1 && ok; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (sampleCorner(x + dx, z + dz).kind !== "meadow") ok = false;
+        }
+      }
+      if (ok) spot = [x, z];
+    }
+  }
+  assert.ok(spot, "expected a meadow neighbourhood in chunk 0");
+  const [x, z] = spot;
+  const at = (
+    img: { data: Uint8ClampedArray; width: number; originX: number; originY: number },
+    wx: number,
+    wz: number,
+  ) => {
+    const baseX = (wx - wz) * 24;
+    const baseY = (wx + wz) * 12;
+    const px = Math.round((baseX - img.originX) / 2 - 0.5);
+    const py = Math.round((baseY - img.originY) / 2 - 0.5);
+    const i = (py * img.width + px) * 4;
+    return [img.data[i], img.data[i + 1], img.data[i + 2]] as const;
+  };
+  const plain = at(bakeChunkImage(0, 0), x, z);
+  const dyed = at(bakeChunkImage(0, 0, [{ kind: "meadow", r: 220, g: 8, b: 210 }]), x, z);
+  assert.ok(plain[1] > plain[0], `procedural meadow stays green ${plain.join(",")}`);
+  assert.ok(
+    dyed[0] > 140 && dyed[2] > 130 && dyed[1] < 50,
+    `texture should replace meadow, got ${dyed.join(",")}`,
+  );
+});
+
+test("decals follow density and skip roads, water, and buildings", () => {
+  const blocked = new Set(["road", "stone", "camp", "plaza", "hub", "water", "deep", "lake"]);
+  const rules = [
+    { kind: "road", type: "grass_tuft", density: 1, variants: 4 },
+    { kind: "stone", type: "flower", density: 1, variants: 3 },
+    { kind: "water", type: "reed", density: 1, variants: 2 },
+    { kind: "lake", type: "pebble", density: 1, variants: 2 },
+    { kind: "camp", type: "small_rock", density: 1, variants: 2 },
+    { kind: "meadow", type: "grass_tuft", density: 0.08, variants: 4 },
+    { kind: "meadow", type: "flower", density: 0.02, variants: 5 },
+  ];
+  const once = scatterInChunk(0, 0, rules);
+  assert.deepEqual(scatterInChunk(0, 0, rules), once);
+  let meadow = 0;
+  for (let z = 0; z < 32; z++) {
+    for (let x = 0; x < 32; x++) if (sampleCorner(x, z).kind === "meadow") meadow++;
+  }
+  const tufts = once.filter((hit) => hit.type === "grass_tuft");
+  assert.ok(tufts.length > 0, "meadow should scatter tufts");
+  const ratio = tufts.length / meadow;
+  assert.ok(ratio > 0.02 && ratio < 0.2, `tuft ratio ${ratio} over ${meadow} meadow tiles`);
+  for (const hit of once) {
+    assert.equal(blocked.has(sampleCorner(hit.x, hit.z).kind), false, `${hit.x},${hit.z}`);
+    assert.ok(hit.variant >= 0);
+  }
+  for (const tuft of tufts) assert.ok(tuft.variant < 4);
 });

@@ -1,0 +1,39 @@
+{
+  "pipeline": "procedural",
+  "generator": "generate_ground_art.py",
+  "method": "toroidal value-noise fBm + wraparound blur; PIL decals",
+  "original": true,
+  "sources": [],
+  "not_from": [
+    "Shadowbane",
+    "Lakebane",
+    "Ubisoft",
+    "any commercial game asset"
+  ],
+  "style": "muted dark-fantasy / Diablo-ish earth tones matching Caldrenmoor sprites",
+  "constraints": [
+    "top-down (not isometric)",
+    "flat lighting",
+    "no baked ground shadows",
+    "no perspective",
+    "seamless tileable textures"
+  ],
+  "texture_count": 10,
+  "decal_count": 30,
+  "seam_report": {
+    "grass": 0.13411458333333334,
+    "forest_floor": 0.4088541666666667,
+    "moor_heath": 0.4166666666666667,
+    "marsh_mud": 0.21875,
+    "sand_beach": 0.4505208333333333,
+    "dirt_road": 0.2591145833333333,
+    "rock": 0.059895833333333336,
+    "snow": 0.19661458333333334,
+    "desert": 0.6549479166666666,
+    "ash": 0.6184895833333334
+  },
+  "previews": {
+    "textures_sheet": "previews/textures_2x2_sheet.png",
+    "decals_sheet": "previews/decals_sheet.png"
+  }
+}
