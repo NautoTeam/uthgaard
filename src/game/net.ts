@@ -5,30 +5,17 @@ const metaEnv = (import.meta as { env?: { VITE_GAME_SERVER_URL?: string } }).env
 /** WebSocket URL of the authoritative game server. Empty means local play. */
 export const SERVER = String(metaEnv?.VITE_GAME_SERVER_URL ?? "").trim();
 
-/** The creation screen's choice. Piece 3 sends this only after `need_create`. */
+/** The creation screen's choice. Sent only after `need_create`. */
 export interface HelloChoice {
   username: string;
   race: Race;
   baseClass: BaseClass;
 }
 
-/** Local save offered once, inside hello. The server clamps it. */
-export interface HelloImport {
-  level: number;
-  gold: number;
-  inventory?: Record<string, number>;
-  equipment?: Record<string, string>;
-}
-
-export function gameHello(token: string, choice?: HelloChoice, imported?: HelloImport | null) {
+export function gameHello(token: string, choice?: HelloChoice) {
   if (!choice) return { t: "hello" as const, token };
-  const body: {
-    t: "hello";
-    token: string;
-    create: { name: string; race: Race; baseClass: BaseClass };
-    import?: HelloImport;
-  } = {
-    t: "hello",
+  return {
+    t: "hello" as const,
     token,
     create: {
       name: choice.username.trim().slice(0, 16),
@@ -36,8 +23,6 @@ export function gameHello(token: string, choice?: HelloChoice, imported?: HelloI
       baseClass: choice.baseClass,
     },
   };
-  if (imported) body.import = imported;
-  return body;
 }
 
 /**
@@ -48,12 +33,11 @@ export function helloAfterNeedCreate(
   token: string,
   reason: string,
   choice: HelloChoice,
-  imported?: HelloImport | null,
 ): ReturnType<typeof gameHello> | null {
   if (reason !== "need_create") return null;
   const name = choice.username.trim();
   if (name.length < 2) return null;
-  return gameHello(token, { ...choice, username: name }, imported);
+  return gameHello(token, { ...choice, username: name });
 }
 
 /** Socket hook: on `need_create`, write the creation-screen hello back to the server. */
@@ -62,10 +46,9 @@ export function answerNeedCreate(
   token: string,
   choice: HelloChoice,
   send: (body: ReturnType<typeof gameHello>) => void,
-  imported?: HelloImport | null,
 ) {
   if (msg.t !== "error") return;
-  const next = helloAfterNeedCreate(token, msg.reason ?? "", choice, imported);
+  const next = helloAfterNeedCreate(token, msg.reason ?? "", choice);
   if (next) send(next);
 }
 

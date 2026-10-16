@@ -7,12 +7,11 @@ import { backoffMs, interpolateXZ, reconnectPlan, snapAlpha } from "../../src/ga
 import { signGameToken } from "../../src/shared/net/token";
 import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protocol";
 import type { CharacterRecord } from "../../src/shared/persist/store";
-import { blocked, cityAt, TREES } from "../../src/shared/sim/geo";
+import { blocked, TREES } from "../../src/shared/sim/geo";
 import { attrsFor } from "../../src/shared/sim/types";
 import { createWorld } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
 import { applyIntent, MOVE_ALLOW } from "./dispatch";
-import { clampImport } from "./persist";
 import { originAllowed, startServer, userTag } from "./server";
 
 const maxStep = MOVE_ALLOW;
@@ -96,7 +95,7 @@ type Msg = {
   reason?: string;
   playerId?: string;
   seq?: number;
-  result?: { ok: boolean };
+  result?: { ok: boolean; reason?: string };
   state?: {
     players?: Array<{
       id: string;
@@ -198,7 +197,7 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
       create: { name: "Ada", race: "Human", baseClass: "Fighter" },
       import: { level: 40, gold: 9999, inventory: { "spider-silk": 2 } },
     }).success,
-    true,
+    false,
   );
   assert.equal(
     ClientMsg.safeParse({
@@ -1051,21 +1050,6 @@ test("interpolation delays other bodies and reconnect backoff is capped", () => 
   assert.equal(reconnectPlan(4401, 1).reconnect, false);
   assert.equal(reconnectPlan(1006, 0).reconnect, true);
   assert.equal(reconnectPlan(1001, 0).reconnect, true);
-  const clamped = clampImport({
-    level: 40,
-    gold: 9999,
-    inventory: { "spider-silk": 3, "not-real": 4, "minor-potion": 150 },
-    equipment: { weapon: "iron-sword", chest: "iron-sword" },
-  }, 1234);
-  assert.equal(clamped.level, 5);
-  assert.equal(clamped.gold, 500);
-  assert.equal(clamped.xp, 0);
-  assert.equal(clamped.inventory["spider-silk"], 3);
-  assert.equal(clamped.inventory["minor-potion"], 99);
-  assert.equal(clamped.inventory["not-real"], undefined);
-  assert.equal(clamped.equipment.weapon, "iron-sword");
-  assert.equal(clamped.equipment.chest, undefined);
-  assert.equal(clamped.importedAt, 1234);
 });
 
 test("origins are open in dev, denied in production, and matched from the list", () => {
@@ -1186,7 +1170,7 @@ test("a bad Origin is 403 and a listed origin connects", async () => {
   }
 });
 
-test("a debug-op intent is rejected and does not change the hero", async () => {
+test("a client cannot raise xp or gold with setLevel, setHp, or spawn", async () => {
   const game = startServer({ ...gameOpts(), now: () => 82_000, rand: mulberry32(34) });
   const port = await game.ready;
   const { ws, msgs } = await connect(port);
@@ -1197,109 +1181,33 @@ test("a debug-op intent is rejected and does not change the hero", async () => {
     assert.ok(before);
     const level = before.level;
     const gold = before.gold;
+    const xp = before.xp;
+    const hp = before.hp;
     const mobs = game.world.snapshot().monsters.length;
-    for (const intent of [
+    const forged = [
       { op: "setLevel", level: 20 },
       { op: "setHp", hp: 1 },
       { op: "spawn" },
-      { op: "spawnTest" },
-      { op: "grantXp", amount: 50 },
-    ]) {
-      ws.send(JSON.stringify({ t: "intent", seq: 1, intent }));
-    }
-    await new Promise((r) => setTimeout(r, 80));
+    ];
+    forged.forEach((intent, i) => {
+      ws.send(JSON.stringify({ t: "intent", seq: i + 1, intent }));
+    });
+    const acks = await until(() => {
+      const rows = msgs.filter((m) => m.t === "ack" && m.result?.reason === "unknown op");
+      return rows.length >= forged.length ? rows : undefined;
+    });
+    assert.equal(acks.length, forged.length);
+    assert.equal(acks.every((m) => m.result?.ok === false), true);
     const after = game.world.players.get("user-ada");
     assert.equal(after?.level, level);
+    assert.equal(after?.xp, xp);
     assert.equal(after?.gold, gold);
-    assert.equal(after?.hp, before.hp);
+    assert.equal(after?.hp, hp);
     assert.equal(game.world.snapshot().monsters.length, mobs);
-    assert.equal(msgs.some((m) => m.t === "ack" && m.result?.ok), false);
     assert.equal(ws.readyState, WebSocket.OPEN);
   } finally {
     ws.close();
     await game.close();
-  }
-});
-
-test("an import is clamped once and a second import is ignored", async () => {
-  const { pg, characters } = await pgliteDb();
-  const game = startServer({ ...gameOpts({ characters }), now: () => 90_000, rand: mulberry32(35) });
-  const port = await game.ready;
-  const { ws, msgs } = await connect(port);
-  const city = cityAt("uthgaard");
-  assert.ok(city);
-  try {
-    const token = await signGameToken(SECRET, { id: "user-imp", name: "Imp" });
-    ws.send(
-      JSON.stringify({
-        t: "hello",
-        token,
-        create: { name: "Imp", race: "Human", baseClass: "Fighter" },
-        import: {
-          level: 40,
-          gold: 9999,
-          inventory: { "spider-silk": 3, "not-real": 4, "minor-potion": 150 },
-          equipment: { weapon: "iron-sword", chest: "iron-sword" },
-        },
-      }),
-    );
-    const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
-    assert.equal(welcome.playerId, "user-imp");
-    const hero = await until(() => {
-      const snap = [...msgs].reverse().find((m) => m.t === "snap");
-      return snap?.state?.players?.find((p) => p.id === "user-imp");
-    });
-    assert.equal(hero.level, 5);
-    assert.equal(hero.gold, 500);
-    assert.equal(hero.xp, 0);
-    assert.equal(hero.inventory?.["not-real"], undefined);
-    assert.equal(hero.inventory?.["spider-silk"], 3);
-    assert.equal(hero.inventory?.["minor-potion"], 99);
-    assert.equal(hero.equipment?.weapon, "iron-sword");
-    assert.equal(hero.equipment?.chest, undefined);
-    assert.equal(hero.hp, hero.maxHp);
-    assert.ok(Math.hypot(hero.x - city.x, hero.z - city.z) < 8);
-    const row = await characters.load("user-imp");
-    assert.equal(row?.save.level, 5);
-    assert.equal(row?.save.gold, 500);
-    assert.equal(typeof row?.save.importedAt, "number");
-    const stamped = row?.save.importedAt;
-
-    const closed = closeCode(ws, 2000);
-    ws.close();
-    await closed;
-
-    const next = await connect(port);
-    try {
-      const again = await signGameToken(SECRET, { id: "user-imp", name: "Imp" });
-      next.ws.send(
-        JSON.stringify({
-          t: "hello",
-          token: again,
-          create: { name: "Imp", race: "Human", baseClass: "Fighter" },
-          import: { level: 1, gold: 1, inventory: { "not-real": 9 } },
-        }),
-      );
-      await until(() => next.msgs.find((m) => m.t === "welcome"));
-      const hero2 = await until(() => {
-        const live = game.world.players.get("user-imp");
-        if (!live) return undefined;
-        return live;
-      });
-      assert.equal(hero2.level, 5);
-      assert.equal(hero2.gold, 500);
-      assert.equal(hero2.inventory["not-real"], undefined);
-      const row2 = await characters.load("user-imp");
-      assert.equal(row2?.save.importedAt, stamped);
-      assert.equal(row2?.save.level, 5);
-      assert.equal(row2?.save.gold, 500);
-    } finally {
-      next.ws.close();
-    }
-  } finally {
-    ws.close();
-    await game.close();
-    await pg.close();
   }
 });
 

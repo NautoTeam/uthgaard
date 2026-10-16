@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
-import { createAuthority } from "../../src/server/authority";
+import { createAuthority } from "./authority";
 import { verifyGameToken } from "../../src/shared/net/token";
 import { ClientMsg, type ServerMsg } from "../../src/shared/net/protocol";
 import type { World } from "../../src/shared/sim/world";
 import { zoneAt } from "../../src/shared/sim/mask";
 import type { GameDb } from "./db";
 import { applyIntent } from "./dispatch";
-import { clampImport, joinInputFor, recordFromPlayer, validateCreate } from "./persist";
+import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
 
 const HELLO_MS = 5000;
@@ -18,6 +18,34 @@ const SAVE_MS = 30_000;
 const INTENT_RATE = 30;
 const INTENT_BURST = 60;
 const ABUSE_WINDOW_MS = 10_000;
+
+const KNOWN_OPS = new Set([
+  "move",
+  "attack",
+  "skill",
+  "travel",
+  "buy",
+  "sell",
+  "useItem",
+  "equip",
+  "unequip",
+  "train",
+  "promote",
+  "chat",
+  "respawn",
+  "loot",
+]);
+
+/** A well-formed intent envelope whose op is not in the protocol. Schema failures of real ops stay malformed. */
+function unknownIntent(raw: unknown): { seq: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const msg = raw as { t?: unknown; seq?: unknown; intent?: { op?: unknown } };
+  if (msg.t !== "intent" || !msg.intent || typeof msg.intent !== "object") return null;
+  const op = msg.intent.op;
+  if (typeof op !== "string" || !op || op.length > 32 || KNOWN_OPS.has(op)) return null;
+  const seq = typeof msg.seq === "number" && Number.isInteger(msg.seq) && msg.seq >= 0 ? msg.seq : 0;
+  return { seq };
+}
 
 /** Empty allow-list permits every origin outside production and none inside it. */
 export function originAllowed(origin: string | undefined, allowed: string | undefined, nodeEnv: string | undefined): boolean {
@@ -101,7 +129,6 @@ type Conn = {
   bucketAt: number;
   drops: number[];
   bads: number[];
-  importedAt?: number;
 };
 
 /**
@@ -164,7 +191,6 @@ export function startServer(opts: {
     const player = authority.world.players.get(conn.playerId);
     if (!player) return;
     const record = recordFromPlayer(player);
-    if (conn.importedAt != null) record.importedAt = conn.importedAt;
     const hash = JSON.stringify(record);
     if (!force && hash === conn.savedHash) return;
     const next = await characters.save(conn.userId, record, conn.rev);
@@ -280,7 +306,6 @@ export function startServer(opts: {
     if (!left || !userId || !characters) return;
     const db = characters;
     const record = recordFromPlayer(left);
-    if (conn.importedAt != null) record.importedAt = conn.importedAt;
     const run = conn.saveChain.then(async () => {
       const next = await db.save(userId, record, conn.rev);
       if (next == null) {
@@ -412,6 +437,11 @@ export function startServer(opts: {
           logNet("bad_create", null, "stage=parse"); send(socket, { t: "error", reason: "bad_create" });
           return;
         }
+        const unknown = unknownIntent(raw);
+        if (unknown) {
+          send(socket, { t: "ack", seq: unknown.seq, result: { ok: false, reason: "unknown op" } });
+          return;
+        }
         noteBad();
         return;
       }
@@ -458,16 +488,13 @@ export function startServer(opts: {
               logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
               return;
             }
-            const imported =
-              hello.import && loaded == null ? clampImport(hello.import, now()) : null;
-            input = joinInputFor(claims.userId, null, choice, imported);
+            input = joinInputFor(claims.userId, null, choice);
             if (!input) {
               logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
               return;
             }
             const player = authority.world.join(input);
             const record = recordFromPlayer(player);
-            if (imported) record.importedAt = imported.importedAt;
             let created: Awaited<ReturnType<NonNullable<typeof characters>["create"]>>;
             try {
               created = await characters.create(claims.userId, record.username, record);
@@ -483,7 +510,6 @@ export function startServer(opts: {
               return;
             }
             rev = created;
-            conn.importedAt = record.importedAt;
             conn.savedHash = JSON.stringify(record);
           }
           if (!input) {
@@ -498,9 +524,7 @@ export function startServer(opts: {
           const player = loaded ? authority.world.join(input) : authority.world.players.get(claims.userId);
           if (!player) return;
           if (loaded) {
-            conn.importedAt = loaded.save.importedAt;
             const record = recordFromPlayer(player);
-            if (conn.importedAt != null) record.importedAt = conn.importedAt;
             conn.savedHash = JSON.stringify(record);
           }
           clearTimeout(helloTimer);

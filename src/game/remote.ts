@@ -1,5 +1,5 @@
 import type { PublicState } from "../shared/sim/types";
-import { gameHello, type HelloChoice, type HelloImport } from "./net";
+import { gameHello, type HelloChoice } from "./net";
 
 export const RENDER_DELAY_MS = 100;
 
@@ -179,7 +179,7 @@ function defaultOpen(url: string): SocketLike {
 /**
  * One signed-in hero on the game server.
  * The first hello carries only the token. `need_create` retries with the
- * creation-screen choice, and an optional one-time local import.
+ * creation-screen choice. There is no local-save import.
  */
 export function connectRemote(opts: {
   url: string;
@@ -189,7 +189,6 @@ export function connectRemote(opts: {
   onError: (reason: string) => void;
   onAck?: (seq: number, result: { ok: boolean; reason?: string }) => void;
   onStatus?: (line: string | null) => void;
-  onNeedCreate?: () => Promise<HelloImport | null>;
   /** Full-screen gate. `online` is the only state that may show the world. */
   onLink?: (gate: LinkGate) => void;
   fetchToken?: () => Promise<TokenResponse>;
@@ -200,19 +199,6 @@ export function connectRemote(opts: {
   let stopped = false;
   let socket: SocketLike | null = null;
   let welcomed = false;
-  let importPick: HelloImport | null | undefined;
-  let importWait: Promise<HelloImport | null> | null = null;
-
-  function pickImport(): Promise<HelloImport | null> {
-    if (importPick !== undefined) return Promise.resolve(importPick);
-    if (!importWait) {
-      importWait = Promise.resolve(opts.onNeedCreate ? opts.onNeedCreate() : null).then((value) => {
-        importPick = value ?? null;
-        return importPick;
-      });
-    }
-    return importWait;
-  }
 
   async function openOnce(): Promise<number> {
     const tok = await fetchToken();
@@ -260,10 +246,10 @@ export function connectRemote(opts: {
         }
         finish(1006);
       }, 8000);
-      const sendCreate = (imported: HelloImport | null) => {
+      const sendCreate = () => {
         if (stopped || createSent || sock.readyState !== 1) return;
         createSent = true;
-        sock.send(JSON.stringify(gameHello(token, opts.choice, imported)));
+        sock.send(JSON.stringify(gameHello(token, opts.choice)));
         clearTimeout(createTimer);
         createTimer = setTimeout(() => failJoin("The hero did not join."), 8000);
       };
@@ -306,7 +292,7 @@ export function connectRemote(opts: {
             failJoin("The server did not accept that hero.");
             return;
           }
-          void pickImport().then((imported) => sendCreate(imported));
+          void sendCreate();
           return;
         }
         if (!welcomed) failJoin(reason || "The hero could not join.");

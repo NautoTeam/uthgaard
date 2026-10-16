@@ -136,23 +136,12 @@ const helloCreate = z
   })
   .strict();
 
-/** Local-save import. Only valid inside hello, and only applied when the row is new. */
-const helloImport = z
-  .object({
-    level: finite,
-    gold: finite,
-    inventory: z.record(z.string().max(64), finite).optional(),
-    equipment: z.record(z.string().max(32), z.string().max(64)).optional(),
-  })
-  .strict();
-
 export const ClientMsg = z.discriminatedUnion("t", [
   z
     .object({
       t: z.literal("hello"),
       token: z.string().min(20).max(2048),
       create: helloCreate.optional(),
-      import: helloImport.optional(),
     })
     .strict(),
   z

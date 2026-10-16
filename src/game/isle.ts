@@ -1,4 +1,3 @@
-import { listSaves } from "./save";
 import {
   CITIES,
   FIRES,
@@ -11,8 +10,6 @@ import {
   resolveMove,
   tileFill,
   TREES,
-  arrivalAt,
-  arrivalSalt,
   blocked,
   clearLine,
   nearestOpen,
@@ -63,9 +60,8 @@ import {
   screenToWorld as isoScreenToWorld,
   worldToScreen as isoWorldToScreen,
 } from "./iso";
-import { createAuthority } from "../server/authority";
-import { MAX_SPEED, type JoinInput } from "../shared/sim/world";
-import { SERVER, toServerIntent, type HelloImport } from "./net";
+import { MAX_SPEED, createWorld, type JoinInput } from "../shared/sim/world";
+import { SERVER, toServerIntent } from "./net";
 import { connectRemote, interpolateXZ, snapAlpha, worldMayStart, type LinkGate, type RemoteHandle } from "./remote";
 import {
   CHARTER_GOLD,
@@ -471,8 +467,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   };
   let charterHeld = false;
 
-  const authority = createAuthority();
-  const world = authority.world;
+  const world = createWorld();
   world.join(joinBody);
 
   let lastHeard = performance.now();
@@ -481,7 +476,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let remoteSession: RemoteHandle | null = null;
   let intentSeq = 0;
   const sentIntents = new Map<number, Intent>();
-  let finishImport: ((value: HelloImport | null) => void) | null = null;
   // Tabs do not share a world. An older tab used to win the BroadcastChannel
   // host role and paste a stale hero over a fresh click, death, or respawn.
   let lastInput = 0;
@@ -529,7 +523,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const groupPresence = new Map<string, GroupPeer>();
   let myGroup: string | null = null;
   let pendingInvite: { fromId: string; fromName: string; group: string } | null = null;
-  const GROUP_NEAR = 20;
   const cam = { x: 0, z: 0 };
   {
     const spawned = localPlayer();
@@ -778,10 +771,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         if (live) live.nextSwing = Date.now() + 1500;
         note(result.reason);
       } else if (result.ok === false) note(result.reason);
-      else if (result.reason.startsWith("+")) {
-        if (!(result.reason.includes("XP") && shareKillXp(result.reason)))
-          floatText(result.reason, "#b6e38a");
-      } else if (!result.reason.includes("hits for") && result.reason !== "Missed.")
+      else if (result.reason.startsWith("+")) floatText(result.reason, "#b6e38a"); else if (!result.reason.includes("hits for") && result.reason !== "Missed.")
         floatText(result.reason);
     }
     if (
@@ -2582,33 +2572,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       .join("");
   }
 
-  function membersNear(x: number, z: number) {
-    if (!myGroup) return [];
-    const ids = [myId];
-    for (const peer of freshPeers()) {
-      if (peer.group !== myGroup) continue;
-      if (Math.hypot(peer.x - x, peer.z - z) <= GROUP_NEAR) ids.push(peer.id);
-    }
-    return ids;
-  }
-
-  function shareKillXp(reason: string) {
-    const matched = /^\+(\d+) XP$/.exec(reason);
-    if (!matched || !myGroup) return false;
-    const base = Number(matched[1]);
-    const p = me();
-    if (!p || !(base > 0)) return false;
-    const near = membersNear(p.x, p.z);
-    if (near.length < 2) return false;
-    const bonus = Math.ceil(base * 0.1 * (near.length - 1));
-    if (bonus > 0) world.grantXp(myId, bonus);
-    const total = base + bonus;
-    dirty = true;
-    note(`+${total} XP`);
-    postGroup({ t: "xp", fromId: myId, amount: total, x: p.x, z: p.z, group: myGroup });
-    return true;
-  }
-
   function ensureGroup() {
     if (!myGroup) myGroup = myId;
     return myGroup;
@@ -2730,73 +2693,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       paintGroup();
       return;
     }
-    if (msg.t === "graveGone" && msg.graveId) {
-      world.removeGrave(msg.graveId);
-      return;
-    }
     if (msg.t === "down" && msg.fromName && msg.name && msg.place) {
       addPvp(`${msg.fromName} defeated ${msg.name} at ${msg.place}.`);
-      if (msg.graveId && typeof msg.x === "number" && typeof msg.z === "number") {
-        world.adoptGraves([
-          {
-            id: msg.graveId,
-            owner: msg.name,
-            x: msg.x,
-            z: msg.z,
-            gold: Math.max(0, Math.floor(msg.gold ?? 0)),
-            items: {},
-            born: Date.now(),
-          },
-        ]);
-      }
-      return;
-    }
-    if (msg.t === "hit" && msg.id === myId && msg.fromId && msg.fromId !== myId) {
-      const p = me();
-      if (!p || p.hp <= 0) return;
-      if (!pvpOpen(p.x, p.z)) return;
-      if (myGroup && (msg.group === myGroup || groupPresence.get(msg.fromId)?.group === myGroup))
-        return;
-      if (typeof msg.x !== "number" || typeof msg.z !== "number") return;
-      if (!pvpOpen(msg.x, msg.z)) return;
-      if (Math.hypot(p.x - msg.x, p.z - msg.z) > 12) return;
-      const dmg = Math.max(1, Math.floor(msg.dmg ?? 0));
-      const next = Math.max(0, p.hp - dmg);
-      world.setHp(myId, next);
-      dirty = true;
-      if (next <= 0) {
-        const grave = [...(view().graves ?? [])].reverse().find((g) => g.owner === p.username);
-        const place = placeName(grave?.x ?? p.x, grave?.z ?? p.z);
-        addPvp(`${msg.fromName ?? "Someone"} defeated ${p.username} at ${place}.`);
-        postGroup({
-          t: "down",
-          fromName: msg.fromName,
-          name: p.username,
-          x: grave?.x ?? p.x,
-          z: grave?.z ?? p.z,
-          gold: grave?.gold ?? 0,
-          graveId: grave?.id,
-          place,
-          id: myId,
-        });
-        pulseGroup();
-      }
-      return;
-    }
-    if (
-      msg.t === "xp" &&
-      msg.fromId &&
-      msg.fromId !== myId &&
-      msg.group &&
-      msg.group === myGroup &&
-      typeof msg.amount === "number"
-    ) {
-      const p = me();
-      if (!p || typeof msg.x !== "number" || typeof msg.z !== "number") return;
-      if (Math.hypot(p.x - msg.x, p.z - msg.z) > GROUP_NEAR) return;
-      world.grantXp(myId, msg.amount);
-      dirty = true;
-      note(`+${Math.floor(msg.amount)} XP`);
     }
   }
 
@@ -4283,23 +4181,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     talkNpc = null;
     setOpen(travelPanel, false);
     send({ op: "travel", id: myId, cityId });
-    const crowd = freshPeers()
-      .filter((peer) => peer.hp > 0)
-      .map((peer) => ({ x: peer.x, z: peer.z }));
-    const occupied = [
-      ...view()
-        .players.filter((pl) => pl.id !== p.id && pl.hp > 0)
-        .map((pl) => ({ x: pl.x, z: pl.z })),
-      ...crowd,
-    ];
-    const spot = arrivalAt(city.x, city.z, occupied, arrivalSalt(p.id));
-    p.x = spot.x;
-    p.z = spot.z;
-    if (!p.attunedGates) p.attunedGates = [...DEFAULT_ATTUNED];
-    if (!p.attunedGates.includes(cityId)) {
-      p.attunedGates.push(cityId);
-      floatText(`${city.name} stones attuned.`);
-    }
   }
 
   function onTalk(e: Event) {
@@ -4875,48 +4756,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (linkRetry) linkRetry.hidden = false;
   }
 
-  function offerImport(saves: ReturnType<typeof listSaves>): Promise<HelloImport | null> {
-    return new Promise((resolve) => {
-      let done = false;
-      const box = document.createElement("div");
-      box.id = "importOffer";
-      const card = document.createElement("div");
-      card.className = "card";
-      const title = document.createElement("p");
-      title.textContent = "Bring a hero from this device?";
-      card.appendChild(title);
-      const finish = (value: HelloImport | null) => {
-        if (done) return;
-        done = true;
-        finishImport = null;
-        box.remove();
-        resolve(value);
-      };
-      finishImport = finish;
-      for (const save of saves) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = `Import ${save.username}`;
-        btn.addEventListener("click", () => {
-          finish({
-            level: save.level,
-            gold: save.gold,
-            inventory: save.inventory,
-            equipment: save.equipment,
-          });
-        });
-        card.appendChild(btn);
-      }
-      const skip = document.createElement("button");
-      skip.type = "button";
-      skip.textContent = "Skip";
-      skip.addEventListener("click", () => finish(null));
-      card.appendChild(skip);
-      box.appendChild(card);
-      root.appendChild(box);
-    });
-  }
-
   function startLink() {
     showLink("connecting");
     remoteSession?.close();
@@ -4953,17 +4792,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           return;
         }
         present(intent, result);
-        if (intent.op === "loot" && result.ok) postGroup({ t: "graveGone", graveId: intent.graveId });
       },
       onStatus: setNetStatus,
       onLink: showLink,
-      onNeedCreate: async () => {
-        const saves = listSaves().filter(
-          (save) => save.username.toLowerCase() === profile.username.toLowerCase(),
-        );
-        if (!saves.length) return null;
-        return offerImport(saves);
-      },
     });
   }
 
@@ -4979,8 +4810,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     disposed = true;
     remoteSession?.close();
     remoteSession = null;
-    finishImport?.(null);
-    root.querySelector("#importOffer")?.remove();
     linkRetry?.removeEventListener("click", startLink);
     const slot = isleSlot();
     if (slot.dispose === dispose) slot.dispose = undefined;
