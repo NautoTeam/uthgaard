@@ -397,20 +397,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const HUMAN_ANIMS = ["idle", "walk", "atk1h", "atk2h", "block", "cast1h"] as const;
   type HumanAnim = (typeof HUMAN_ANIMS)[number];
-  const humanDur: Record<HumanAnim, number[]> = {
-    idle: [300, 300, 300, 300],
-    walk: [180, 180, 180, 180],
-    atk1h: [260, 120, 180, 300],
-    atk2h: [300, 140, 180, 320],
-    block: [160, 160, 200, 400],
-    cast1h: [260, 200, 300, 260],
-  };
-  function humanAnimMs(anim: HumanAnim) {
-    return humanDur[anim].reduce((sum, ms) => sum + ms, 0);
+  type RigRace = "human" | "minotaur";
+  const RIG_RACES: RigRace[] = ["human", "minotaur"];
+  function freshDur(): Record<HumanAnim, number[]> {
+    return {
+      idle: [300, 300, 300, 300],
+      walk: [180, 180, 180, 180],
+      atk1h: [260, 120, 180, 300],
+      atk2h: [300, 140, 180, 320],
+      block: [160, 160, 200, 400],
+      cast1h: [260, 200, 300, 260],
+    };
   }
-  function humanStep(anim: HumanAnim, elapsed: number, hold: boolean) {
-    const durs = humanDur[anim];
-    const total = humanAnimMs(anim);
+  const rigDur: Record<RigRace, Record<HumanAnim, number[]>> = {
+    human: freshDur(),
+    minotaur: freshDur(),
+  };
+  function rigMs(race: RigRace, anim: HumanAnim) {
+    return rigDur[race][anim].reduce((sum, ms) => sum + ms, 0);
+  }
+  function rigStep(race: RigRace, anim: HumanAnim, elapsed: number, hold: boolean) {
+    const durs = rigDur[race][anim];
+    const total = rigMs(race, anim);
     if (hold && elapsed >= total) return durs.length - 1;
     let t = hold ? Math.max(0, elapsed) : ((elapsed % total) + total) % total;
     for (let i = 0; i < durs.length; i++) {
@@ -420,8 +428,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return durs.length - 1;
   }
   const HUMAN_CELL = 112 * 1.08;
+  const MINOTAUR_CELL = HUMAN_CELL * 1.26;
   const FACE_FILE = ["S", "W", "E", "N"];
-  for (const race of ["elf", "minotaur", "marshwarden"]) {
+  for (const race of ["elf", "marshwarden"]) {
     for (let i = 0; i < 16; i++) loadFrame(`${race}-walk-${i}`, "7");
     for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
   }
@@ -429,6 +438,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     for (const anim of HUMAN_ANIMS) {
       for (let i = 0; i < 16; i++) loadFrame(`human-${part}-${anim}-${i}`, "9");
     }
+  }
+  for (const anim of HUMAN_ANIMS) {
+    for (let i = 0; i < 16; i++) loadFrame(`minotaur-base-${anim}-${i}`, "1");
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -1129,13 +1141,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     behind: boolean;
     scale: number;
   };
-  const handAnchors: Record<HumanAnim, { main: HandAnchor[]; off: HandAnchor[] }> = {
-    idle: { main: [], off: [] },
-    walk: { main: [], off: [] },
-    atk1h: { main: [], off: [] },
-    atk2h: { main: [], off: [] },
-    block: { main: [], off: [] },
-    cast1h: { main: [], off: [] },
+  function emptyAnchors(): Record<HumanAnim, { main: HandAnchor[]; off: HandAnchor[] }> {
+    return {
+      idle: { main: [], off: [] },
+      walk: { main: [], off: [] },
+      atk1h: { main: [], off: [] },
+      atk2h: { main: [], off: [] },
+      block: { main: [], off: [] },
+      cast1h: { main: [], off: [] },
+    };
+  }
+  const rigAnchors: Record<RigRace, Record<HumanAnim, { main: HandAnchor[]; off: HandAnchor[] }>> = {
+    human: emptyAnchors(),
+    minotaur: emptyAnchors(),
   };
 
   function loadWeaponRig() {
@@ -1152,19 +1170,21 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ])
       loadWeaponFile(file);
     void Promise.all(
-      HUMAN_ANIMS.map(async (anim) => {
-        const data = (await fetch(`/sprites/anim/human-anchors-${anim}.json`).then((r) => r.json())) as {
-          frameDurationsMs?: number[];
-          mainHand?: HandAnchor[];
-          offHand?: HandAnchor[];
-        };
-        if (Array.isArray(data.frameDurationsMs) && data.frameDurationsMs.length >= 4)
-          humanDur[anim] = data.frameDurationsMs.slice(0, 4);
-        handAnchors[anim] = {
-          main: Array.isArray(data.mainHand) ? data.mainHand : [],
-          off: Array.isArray(data.offHand) ? data.offHand : [],
-        };
-      }),
+      RIG_RACES.flatMap((race) =>
+        HUMAN_ANIMS.map(async (anim) => {
+          const data = (await fetch(`/sprites/anim/${race}-anchors-${anim}.json`).then((r) => r.json())) as {
+            frameDurationsMs?: number[];
+            mainHand?: HandAnchor[];
+            offHand?: HandAnchor[];
+          };
+          if (Array.isArray(data.frameDurationsMs) && data.frameDurationsMs.length >= 4)
+            rigDur[race][anim] = data.frameDurationsMs.slice(0, 4);
+          rigAnchors[race][anim] = {
+            main: Array.isArray(data.mainHand) ? data.mainHand : [],
+            off: Array.isArray(data.offHand) ? data.offHand : [],
+          };
+        }),
+      ),
     )
       .then(async () => {
         const book = (await fetch("/sprites/weapons/weapons.json").then((r) => r.json())) as Record<string, unknown>;
@@ -1272,7 +1292,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     ctx.restore();
   }
 
-  function drawHuman(
+  function drawRig(
+    race: RigRace,
     anim: HumanAnim,
     frame: number,
     x: number,
@@ -1283,8 +1304,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     equipment: Record<string, string> | undefined,
     facingFile: string,
   ) {
-    const main = anchorAt(handAnchors[anim].main, frame);
-    const off = anchorAt(handAnchors[anim].off, frame);
+    const hands = rigAnchors[race][anim];
+    const main = anchorAt(hands.main, frame);
+    const off = anchorAt(hands.off, frame);
     const weapon = heldWeapon(equipment?.weapon ?? "");
     const shield = anim === "atk2h" ? null : heldShield(equipment?.offhand ?? "", facingFile);
     const foot = worldToScreen(x, z);
@@ -1298,10 +1320,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       if (!prop.anchor.behind) continue;
       drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
     }
-    const baseKey = `human-base-${anim}-${frame}`;
+    const baseKey = `${race}-base-${anim}-${frame}`;
     if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
-    const chest = humanChestKey(anim, frame, equipment);
-    if (chest) drawFrame(chest, x, z, cell, lift, filter);
+    if (race === "human") {
+      const chest = humanChestKey(anim, frame, equipment);
+      if (chest) drawFrame(chest, x, z, cell, lift, filter);
+    }
     for (const prop of props) {
       if (prop.anchor.behind) continue;
       drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
@@ -1330,7 +1354,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const kind = classKind(cls);
     const filter = classFilter[kind];
-    const cell = drawn === "minotaur" ? 128 : drawn === "human" ? HUMAN_CELL : 112;
+    const cell = drawn === "minotaur" ? MINOTAUR_CELL : drawn === "human" ? HUMAN_CELL : 112;
     const lift = moving ? Math.abs(Math.sin(actor.phase * Math.PI)) * 5 : Math.sin(now / 420) * 1.2;
     const casting = now < actor.castUntil;
     const attacking = now < actor.attackUntil && !casting;
@@ -1347,7 +1371,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.restore();
     }
     const worn = gear ?? world.players.get(id)?.equipment;
-    if (drawn === "human") {
+    if (drawn === "human" || drawn === "minotaur") {
       const weaponId = worn?.weapon ?? "";
       const swing = twoHanded(weaponId) ? "atk2h" : "atk1h";
       const guarding = isShield(worn?.offhand ?? "") && (world.players.get(id)?.guardUntil ?? 0) > Date.now();
@@ -1369,12 +1393,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
             : anim === "block"
               ? now - actor.blockAt
               : anim === "cast1h"
-                ? humanAnimMs("cast1h") - (actor.castUntil - now)
-                : humanAnimMs(swing) - (actor.attackUntil - now);
-      const step = humanStep(anim, elapsed, anim === "atk1h" || anim === "atk2h" || anim === "block" || anim === "cast1h");
+                ? rigMs(drawn, "cast1h") - (actor.castUntil - now)
+                : rigMs(drawn, swing) - (actor.attackUntil - now);
+      const step = rigStep(drawn, anim, elapsed, anim === "atk1h" || anim === "atk2h" || anim === "block" || anim === "cast1h");
       const frame = actor.facing * 4 + step;
-      if (!drawHuman(anim, frame, x, z, cell, lift, filter, worn, FACE_FILE[actor.facing] ?? "S"))
-        drawSprite(drawn, x, z, 0.18);
+      if (!drawRig(drawn, anim, frame, x, z, cell, lift, filter, worn, FACE_FILE[actor.facing] ?? "S"))
+        drawSprite(drawn, x, z, drawn === "minotaur" ? 0.2 : 0.18);
     } else if (attacking) {
       const t = 1 - (actor.attackUntil - now) / SWING_MS;
       const frame = Math.min(3, Math.floor(Math.max(0, t) * 4));
@@ -1389,7 +1413,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     if (cls) drawClassMark(kind, x, z, actor.facing, actor.phase, casting);
     if (casting) {
-      const span = drawn === "human" ? humanAnimMs("cast1h") : 900;
+      const span = drawn === "human" || drawn === "minotaur" ? rigMs(drawn, "cast1h") : 900;
       drawCast(x, z, 1 - (actor.castUntil - now) / span);
     }
   }
@@ -2313,7 +2337,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           ctx.fillStyle = "#e6c56a";
           ctx.font = "12px Georgia";
           ctx.textAlign = "center";
-          const lift = race === "minotaur" ? 152 : 136;
+          const lift = race === "minotaur" ? 176 : 136;
           drawOverhead(pt.x, pt.y, pl.username, pl.prestigeClass || pl.baseClass, lift, pl.id === myId ? "#f0e2b0" : "#ddd");
         },
       });
@@ -2756,8 +2780,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     p.cooldowns.attack = cd;
     const actor = actors.get(myId);
     if (actor) {
-      const swing = p.race === "Human" && twoHanded(p.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
-      actor.attackUntil = performance.now() + (p.race === "Human" ? humanAnimMs(swing) : SWING_MS);
+      const swing = (p.race === "Human" || p.race === "Minotaur") && twoHanded(p.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
+      const rig = p.race === "Minotaur" ? "minotaur" : p.race === "Human" ? "human" : null;
+      actor.attackUntil = performance.now() + (rig ? rigMs(rig, swing) : SWING_MS);
     }
     if (Math.random() * 100 >= hitChance(p)) {
       floatAt(peer.x, peer.z, "Miss", "#f0e2b0", 96);
@@ -4261,10 +4286,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       stamp: 0,
     };
     const now = performance.now();
-    const human = p?.race === "Human";
+    const rig = p?.race === "Minotaur" ? "minotaur" : p?.race === "Human" ? "human" : null;
     const swing = twoHanded(p?.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
     if (power && power.mana > 0) {
-      actor.castUntil = now + (human ? humanAnimMs("cast1h") : 900);
+      actor.castUntil = now + (rig ? rigMs(rig, "cast1h") : 900);
       actor.attackUntil = now;
     } else if (skill === "shield") {
       actor.blockAt = now;
@@ -4272,7 +4297,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       actor.wasBlocking = true;
       actor.attackUntil = now;
     } else {
-      actor.attackUntil = now + (human ? humanAnimMs(swing) : SWING_MS);
+      actor.attackUntil = now + (rig ? rigMs(rig, swing) : SWING_MS);
     }
     actors.set(myId, actor);
     if (
