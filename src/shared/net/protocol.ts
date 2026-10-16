@@ -103,6 +103,33 @@ const loot = z
   })
   .strict();
 
+const partyInvite = z
+  .object({
+    op: z.literal("partyInvite"),
+    toName: z.string().trim().min(1).max(16),
+  })
+  .strict();
+
+const partyAccept = z
+  .object({
+    op: z.literal("partyAccept"),
+    fromId: id,
+  })
+  .strict();
+
+const partyDecline = z
+  .object({
+    op: z.literal("partyDecline"),
+    fromId: id,
+  })
+  .strict();
+
+const partyLeave = z
+  .object({
+    op: z.literal("partyLeave"),
+  })
+  .strict();
+
 /** Client intents. No player id — the socket is the identity. Debug ops are absent. */
 export const IntentSchema = z.discriminatedUnion("op", [
   move,
@@ -119,6 +146,10 @@ export const IntentSchema = z.discriminatedUnion("op", [
   chat,
   respawn,
   loot,
+  partyInvite,
+  partyAccept,
+  partyDecline,
+  partyLeave,
 ]);
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -231,12 +262,38 @@ const graveState = z
   })
   .strict();
 
+const partyMemberView = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    hp: z.number(),
+    maxHp: z.number(),
+  })
+  .strict();
+
+const partyView = z
+  .object({
+    id: z.string(),
+    leader: z.string(),
+    members: z.array(partyMemberView),
+  })
+  .strict();
+
+const pendingInviteView = z
+  .object({
+    fromId: z.string(),
+    fromName: z.string(),
+  })
+  .strict();
+
 export const PublicStateSchema = z
   .object({
     players: z.array(playerState),
     monsters: z.array(monsterState),
     graves: z.array(graveState),
     logs: z.array(z.string()),
+    party: partyView.nullable().optional(),
+    pendingInvite: pendingInviteView.nullable().optional(),
   })
   .strict();
 

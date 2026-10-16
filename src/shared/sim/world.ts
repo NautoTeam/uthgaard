@@ -2,7 +2,7 @@ import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nea
 import { HAVEN_ZONE_RADIUS, havenCity } from "./mask";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, mobLabel, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
-import type { GraveState } from "./types";
+import type { GraveState, PartyView, PendingInvite } from "./types";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -99,6 +99,12 @@ function levelUp(p: PlayerState) {
 /** Walk pace in tiles per second. Keys, the stick, and click-to-walk all use this. */
 export const MAX_SPEED = 4.55;
 
+/** Living party members within this many tiles of the killer share the kill XP. */
+export const GROUP_NEAR = 18;
+export const PARTY_MAX = 5;
+/** Invites older than this are gone. */
+export const INVITE_MS = 60_000;
+
 export function createWorld(opts: { now?: () => number; rand?: () => number } = {}) {
   const now = opts.now ?? Date.now;
   const rand = opts.rand ?? Math.random;
@@ -107,6 +113,9 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   const graves = new Map<string, GraveState>();
   const logs: string[] = [];
   let mid = 1;
+  let partySeq = 1;
+  const parties = new Map<string, { id: string; leader: string; members: string[] }>();
+  const invites = new Map<string, { fromId: string; at: number }>();
 
   function log(msg: string) {
     logs.push(msg);
@@ -403,6 +412,8 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   function restore(state: PublicState) {
     players.clear();
     monsters.clear();
+    parties.clear();
+    invites.clear();
     for (const p of state.players) {
       if (!p.inventory) p.inventory = {};
       const row = { ...p, inventory: { ...(p.inventory ?? {}) }, equipment: { ...(p.equipment ?? {}) }, skills: { ...(p.skills ?? {}) } };
@@ -504,6 +515,11 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   function leave(id: string): PlayerState | null {
     const p = players.get(id);
     if (!p) return null;
+    removeFromParty(id);
+    invites.delete(id);
+    for (const [toId, invite] of invites) {
+      if (invite.fromId === id) invites.delete(toId);
+    }
     players.delete(id);
     log(`${p.username} left the island.`);
     return p;
@@ -531,12 +547,158 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     }
   }
 
+  function partyOf(id: string) {
+    for (const party of parties.values()) {
+      if (party.members.includes(id)) return party;
+    }
+    return undefined;
+  }
+
+  function findByName(name: string) {
+    const want = name.trim().toLowerCase();
+    if (!want) return null;
+    for (const row of players.values()) {
+      if (row.username.toLowerCase() === want) return row;
+    }
+    return null;
+  }
+
+  function removeFromParty(id: string) {
+    const party = partyOf(id);
+    if (!party) return;
+    party.members = party.members.filter((memberId) => memberId !== id);
+    if (party.members.length < 2) {
+      parties.delete(party.id);
+      return;
+    }
+    if (party.leader === id) party.leader = party.members[0];
+  }
+
+  /** Drop a stale invite. `expired` is true only when this invite existed and timed out. */
+  function freshInvite(toId: string, fromId: string): { ok: true } | { ok: false; expired: boolean } {
+    const invite = invites.get(toId);
+    if (!invite || invite.fromId !== fromId) return { ok: false, expired: false };
+    if (!players.has(invite.fromId)) {
+      invites.delete(toId);
+      return { ok: false, expired: false };
+    }
+    if (now() - invite.at >= INVITE_MS) {
+      invites.delete(toId);
+      return { ok: false, expired: true };
+    }
+    return { ok: true };
+  }
+
+  function partyInvite(id: string, toName: string): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    const target = findByName(toName);
+    if (!target) return { ok: false, reason: "No one by that name." };
+    if (target.id === id) return { ok: false, reason: "You cannot invite yourself." };
+    const mine = partyOf(id);
+    const theirs = partyOf(target.id);
+    if (mine && theirs === mine) return { ok: false, reason: `${target.username} is already in the group.` };
+    if (theirs) return { ok: false, reason: "They are already in a party." };
+    if (mine && mine.members.length >= PARTY_MAX) return { ok: false, reason: "The party is full." };
+    invites.set(target.id, { fromId: id, at: now() });
+    return { ok: true, reason: `You invite ${target.username}.` };
+  }
+
+  function partyAccept(id: string, fromId: string): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    const invite = freshInvite(id, fromId);
+    if (!invite.ok) return { ok: false, reason: invite.expired ? "That invite expired." : "No invite." };
+    invites.delete(id);
+    if (partyOf(id)) return { ok: false, reason: "You are already in a party." };
+    const leader = players.get(fromId);
+    if (!leader) return { ok: false, reason: "They are no longer here." };
+    let party = partyOf(fromId);
+    if (party) {
+      if (party.members.length >= PARTY_MAX) return { ok: false, reason: "The party is full." };
+      party.members.push(id);
+    } else {
+      party = { id: "g" + partySeq++, leader: fromId, members: [fromId, id] };
+      parties.set(party.id, party);
+    }
+    log(`${p.username} joins the party.`);
+    return { ok: true, reason: "You join the group." };
+  }
+
+  function partyDecline(id: string, fromId: string): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    const invite = invites.get(id);
+    if (!invite || invite.fromId !== fromId) return { ok: false, reason: "No invite." };
+    invites.delete(id);
+    log(`${p.username} declines.`);
+    return { ok: true, reason: "You decline." };
+  }
+
+  function partyLeave(id: string): ActionResult {
+    const p = players.get(id);
+    if (!p) return { ok: false, reason: "No such hero." };
+    if (!partyOf(id)) return { ok: false, reason: "You are not in a party." };
+    removeFromParty(id);
+    log(`${p.username} leaves the party.`);
+    return { ok: true, reason: "You leave the group." };
+  }
+
+  function membersNear(origin: PlayerState): PlayerState[] {
+    const party = partyOf(origin.id);
+    if (!party) return [origin];
+    const rows: PlayerState[] = [];
+    for (const memberId of party.members) {
+      const other = players.get(memberId);
+      if (!other || other.hp <= 0) continue;
+      if (Math.hypot(other.x - origin.x, other.z - origin.z) > GROUP_NEAR) continue;
+      rows.push(other);
+    }
+    if (!rows.some((row) => row.id === origin.id)) rows.unshift(origin);
+    return rows;
+  }
+
+  function social(id: string): { party: PartyView | null; pendingInvite: PendingInvite | null } {
+    const party = partyOf(id);
+    let view: PartyView | null = null;
+    if (party && party.members.length >= 2) {
+      view = {
+        id: party.id,
+        leader: party.leader,
+        members: party.members.map((memberId) => {
+          const row = players.get(memberId);
+          return {
+            id: memberId,
+            name: row?.username ?? "Hero",
+            hp: row?.hp ?? 0,
+            maxHp: Math.max(1, row?.maxHp ?? 1),
+          };
+        }),
+      };
+    }
+    const pending = invites.get(id);
+    let pendingInvite: PendingInvite | null = null;
+    if (pending) {
+      const fresh = freshInvite(id, pending.fromId);
+      if (fresh.ok) {
+        pendingInvite = {
+          fromId: pending.fromId,
+          fromName: players.get(pending.fromId)?.username ?? "Someone",
+        };
+      }
+    }
+    return { party: view, pendingInvite };
+  }
+
   function finishKill(p: PlayerState, m: MonsterState, gold: number, line: string) {
     if (m.respawnAt) return 0;
     m.respawnAt = now() + 15000;
     const def = mobByType(m.type);
-    const xp = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
-    p.xp += xp;
+    const base = conXp(m.level, p.level, def.xpBase + m.level * def.xpPerLevel);
+    const near = membersNear(p);
+    const extra = near.length - 1;
+    const bonus = base > 0 && extra > 0 ? Math.ceil(base * 0.1 * extra) : 0;
+    const total = base + bonus;
     p.gold += gold;
     if (!p.inventory) p.inventory = {};
     for (const drop of DROPS) {
@@ -547,12 +709,17 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       p.inventory[item.id] = (p.inventory[item.id] ?? 0) + 1;
       log(`${p.username} picked up ${item.name}.`);
     }
-    const before = p.level;
-    levelUp(p);
+    let killerDing = "";
+    for (const member of near) {
+      const before = member.level;
+      member.xp += total;
+      levelUp(member);
+      if (member.id === p.id) killerDing = member.level > before ? ` and reached level ${member.level}` : "";
+      else if (member.level > before) log(`${member.username} reached level ${member.level}.`);
+    }
     m.targetId = null;
-    const ding = p.level > before ? ` and reached level ${p.level}` : "";
-    log(line.replace("{xp}", String(xp)).replace("{ding}", ding));
-    return xp;
+    log(line.replace("{xp}", String(total)).replace("{ding}", killerDing));
+    return total;
   }
 
   function canUse(p: PlayerState, classes: string[]) {
@@ -1221,6 +1388,11 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     respawn,
     loot,
     grantXp,
+    partyInvite,
+    partyAccept,
+    partyDecline,
+    partyLeave,
+    social,
     adoptGraves,
     removeGrave,
     spawnTest,

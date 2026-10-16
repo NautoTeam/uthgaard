@@ -54,6 +54,14 @@ export function applyIntent(world: World, playerId: string, intent: Intent): Act
       return world.respawn(playerId);
     case "loot":
       return world.loot(playerId, intent.graveId);
+    case "partyInvite":
+      return world.partyInvite(playerId, intent.toName);
+    case "partyAccept":
+      return world.partyAccept(playerId, intent.fromId);
+    case "partyDecline":
+      return world.partyDecline(playerId, intent.fromId);
+    case "partyLeave":
+      return world.partyLeave(playerId);
     default:
       return { ok: false, reason: "unknown op" };
   }

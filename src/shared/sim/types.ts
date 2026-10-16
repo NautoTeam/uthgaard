@@ -79,11 +79,33 @@ export interface GraveState {
   born?: number;
 }
 
+export interface PartyMemberView {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp: number;
+}
+
+/** The viewer's party. Absent from the shared world snapshot; attached per player. */
+export interface PartyView {
+  id: string;
+  leader: string;
+  members: PartyMemberView[];
+}
+
+export interface PendingInvite {
+  fromId: string;
+  fromName: string;
+}
+
 export interface PublicState {
   players: PlayerState[];
   monsters: MonsterState[];
   graves: GraveState[];
   logs: string[];
+  /** Present only on the snap sent to one player. Not stored. */
+  party?: PartyView | null;
+  pendingInvite?: PendingInvite | null;
 }
 
 export interface ActionResult {

@@ -137,6 +137,10 @@ type Intent =
   | { op: "travel"; id: string; cityId: string }
   | { op: "respawn"; id: string; place?: { x: number; z: number; name: string } }
   | { op: "loot"; id: string; graveId: string }
+  | { op: "partyInvite"; toName: string }
+  | { op: "partyAccept"; fromId: string }
+  | { op: "partyDecline"; fromId: string }
+  | { op: "partyLeave" }
   | { op: "setLevel"; id: string; level: number }
   | { op: "setHp"; id: string; hp: number }
   | { op: "buy"; id: string; itemId: string }
@@ -551,12 +555,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     x: number;
     z: number;
     race: string;
-    group: string | null;
-    seen: number;
   };
-  const groupPresence = new Map<string, GroupPeer>();
-  let myGroup: string | null = null;
-  let pendingInvite: { fromId: string; fromName: string; group: string } | null = null;
   const cam = { x: 0, z: 0 };
   const ground = createGround();
   {
@@ -2171,8 +2170,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           dest = null;
           path = [];
           lootGrave = null;
-          const result = send({ op: "loot", id: myId, graveId });
-          if (result && "ok" in result && result.ok) postGroup({ t: "graveGone", graveId });
+          send({ op: "loot", id: myId, graveId });
         }
       }
       if (dest) {
@@ -2478,43 +2476,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         },
       });
     }
-    for (const peer of freshPeers()) {
-      drawables.push({
-        key: depthOf(peer.x, peer.z) + 0.01,
-        draw: () => {
-          const race = (peer.race || "human").toLowerCase();
-          shadowAt(peer.x, peer.z, 14);
-          drawHero(race, `ghost-${peer.id}`, peer.x, peer.z);
-          const pt = worldToScreen(peer.x, peer.z);
-          ctx.font = "13px Georgia";
-          ctx.textAlign = "center";
-          drawOverhead(pt.x, pt.y, peer.name, "", nameLift(race), "#d5e6ff");
-          if (
-            selected?.kind === "player" &&
-            selected.id === peer.id &&
-            !state.players.some((pl) => pl.id === peer.id)
-          )
-            markTarget(peer.x, peer.z);
-          if (peer.id !== pvpId) return;
-          const barW = 48;
-          const barY = pt.y - 108;
-          const pct = peer.maxHp > 0 ? Math.max(0, Math.min(1, peer.hp / peer.maxHp)) : 0;
-          ctx.fillStyle = "rgba(0,0,0,.75)";
-          ctx.fillRect(pt.x - barW / 2 - 1, barY - 1, barW + 2, 9);
-          ctx.fillStyle = "#3a1515";
-          ctx.fillRect(pt.x - barW / 2, barY, barW, 7);
-          ctx.fillStyle = pct > 0.35 ? "#e24b3a" : "#e2b15a";
-          ctx.fillRect(pt.x - barW / 2, barY, barW * pct, 7);
-          ctx.font = "13px Georgia";
-          ctx.textAlign = "center";
-          ctx.fillStyle = "#d5e6ff";
-          ctx.fillText(plateName(peer.name), pt.x, barY - 16);
-          ctx.font = "12px Georgia";
-          ctx.fillStyle = "#fff6d8";
-          ctx.fillText(`HP ${Math.ceil(peer.hp)}/${peer.maxHp}`, pt.x, barY - 3);
-        },
-      });
-    }
     drawables.sort((a, b) => a.key - b.key);
     for (const d of drawables) d.draw();
     ctx.font = "13px Georgia";
@@ -2639,88 +2600,43 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function persist() {}
 
-  type GroupWire = {
-    t: string;
-    id?: string;
-    name?: string;
-    fromId?: string;
-    fromName?: string;
-    toName?: string;
-    group?: string | null;
-    level?: number;
-    hp?: number;
-    maxHp?: number;
-    x?: number;
-    z?: number;
-    race?: string;
-    amount?: number;
-    dmg?: number;
-    gold?: number;
-    graveId?: string;
-    place?: string;
-  };
-
-  function postGroup(msg: GroupWire) {
-    groupChannel?.postMessage(msg);
-  }
-
   function myName() {
     return me()?.username ?? profile.username;
   }
 
-  function hideInvite() {
-    pendingInvite = null;
-    if (inviteToast) inviteToast.hidden = true;
+  function inMyParty(id: string) {
+    return !!view().party?.members.some((member) => member.id === id);
   }
 
-  function showInvite(fromName: string) {
-    if (!inviteToast || !inviteText) return;
-    inviteText.textContent = `${fromName} invites you.`;
-    inviteToast.hidden = false;
-  }
-
-  function freshPeers() {
-    const now = Date.now();
-    const rows: GroupPeer[] = [];
-    for (const peer of groupPresence.values()) {
-      if (now - peer.seen > 1600) continue;
-      rows.push(peer);
-    }
-    return rows;
-  }
-
-  function findPeer(name: string) {
-    const want = name.trim().toLowerCase();
-    if (!want) return null;
-    return freshPeers().find((peer) => peer.name.toLowerCase() === want) ?? null;
+  function otherPlayers() {
+    return view().players.filter((pl) => pl.id !== myId && pl.hp > 0);
   }
 
   function groupRoster() {
-    const self = me();
-    if (!myGroup || !self) return [];
-    const rows = [
-      {
-        id: myId,
-        name: self.username,
-        level: self.level,
-        hp: self.hp,
-        maxHp: Math.max(1, self.maxHp),
-      },
-    ];
-    for (const peer of freshPeers()) {
-      if (peer.group !== myGroup) continue;
-      rows.push({
-        id: peer.id,
-        name: peer.name,
-        level: peer.level,
-        hp: peer.hp,
-        maxHp: Math.max(1, peer.maxHp),
-      });
-    }
-    return rows;
+    const party = view().party;
+    if (!party) return [];
+    const players = view().players;
+    return party.members.map((member) => {
+      const pl = players.find((row) => row.id === member.id) ?? (member.id === myId ? me() : undefined);
+      return {
+        id: member.id,
+        name: member.name,
+        level: pl?.level ?? 1,
+        hp: member.hp,
+        maxHp: Math.max(1, member.maxHp),
+      };
+    });
   }
 
   function paintGroup() {
+    const invite = view().pendingInvite;
+    if (inviteToast && inviteText) {
+      if (!invite) inviteToast.hidden = true;
+      else {
+        inviteText.textContent = `${invite.fromName} invites you.`;
+        inviteToast.hidden = false;
+      }
+    }
     if (!groupFrame) return;
     const rows = groupRoster();
     if (rows.length < 2) {
@@ -2737,147 +2653,40 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       .join("");
   }
 
-  function ensureGroup() {
-    if (!myGroup) myGroup = myId;
-    return myGroup;
+  function findPlayer(name: string) {
+    const want = name.trim().toLowerCase();
+    if (!want) return null;
+    return otherPlayers().find((pl) => pl.username.toLowerCase() === want) ?? null;
   }
 
   function inviteNamed(name: string) {
-    const peer = findPeer(name);
-    if (!peer) {
+    const pl = findPlayer(name);
+    if (!pl) {
       note("No one nearby by that name.");
       return;
     }
-    if (myGroup && peer.group === myGroup) {
-      note(`${peer.name} is already in the group.`);
+    if (inMyParty(pl.id)) {
+      note(`${pl.username} is already in the group.`);
       return;
     }
-    const group = ensureGroup();
-    postGroup({ t: "invite", fromId: myId, fromName: myName(), toName: peer.name, group });
-    note(`You invite ${peer.name}.`);
-    pulseGroup();
+    send({ op: "partyInvite", toName: pl.username });
   }
 
   function acceptInvite() {
-    if (!pendingInvite) return;
-    myGroup = pendingInvite.group;
-    postGroup({
-      t: "join",
-      id: myId,
-      name: myName(),
-      group: myGroup,
-      level: me()?.level ?? 1,
-      hp: me()?.hp ?? 0,
-      maxHp: me()?.maxHp ?? 1,
-      x: me()?.x ?? 0,
-      z: me()?.z ?? 0,
-      race: me()?.race ?? profile.race,
-    });
-    note("You join the group.");
-    hideInvite();
-    pulseGroup();
-    paintGroup();
+    const invite = view().pendingInvite;
+    if (!invite) return;
+    send({ op: "partyAccept", fromId: invite.fromId });
   }
 
   function declineInvite() {
-    if (!pendingInvite) return;
-    postGroup({ t: "decline", fromId: pendingInvite.fromId, name: myName() });
-    note("You decline.");
-    hideInvite();
+    const invite = view().pendingInvite;
+    if (!invite) return;
+    send({ op: "partyDecline", fromId: invite.fromId });
   }
 
   function leaveGroup() {
-    if (!myGroup) return;
-    const group = myGroup;
-    myGroup = null;
-    postGroup({ t: "leave", id: myId, group });
-    note("You leave the group.");
-    pulseGroup();
-    paintGroup();
-  }
-
-  function rememberPeer(msg: GroupWire) {
-    if (!msg.id || msg.id === myId) return;
-    const prev = groupPresence.get(msg.id);
-    groupPresence.set(msg.id, {
-      id: msg.id,
-      name: msg.name || prev?.name || "Hero",
-      level: msg.level ?? prev?.level ?? 1,
-      hp: msg.hp ?? prev?.hp ?? 0,
-      maxHp: msg.maxHp ?? prev?.maxHp ?? 1,
-      x: typeof msg.x === "number" ? msg.x : (prev?.x ?? 0),
-      z: typeof msg.z === "number" ? msg.z : (prev?.z ?? 0),
-      race: msg.race || prev?.race || "human",
-      group: msg.group === undefined ? (prev?.group ?? null) : msg.group,
-      seen: Date.now(),
-    });
-  }
-
-  function onGroupMessage(ev: MessageEvent) {
-    const msg = ev.data as GroupWire;
-    if (!msg || typeof msg.t !== "string") return;
-    if (msg.t === "hi" && msg.id) {
-      rememberPeer(msg);
-      return;
-    }
-    if (
-      msg.t === "invite" &&
-      msg.toName &&
-      msg.toName.toLowerCase() === myName().toLowerCase() &&
-      msg.fromId &&
-      msg.fromId !== myId
-    ) {
-      if (myGroup) {
-        postGroup({ t: "decline", fromId: msg.fromId, name: myName() });
-        return;
-      }
-      pendingInvite = {
-        fromId: msg.fromId,
-        fromName: msg.fromName || "Someone",
-        group: msg.group || msg.fromId,
-      };
-      showInvite(pendingInvite.fromName);
-      return;
-    }
-    if (msg.t === "join" && msg.id && msg.group && msg.group === myGroup) {
-      rememberPeer({ ...msg, group: msg.group });
-      paintGroup();
-      return;
-    }
-    if (msg.t === "decline" && msg.fromId === myId && msg.name) {
-      note(`${msg.name} declines.`);
-      if (groupRoster().length < 2) {
-        myGroup = null;
-        paintGroup();
-      }
-      return;
-    }
-    if (msg.t === "leave" && msg.id) {
-      const peer = groupPresence.get(msg.id);
-      if (peer) peer.group = null;
-      paintGroup();
-      return;
-    }
-    if (msg.t === "down" && msg.fromName && msg.name && msg.place) {
-      addPvp(`${msg.fromName} defeated ${msg.name} at ${msg.place}.`);
-    }
-  }
-
-  function pulseGroup() {
-    const p = me();
-    if (!p) return;
-    postGroup({
-      t: "hi",
-      id: myId,
-      name: p.username,
-      level: p.level,
-      hp: p.hp,
-      maxHp: p.maxHp,
-      x: p.x,
-      z: p.z,
-      race: p.race,
-      group: myGroup,
-    });
+    if (!view().party) return;
+    send({ op: "partyLeave" });
   }
 
   function addPvp(line: string) {
@@ -2896,7 +2705,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       note("This is a haven. No fighting here.");
       return "haven";
     }
-    if (myGroup && peer.group === myGroup) {
+    if (inMyParty(peer.id)) {
       pvpId = null;
       note("You cannot strike a group member.");
       return "group";
@@ -2931,16 +2740,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     const dmg = Math.max(1, trainedDamage(p));
     floatAt(peer.x, peer.z, `-${dmg}`, "#ffb4a8", 110);
-    postGroup({
-      t: "hit",
-      fromId: myId,
-      fromName: p.username,
-      id: peer.id,
-      group: myGroup,
-      dmg,
-      x: p.x,
-      z: p.z,
-    });
     return "hit";
   }
 
@@ -2949,19 +2748,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (!p) return null;
     let best: GroupPeer | null = null;
     let bestD = 40;
-    for (const peer of freshPeers()) {
-      const d = Math.hypot(peer.x - p.x, peer.z - p.z);
+    for (const pl of otherPlayers()) {
+      const d = Math.hypot(pl.x - p.x, pl.z - p.z);
       if (d < bestD) {
         bestD = d;
-        best = peer;
+        best = asPeer(pl);
       }
     }
     return best;
   }
 
   function asPeer(pl: { id: string; username?: string; name?: string; level: number; hp: number; maxHp: number; x: number; z: number; race?: string }): GroupPeer {
-    const known = freshPeers().find((row) => row.id === pl.id);
-    if (known) return { ...known, x: pl.x, z: pl.z, hp: pl.hp, maxHp: pl.maxHp, level: pl.level };
     return {
       id: pl.id,
       name: pl.username || pl.name || "Hero",
@@ -2971,8 +2768,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       x: pl.x,
       z: pl.z,
       race: pl.race || "human",
-      group: null,
-      seen: Date.now(),
     };
   }
 
@@ -2980,12 +2775,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const p = localPlayer();
     if (!p || selected?.kind !== "player") return;
     const pl = view().players.find((row) => row.id === selected?.id && row.hp > 0);
-    const peer = pl
-      ? asPeer(pl)
-      : (freshPeers().find((row) => row.id === selected?.id && row.hp > 0) ?? null);
-    if (!peer) return;
+    if (!pl) return;
+    const peer = asPeer(pl);
     const haven = !pvpOpen(p.x, p.z) || !pvpOpen(peer.x, peer.z);
-    const grouped = !!(myGroup && peer.group === myGroup);
+    const grouped = inMyParty(peer.id);
     if (haven || grouped) {
       pvpId = null;
       if (announce) {
@@ -3005,12 +2798,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return;
     }
     const pl = view().players.find((row) => row.id === pvpId && row.hp > 0);
-    const peer = pl ? asPeer(pl) : (freshPeers().find((row) => row.id === pvpId) ?? null);
-    if (!peer) {
+    if (!pl) {
       pvpId = null;
       return;
     }
-    if (!pvpOpen(p.x, p.z) || !pvpOpen(peer.x, peer.z) || (myGroup && peer.group === myGroup)) {
+    const peer = asPeer(pl);
+    if (!pvpOpen(p.x, p.z) || !pvpOpen(peer.x, peer.z) || inMyParty(peer.id)) {
       pvpId = null;
       return;
     }
@@ -3047,14 +2840,14 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function peerAt(sx: number, sy: number) {
     let best: GroupPeer | null = null;
     let bestD = 48;
-    for (const peer of freshPeers()) {
-      const sp = worldToScreen(peer.x, peer.z);
+    for (const pl of otherPlayers()) {
+      const sp = worldToScreen(pl.x, pl.z);
       const above = sp.y - sy;
       if (Math.abs(sx - sp.x) > 36 || above < -6 || above > 130) continue;
       const d = Math.hypot(sx - sp.x, sy - sp.y);
       if (d < bestD) {
         bestD = d;
-        best = peer;
+        best = asPeer(pl);
       }
     }
     return best;
@@ -3063,9 +2856,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function showCtx(clientX: number, clientY: number, peer: GroupPeer | null) {
     if (!ctxMenu) return;
     const items: Array<{ act: string; label: string; name: string }> = [];
-    if (peer && peer.group !== myGroup)
+    if (peer && !inMyParty(peer.id))
       items.push({ act: "invite", label: `Invite ${peer.name}`, name: peer.name });
-    if (myGroup) items.push({ act: "leave", label: "Leave group", name: "" });
+    if (view().party) items.push({ act: "leave", label: "Leave group", name: "" });
     if (!items.length) {
       ctxMenu.hidden = true;
       return;
@@ -3177,25 +2970,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       maxHp = mob.maxHp;
     } else if (selected.kind === "player") {
       const pl = view().players.find((row) => row.id === selected?.id && row.hp > 0);
-      const peer = pl ? null : freshPeers().find((row) => row.id === selected?.id && row.hp > 0);
-      if (!pl && !peer) {
+      if (!pl) {
         clearTarget();
         hide();
         return;
       }
-      if (pl) {
-        name = pl.username;
-        sub = `Lv ${pl.level} · ${pl.race} ${pl.prestigeClass || pl.baseClass}`;
-        hp = pl.hp;
-        maxHp = pl.maxHp;
-        mana = pl.mana;
-        maxMana = pl.maxMana;
-      } else if (peer) {
-        name = peer.name;
-        sub = `Lv ${peer.level}`;
-        hp = peer.hp;
-        maxHp = peer.maxHp;
-      }
+      name = pl.username;
+      sub = `Lv ${pl.level} · ${pl.race} ${pl.prestigeClass || pl.baseClass}`;
+      hp = pl.hp;
+      maxHp = pl.maxHp;
+      mana = pl.mana;
+      maxMana = pl.maxMana;
     } else {
       const npc = NPCS.find((row) => row.id === selected?.id);
       if (!npc) {
@@ -3505,24 +3290,24 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       note("Only a Leader can invite.");
       return;
     }
-    const peer = findPeer(raw);
-    if (!peer) {
+    const pl = findPlayer(raw);
+    if (!pl) {
       note("No one nearby by that name.");
       return;
     }
-    if (guildOf(peer.name)) {
-      note(`${peer.name} already belongs to a guild.`);
+    if (guildOf(pl.username)) {
+      note(`${pl.username} already belongs to a guild.`);
       return;
     }
     postGuild({
       t: "ginvite",
       guildId: guild.id,
       fromName: p.username,
-      toName: peer.name,
+      toName: pl.username,
       guildName: guild.name,
       tag: guild.tag,
     });
-    note(`You invite ${peer.name} to [${guild.tag}].`);
+    note(`You invite ${pl.username} to [${guild.tag}].`);
   }
 
   function acceptGuild() {
@@ -3914,7 +3699,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     } else note("Unknown command.");
   }
 
-  let groupChannel: BroadcastChannel | null = null;
   let guildChannel: BroadcastChannel | null = null;
 
   function moveCode(e: KeyboardEvent): string | null {
@@ -4224,9 +4008,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         dest = null;
         path = [];
         lootGrave = null;
-        const result = send({ op: "loot", id: myId, graveId: pickedGrave.id });
-        if (result && "ok" in result && result.ok)
-          postGroup({ t: "graveGone", graveId: pickedGrave.id });
+        send({ op: "loot", id: myId, graveId: pickedGrave.id });
       } else {
         talkNpc = null;
         goTo(pickedGrave.x, pickedGrave.z, null);
@@ -4952,13 +4734,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   window.addEventListener("resize", resize);
   root.addEventListener("contextmenu", onContextMenu);
 
-  try {
-    groupChannel = new BroadcastChannel("caldrenmoor-group-v1");
-    groupChannel.onmessage = (ev) => onGroupMessage(ev);
-    pulseGroup();
-  } catch {
-    groupChannel = null;
-  }
   seenGuild = guildOf(profile.username)?.id ?? "";
   seenRank = memberRank(profile.username) ?? "";
   try {
@@ -4972,7 +4747,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const stepTimer = window.setInterval(() => {
     watchPurse();
   }, 400);
-  const groupTimer = window.setInterval(pulseGroup, 400);
 
   function onLeave() {
     watchPurse();
@@ -5191,10 +4965,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     dead = true;
     cancelAnimationFrame(raf);
     window.clearInterval(stepTimer);
-    window.clearInterval(groupTimer);
     onLeave();
-    groupChannel?.close();
-    groupChannel = null;
     guildChannel?.close();
     guildChannel = null;
     window.removeEventListener("storage", onGuildStorage);

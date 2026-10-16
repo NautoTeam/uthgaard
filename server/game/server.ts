@@ -34,6 +34,10 @@ const KNOWN_OPS = new Set([
   "chat",
   "respawn",
   "loot",
+  "partyInvite",
+  "partyAccept",
+  "partyDecline",
+  "partyLeave",
 ]);
 
 /** A well-formed intent envelope whose op is not in the protocol. Schema failures of real ops stay malformed. */
@@ -664,18 +668,25 @@ export function startServer(opts: {
     const full = authority.snapshot();
     const online = byUser.size;
     const encoded = new Map<string, string>();
-    const packet = (ids: string) => {
-      const hit = encoded.get(ids);
+    const packet = (ids: string, viewerId: string) => {
+      const key = `${viewerId}\n${ids}`;
+      const hit = encoded.get(key);
       if (hit) return hit;
       const want = new Set(ids ? ids.split(",") : []);
       const players = ids ? full.players.filter((p) => want.has(p.id)) : full.players;
+      const social = authority.world.social(viewerId);
       const msg = JSON.stringify({
         t: "snap",
         tick,
         online,
-        state: { ...full, players },
+        state: {
+          ...full,
+          players,
+          party: social.party,
+          pendingInvite: social.pendingInvite,
+        },
       } satisfies ServerMsg);
-      encoded.set(ids, msg);
+      encoded.set(key, msg);
       return msg;
     };
     for (const client of wss.clients) {
@@ -695,7 +706,7 @@ export function startServer(opts: {
         .map((p) => p.id)
         .sort()
         .join(",");
-      client.send(packet(ids));
+      client.send(packet(ids, seen.id));
     }
   }, TICK_MS);
 

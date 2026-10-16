@@ -73,6 +73,8 @@ export function toServerIntent(intent: {
   cls?: string;
   msg?: string;
   graveId?: string;
+  toName?: string;
+  fromId?: string;
 }): Record<string, unknown> | null {
   switch (intent.op) {
     case "move":
@@ -116,6 +118,17 @@ export function toServerIntent(intent: {
     case "loot":
       if (!intent.graveId) return null;
       return { op: "loot", graveId: intent.graveId };
+    case "partyInvite":
+      if (!intent.toName) return null;
+      return { op: "partyInvite", toName: intent.toName };
+    case "partyAccept":
+      if (!intent.fromId) return null;
+      return { op: "partyAccept", fromId: intent.fromId };
+    case "partyDecline":
+      if (!intent.fromId) return null;
+      return { op: "partyDecline", fromId: intent.fromId };
+    case "partyLeave":
+      return { op: "partyLeave" };
     default:
       return null;
   }
