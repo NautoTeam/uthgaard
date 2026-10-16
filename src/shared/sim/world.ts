@@ -2,6 +2,7 @@ import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nea
 import { HAVEN_ZONE_RADIUS, havenCity } from "./mask";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, mobLabel, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
+import { CHAT_MAX } from "./chat";
 import type { GraveState, PartyView, PendingInvite } from "./types";
 import {
   CAMPS,
@@ -1033,7 +1034,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   function chat(id: string, msg: string): ActionResult {
     const p = players.get(id);
     if (!p || !msg) return { ok: false };
-    log(`${p.username}: ${msg.slice(0, 120)}`);
+    log(`${p.username}: ${msg.slice(0, CHAT_MAX)}`);
     return { ok: true };
   }
 

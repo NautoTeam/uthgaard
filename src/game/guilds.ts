@@ -1,4 +1,4 @@
-/** Same-browser guild roster and guild chat. Founding rules live in src/shared/sim/guild.ts. */
+/** Same-browser guild roster. Founding rules live in src/shared/sim/guild.ts. */
 
 import {
   CHARTER_GOLD,
@@ -12,7 +12,6 @@ import {
 export { CHARTER_GOLD, CRESTS, GUILD_KINDS, validateFoundGuild, type CrestId, type GuildKind };
 
 export const GUILD_KEY = "uthgaard-guilds-v1";
-export const GUILD_CHAT_KEY = "uthgaard-guild-chat-v1";
 export const LEADER_LEAVE =
   "A Leader leaves only when they are the last member. The guild then closes.";
 
@@ -328,64 +327,4 @@ export function kickMember(
   };
   replaceGuild(mine.store, next);
   return { ok: true, guild: next, name: theirs.member.name };
-}
-
-export interface GuildChatLine {
-  guildId: string;
-  from: string;
-  text: string;
-  at: number;
-}
-
-let chatCache: GuildChatLine[] | null = null;
-
-function readChat(): GuildChatLine[] {
-  if (chatCache) return chatCache;
-  const store = browserStore();
-  if (!store) {
-    chatCache = [];
-    return chatCache;
-  }
-  try {
-    const raw = store.getItem(GUILD_CHAT_KEY);
-    const parsed = raw ? (JSON.parse(raw) as GuildChatLine[]) : [];
-    chatCache = Array.isArray(parsed)
-      ? parsed.filter(
-          (line) =>
-            !!line &&
-            typeof line.guildId === "string" &&
-            typeof line.from === "string" &&
-            typeof line.text === "string",
-        )
-      : [];
-  } catch {
-    chatCache = [];
-  }
-  return chatCache;
-}
-
-function writeChat(lines: GuildChatLine[]) {
-  chatCache = lines.slice(-80);
-  browserStore()?.setItem(GUILD_CHAT_KEY, JSON.stringify(chatCache));
-}
-
-export function invalidateGuildChat() {
-  chatCache = null;
-}
-
-export function guildChat(guildId: string) {
-  return readChat()
-    .filter((line) => line.guildId === guildId)
-    .slice(-40);
-}
-
-export function postGuildChat(guildId: string, from: string, text: string) {
-  const clean = text.trim().slice(0, 120);
-  const speaker = from.trim().slice(0, 16);
-  if (!guildId || !speaker || !clean) return null;
-  const line: GuildChatLine = { guildId, from: speaker, text: clean, at: Date.now() };
-  const kept = readChat().filter((row) => row.guildId !== guildId).slice(-40);
-  const mine = [...readChat().filter((row) => row.guildId === guildId), line].slice(-40);
-  writeChat([...kept, ...mine]);
-  return line;
 }

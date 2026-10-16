@@ -55,6 +55,7 @@ export function applyIntent(
     case "promote":
       return world.promote(playerId, intent.cls);
     case "chat":
+      if (intent.channel === "guild") return { ok: false, reason: "You are not in a guild." };
       return world.chat(playerId, intent.msg);
     case "respawn":
       return world.respawn(playerId);

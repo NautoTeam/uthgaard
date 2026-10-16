@@ -57,6 +57,13 @@ export interface StoredGuild {
 export type GuildWrite = "ok" | "name_taken" | "tag_taken" | "already";
 export type MemberWrite = "ok" | "already" | "missing";
 
+export interface StoredGuildChat {
+  guildId: string;
+  from: string;
+  text: string;
+  at: number;
+}
+
 export interface GuildDb {
   listGuilds(): Promise<StoredGuild[]>;
   insertGuild(row: StoredGuild): Promise<GuildWrite>;
@@ -66,6 +73,9 @@ export interface GuildDb {
   /** Promote `toId` and drop `fromId` in one statement. */
   handoffLeader(guildId: string, toId: string, fromId: string): Promise<void>;
   deleteGuild(guildId: string): Promise<void>;
+  /** Last 50 lines per guild, oldest first. */
+  listGuildChat(): Promise<StoredGuildChat[]>;
+  addGuildChat(row: StoredGuildChat): Promise<void>;
 }
 
 export type GameDb = CharacterDb & GraveDb & GuildDb;
@@ -117,6 +127,13 @@ function asGrave(raw: unknown): GraveState {
   return typeof raw === "string" ? (JSON.parse(raw) as GraveState) : (raw as GraveState);
 }
 
+function atMs(raw: unknown): number {
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const n = Date.parse(String(raw ?? ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
 function joinedAtOf(raw: unknown): number {
   if (raw instanceof Date) return raw.getTime();
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
@@ -162,6 +179,7 @@ export function memoryCharacters(): GameDb {
   const rows = new Map<string, { save: CharacterRecord; rev: number; name: string; slot: number; userId: string }>();
   const graves = new Map<string, GraveState>();
   const guilds: StoredGuild[] = [];
+  const guildChat: StoredGuildChat[] = [];
   const keyOf = (userId: string, slot: number) => `${userId}\0${slot}`;
   const nameTaken = (name: string, except?: { userId: string; slot: number }) => {
     const key = name.trim().toLowerCase();
@@ -262,6 +280,30 @@ export function memoryCharacters(): GameDb {
     async deleteGuild(guildId) {
       for (let i = guilds.length - 1; i >= 0; i--) {
         if (guilds[i]?.id === guildId) guilds.splice(i, 1);
+      }
+      for (let i = guildChat.length - 1; i >= 0; i--) {
+        if (guildChat[i]?.guildId === guildId) guildChat.splice(i, 1);
+      }
+    },
+    async listGuildChat() {
+      const grouped = new Map<string, StoredGuildChat[]>();
+      for (const row of guildChat) {
+        const list = grouped.get(row.guildId) ?? [];
+        list.push({ ...row });
+        grouped.set(row.guildId, list);
+      }
+      const out: StoredGuildChat[] = [];
+      for (const list of grouped.values()) out.push(...list.slice(-50));
+      return out.sort((a, b) => a.at - b.at);
+    },
+    async addGuildChat(row) {
+      guildChat.push({ ...row });
+      const mine = guildChat.filter((line) => line.guildId === row.guildId);
+      if (mine.length <= 50) return;
+      const keep = new Set(mine.slice(-50));
+      for (let i = guildChat.length - 1; i >= 0; i--) {
+        const line = guildChat[i];
+        if (line?.guildId === row.guildId && !keep.has(line)) guildChat.splice(i, 1);
       }
     },
   };
@@ -415,9 +457,51 @@ export function characterStore(query: Query): GameDb {
       await query(
         `with dropped as (
            delete from guild_members where guild_id = $1
+         ),
+         chatted as (
+           delete from guild_chat where guild_id = $1
          )
          delete from guilds where id = $1`,
         [guildId],
+      );
+    },
+    async listGuildChat() {
+      const result = await query(
+        `select guild_id, from_name, text, "at"
+         from (
+           select id, guild_id, from_name, text, "at",
+                  row_number() over (partition by guild_id order by id desc) as n
+           from guild_chat
+         ) ranked
+         where n <= 50
+         order by id asc`,
+      );
+      return result.rows.map((row) => ({
+        guildId: String(row.guild_id),
+        from: String(row.from_name),
+        text: String(row.text),
+        at: atMs(row.at),
+      }));
+    },
+    async addGuildChat(row) {
+      await query(
+        `with inserted as (
+           insert into guild_chat (guild_id, from_name, text, "at")
+           values ($1, $2, $3, coalesce(to_timestamp($4::double precision / 1000.0), now()))
+           returning id
+         )
+         delete from guild_chat
+         where guild_id = $1
+           and id not in (
+             select id from (
+               select id from guild_chat where guild_id = $1
+               union all
+               select id from inserted
+             ) kept
+             order by id desc
+             limit 50
+           )`,
+        [row.guildId, row.from, row.text, row.at],
       );
     },
   };

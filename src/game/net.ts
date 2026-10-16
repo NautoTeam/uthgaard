@@ -81,6 +81,7 @@ export function toServerIntent(intent: {
   crest?: string;
   guildId?: string;
   userName?: string;
+  channel?: string;
 }): Record<string, unknown> | null {
   switch (intent.op) {
     case "move":
@@ -118,7 +119,9 @@ export function toServerIntent(intent: {
       if (!intent.cls) return null;
       return { op: "promote", cls: intent.cls };
     case "chat":
-      return { op: "chat", msg: intent.msg ?? "" };
+      return intent.channel === "guild"
+        ? { op: "chat", msg: intent.msg ?? "", channel: "guild" }
+        : { op: "chat", msg: intent.msg ?? "" };
     case "respawn":
       return { op: "respawn" };
     case "loot":

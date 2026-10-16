@@ -78,14 +78,14 @@ test("graves round-trip through the table", async () => {
   await pg.close();
 });
 
-test("migrations run twice and apply 0001 through 0004 once each", async () => {
+test("migrations run twice and apply 0001 through 0005 once each", async () => {
   const { pg, query } = await openDb();
   await applyGameMigrations(query);
   await applyGameMigrations(query);
   const rows = await pg.query<{ name: string }>("select name from _game_migrations order by name");
   assert.deepEqual(
     rows.rows.map((row) => row.name),
-    ["0001_characters.sql", "0002_name_rev.sql", "0003_slots.sql", "0004_guilds.sql"],
+    ["0001_characters.sql", "0002_name_rev.sql", "0003_slots.sql", "0004_guilds.sql", "0005_guild_chat.sql"],
   );
   await pg.close();
 });

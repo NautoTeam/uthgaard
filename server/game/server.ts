@@ -11,6 +11,7 @@ import { applyIntent } from "./dispatch";
 import { createGuildBook, commitGuildAct, foundGuild } from "./guilds";
 import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
+import { allowChat, CHAT_MAX } from "../../src/shared/sim/chat";
 
 const HELLO_MS = 5000;
 const CREATE_MS = 120_000;
@@ -144,6 +145,7 @@ type Conn = {
   bucketAt: number;
   drops: number[];
   bads: number[];
+  chatAt: number[];
 };
 
 /**
@@ -418,6 +420,7 @@ export function startServer(opts: {
       bucketAt: Date.now(),
       drops: [],
       bads: [],
+      chatAt: [],
     };
     let helloTimer: ReturnType<typeof setTimeout>;
     function armHello(ms: number) {
@@ -657,6 +660,40 @@ export function startServer(opts: {
         noteDrop();
         return;
       }
+      if (parsed.data.intent.op === "chat") {
+        const intent = parsed.data.intent;
+        const text = intent.msg.trim().slice(0, CHAT_MAX);
+        const player = authority.world.players.get(conn.playerId);
+        if (!player || !text) {
+          send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false } });
+          return;
+        }
+        const channel = intent.channel ?? "say";
+        if (channel === "guild" && !guilds.hasUser(conn.playerId)) {
+          send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are not in a guild." } });
+          return;
+        }
+        const gate = allowChat(conn.chatAt, Date.now());
+        conn.chatAt = gate.stamps;
+        if (!gate.ok) {
+          send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are talking too fast." } });
+          return;
+        }
+        if (channel === "guild") {
+          const guildId = guilds.view(conn.playerId)?.id;
+          if (!guildId) {
+            send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are not in a guild." } });
+            return;
+          }
+          const line = { guildId, from: player.username.slice(0, 16), text, at: Date.now() };
+          if (characters) await characters.addGuildChat(line);
+          guilds.pushChat(line);
+          send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: true } });
+          return;
+        }
+        send(socket, { t: "ack", seq: parsed.data.seq, result: authority.world.chat(conn.playerId, text) });
+        return;
+      }
       if (parsed.data.intent.op === "foundGuild") {
         const store = characters;
         const write = store ? (row: StoredGuild) => store.insertGuild(row) : undefined;
@@ -765,7 +802,10 @@ export function startServer(opts: {
   }, TICK_MS);
 
   const ready = (async () => {
-    if (characters) guilds.load(await characters.listGuilds());
+    if (characters) {
+      guilds.load(await characters.listGuilds());
+      guilds.loadChat(await characters.listGuildChat());
+    }
     return await new Promise<number>((resolve, rejectReady) => {
       httpServer.once("error", rejectReady);
       httpServer.listen(opts.port, () => {

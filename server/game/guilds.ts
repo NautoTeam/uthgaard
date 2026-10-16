@@ -1,9 +1,10 @@
 import type { Intent } from "../../src/shared/net/protocol";
 import { nearestRegistrar } from "../../src/shared/sim/geo";
+import { GUILD_CHAT_KEEP } from "../../src/shared/sim/chat";
 import { CHARTER_GOLD, validateFoundGuild } from "../../src/shared/sim/guild";
 import type { ActionResult, GuildView, PendingGuildInvite } from "../../src/shared/sim/types";
 import type { World } from "../../src/shared/sim/world";
-import type { GuildDb, GuildWrite, MemberWrite, StoredGuild } from "./db";
+import type { GuildDb, GuildWrite, MemberWrite, StoredGuild, StoredGuildChat } from "./db";
 
 /** The registrar desk stays open out to 8 tiles. Buying matches that. */
 const REGISTRAR_NEAR = 8;
@@ -46,6 +47,8 @@ export interface GuildBook {
   add(row: StoredGuild): boolean;
   /** Join-order stamp. A provided time is kept and the clock moves past it. */
   stamp(given?: number): number;
+  loadChat(rows: StoredGuildChat[]): void;
+  pushChat(row: StoredGuildChat): void;
   plan(world: World, playerId: string, intent: Intent): GuildPlan;
   apply(changes: GuildChange[]): void;
 }
@@ -59,6 +62,7 @@ function rankLabel(rank: StoredGuild["rank"]): GuildView["rank"] {
 export function createGuildBook(): GuildBook {
   const byUser = new Map<string, Member>();
   const invites = new Map<string, Invite>();
+  const lines = new Map<string, Array<{ from: string; text: string; at: number }>>();
   let joinClock = 0;
 
   function nextJoinedAt(given?: number): number {
@@ -120,6 +124,7 @@ export function createGuildBook(): GuildBook {
             online: presence?.online.has(member.userId) ?? false,
           };
         }),
+        chat: (lines.get(row.id) ?? []).map((line) => ({ ...line })),
       };
     },
     pending(userId) {
@@ -170,6 +175,16 @@ export function createGuildBook(): GuildBook {
     },
     stamp(given) {
       return nextJoinedAt(given);
+    },
+    loadChat(rows) {
+      lines.clear();
+      const ordered = [...rows].sort((a, b) => a.at - b.at);
+      for (const row of ordered) this.pushChat(row);
+    },
+    pushChat(row) {
+      const list = lines.get(row.guildId) ?? [];
+      list.push({ from: row.from, text: row.text, at: row.at });
+      lines.set(row.guildId, list.slice(-GUILD_CHAT_KEEP));
     },
     plan(world, playerId, intent) {
       const p = world.players.get(playerId);
@@ -329,6 +344,7 @@ export function createGuildBook(): GuildBook {
           for (const [id, invite] of invites) {
             if (invite.guildId === change.guildId) invites.delete(id);
           }
+          lines.delete(change.guildId);
         }
       }
     },

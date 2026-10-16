@@ -87,6 +87,7 @@ const chat = z
   .object({
     op: z.literal("chat"),
     msg: z.string().max(200),
+    channel: z.enum(["say", "guild"]).optional(),
   })
   .strict();
 
@@ -370,6 +371,14 @@ const guildMemberView = z
   })
   .strict();
 
+const guildChatLine = z
+  .object({
+    from: z.string().max(16),
+    text: z.string().max(120),
+    at: z.number(),
+  })
+  .strict();
+
 const guildView = z
   .object({
     id: z.string(),
@@ -379,6 +388,7 @@ const guildView = z
     crest: z.string(),
     rank: z.enum(["Leader", "Officer", "Member"]),
     members: z.array(guildMemberView).optional(),
+    chat: z.array(guildChatLine).max(50).optional(),
   })
   .strict();
 

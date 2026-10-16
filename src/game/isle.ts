@@ -69,17 +69,13 @@ import {
   CITY_PLOTS,
   CORNERSTONE_GOLD,
   CRESTS,
-  GUILD_CHAT_KEY,
   GUILD_KEY,
   GUILD_KINDS,
   guildAtPlot,
-  guildChat,
   guildOf,
-  invalidateGuildChat,
   invalidateGuilds,
   memberRank,
   plantCornerstone,
-  postGuildChat,
   removeCornerstone,
   type CrestId,
   type GuildKind,
@@ -125,7 +121,7 @@ type Intent =
   | { op: "attack"; id: string; targetId: string | null }
   | { op: "skill"; id: string; skill: string; targetId: string | null }
   | { op: "promote"; id: string; cls: string }
-  | { op: "chat"; id: string; msg: string }
+  | { op: "chat"; id: string; msg: string; channel?: "say" | "guild" }
   | { op: "travel"; id: string; cityId: string }
   | { op: "respawn"; id: string; place?: { x: number; z: number; name: string } }
   | { op: "loot"; id: string; graveId: string }
@@ -3187,7 +3183,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function paintGuildChat() {
     if (!guildBox) return;
-    const guild = guildOf(myName());
+    const guild = view().guild ?? null;
     if (!guild) {
       if (guildChatSig !== "none") {
         guildBox.innerHTML = `<div>You are not in a guild.</div>`;
@@ -3195,7 +3191,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       }
       return;
     }
-    const lines = guildChat(guild.id);
+    const lines = guild.chat ?? [];
     const sig = lines.map((line) => `${line.at}|${line.from}|${line.text}`).join("\n");
     if (sig === guildChatSig) return;
     guildChatSig = sig;
@@ -3211,18 +3207,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function sayGuild(text: string) {
-    const guild = guildOf(myName());
-    if (!guild) {
+    if (!view().guild) {
       note("You are not in a guild.");
       return;
     }
-    const line = postGuildChat(guild.id, myName(), text);
-    if (!line) return;
-    postGuild({ t: "gchat", guildId: guild.id });
-    guildChatSig = "";
+    send({ op: "chat", id: myId, msg: text, channel: "guild" });
     showChatTab("guild");
     chat.classList.add("open");
-    paintGuildChat();
   }
 
   function rankMember(act: "promote" | "demote" | "kick", who: string) {
@@ -3230,19 +3221,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     else if (act === "demote") send({ op: "guildDemote", userName: who });
     else send({ op: "guildKick", userName: who });
     guildSig = "";
-  }
-
-  function postGuild(msg: {
-    t: string;
-    guildId?: string;
-    fromName?: string;
-    toName?: string;
-    name?: string;
-    guildName?: string;
-    tag?: string;
-    rank?: string;
-  }) {
-    guildChannel?.postMessage(msg);
   }
 
   function inviteGuild(raw: string) {
@@ -3273,28 +3251,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     guildSig = "";
   }
 
-  function onGuildMessage(ev: MessageEvent) {
-    const msg = ev.data as {
-      t?: string;
-      guildId?: string;
-    };
-    if (!msg || typeof msg.t !== "string") return;
-    if (msg.t === "gchat" || msg.t === "gstone") {
-      if (msg.t === "gstone") invalidateGuilds();
-      invalidateGuildChat();
-      guildChatSig = "";
-      paintGuildChat();
-    }
-  }
-
   function onGuildStorage(e: StorageEvent) {
-    if (e.key && e.key !== GUILD_KEY && e.key !== GUILD_CHAT_KEY) return;
-    if (!e.key || e.key === GUILD_KEY) invalidateGuilds();
-    if (!e.key || e.key === GUILD_CHAT_KEY) {
-      invalidateGuildChat();
-      guildChatSig = "";
-      paintGuildChat();
-    }
+    if (e.key && e.key !== GUILD_KEY) return;
+    invalidateGuilds();
   }
 
   function onGuildClick(e: Event) {
@@ -3522,7 +3481,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return;
     }
     commitPurse();
-    postGuild({ t: "gstone", guildId: result.guild.id, tag: result.guild.tag });
     note(`[${result.guild.tag}] plants a Cornerstone on the ${plot.zone} plot.`);
     guildSig = "";
   }
@@ -3533,7 +3491,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       note(result.reason);
       return;
     }
-    postGuild({ t: "gstone", guildId: result.guild.id, tag: result.guild.tag });
     note("The Cornerstone is gone. The plot is free. No gold is returned.");
     guildSig = "";
   }
@@ -3573,8 +3530,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       else tryPlant(plot.id);
     } else note("Unknown command.");
   }
-
-  let guildChannel: BroadcastChannel | null = null;
 
   function moveCode(e: KeyboardEvent): string | null {
     const known = ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"];
@@ -4611,12 +4566,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   seenGuild = guildOf(profile.username)?.id ?? "";
   seenRank = memberRank(profile.username) ?? "";
-  try {
-    guildChannel = new BroadcastChannel("caldrenmoor-guild-v1");
-    guildChannel.onmessage = (ev) => onGuildMessage(ev);
-  } catch {
-    guildChannel = null;
-  }
   window.addEventListener("storage", onGuildStorage);
 
   const stepTimer = window.setInterval(() => {
@@ -4841,8 +4790,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     cancelAnimationFrame(raf);
     window.clearInterval(stepTimer);
     onLeave();
-    guildChannel?.close();
-    guildChannel = null;
     window.removeEventListener("storage", onGuildStorage);
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);

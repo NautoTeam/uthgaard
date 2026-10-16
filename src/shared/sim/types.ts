@@ -109,6 +109,12 @@ export interface GuildMemberView {
   online: boolean;
 }
 
+export interface GuildChatLine {
+  from: string;
+  text: string;
+  at: number;
+}
+
 export interface GuildView {
   id: string;
   name: string;
@@ -117,6 +123,8 @@ export interface GuildView {
   crest: string;
   rank: "Leader" | "Officer" | "Member";
   members?: GuildMemberView[];
+  /** Last lines, oldest first. Only on the member's own snap. */
+  chat?: GuildChatLine[];
 }
 
 /** A guild invite waiting on this player. Not stored on the shared snapshot. */
