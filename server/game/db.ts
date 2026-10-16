@@ -52,6 +52,8 @@ export interface StoredGuild {
   username?: string;
   /** Join order. Milliseconds from the server clock, or the row's joined_at. */
   joinedAt?: number;
+  /** City plot id, or unset when the guild has no Cornerstone. */
+  plotId?: string;
 }
 
 export type GuildWrite = "ok" | "name_taken" | "tag_taken" | "already";
@@ -73,6 +75,8 @@ export interface GuildDb {
   /** Promote `toId` and drop `fromId` in one statement. */
   handoffLeader(guildId: string, toId: string, fromId: string): Promise<void>;
   deleteGuild(guildId: string): Promise<void>;
+  /** Claim or clear `guilds.plot_id`. `taken` when another guild holds that plot. */
+  setPlot(guildId: string, plotId: string | null): Promise<"ok" | "taken" | "has">;
   /** Last 50 lines per guild, oldest first. */
   listGuildChat(): Promise<StoredGuildChat[]>;
   addGuildChat(row: StoredGuildChat): Promise<void>;
@@ -285,6 +289,18 @@ export function memoryCharacters(): GameDb {
         if (guildChat[i]?.guildId === guildId) guildChat.splice(i, 1);
       }
     },
+    async setPlot(guildId, plotId) {
+      const mine = guilds.filter((row) => row.id === guildId);
+      if (!mine.length) return "taken";
+      if (plotId) {
+        if (mine.some((row) => row.plotId)) return "has";
+        if (guilds.some((row) => row.plotId === plotId && row.id !== guildId)) return "taken";
+        for (const row of mine) row.plotId = plotId;
+        return "ok";
+      }
+      for (const row of mine) row.plotId = undefined;
+      return "ok";
+    },
     async listGuildChat() {
       const grouped = new Map<string, StoredGuildChat[]>();
       for (const row of guildChat) {
@@ -374,7 +390,7 @@ export function characterStore(query: Query): GameDb {
     },
     async listGuilds() {
       const result = await query(
-        `select g.id, g.name, g.tag, g.kind, g.crest, m.user_id, m.rank, m.joined_at,
+        `select g.id, g.name, g.tag, g.kind, g.crest, g.plot_id, m.user_id, m.rank, m.joined_at,
                 (select c.name from characters c where c.user_id = m.user_id order by c.updated_at desc limit 1) as username
          from guild_members m
          join guilds g on g.id = m.guild_id
@@ -390,6 +406,7 @@ export function characterStore(query: Query): GameDb {
         rank: (row.rank === "officer" || row.rank === "member" ? row.rank : "leader") as StoredGuild["rank"],
         username: typeof row.username === "string" ? row.username : "",
         joinedAt: joinedAtOf(row.joined_at),
+        plotId: row.plot_id == null || row.plot_id === "" ? undefined : String(row.plot_id),
       }));
     },
     async insertGuild(row) {
@@ -464,6 +481,29 @@ export function characterStore(query: Query): GameDb {
          delete from guilds where id = $1`,
         [guildId],
       );
+    },
+    async setPlot(guildId, plotId) {
+      if (!plotId) {
+        await query("update guilds set plot_id = null where id = $1", [guildId]);
+        return "ok";
+      }
+      try {
+        const result = await query(
+          `update guilds
+           set plot_id = $2
+           where id = $1
+             and plot_id is null
+             and not exists (select 1 from guilds other where other.plot_id = $2)
+           returning id`,
+          [guildId, plotId],
+        );
+        if (result.rows.length) return "ok";
+        const mine = await query("select plot_id from guilds where id = $1", [guildId]);
+        return mine.rows[0]?.plot_id ? "has" : "taken";
+      } catch (err) {
+        if (pgCode(err) === "23505") return "taken";
+        throw err;
+      }
     },
     async listGuildChat() {
       const result = await query(

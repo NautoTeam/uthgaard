@@ -2,14 +2,27 @@
 
 import {
   CHARTER_GOLD,
+  CITY_PLOTS,
+  CORNERSTONE_GOLD,
   CRESTS,
   GUILD_KINDS,
+  plotById,
   validateFoundGuild,
   type CrestId,
   type GuildKind,
 } from "../shared/sim/guild";
 
-export { CHARTER_GOLD, CRESTS, GUILD_KINDS, validateFoundGuild, type CrestId, type GuildKind };
+export {
+  CHARTER_GOLD,
+  CITY_PLOTS,
+  CORNERSTONE_GOLD,
+  CRESTS,
+  GUILD_KINDS,
+  plotById,
+  validateFoundGuild,
+  type CrestId,
+  type GuildKind,
+};
 
 export const GUILD_KEY = "uthgaard-guilds-v1";
 export const LEADER_LEAVE =
@@ -197,18 +210,6 @@ function findMembership(name: string) {
 
 function replaceGuild(store: GuildStore, guild: GuildRecord) {
   write({ guilds: store.guilds.map((row) => (row.id === guild.id ? guild : row)) });
-}
-
-export const CORNERSTONE_GOLD = 150;
-
-/** Open ground outside a haven. Beastmarch is just south of Fenhollow's PvP line. */
-export const CITY_PLOTS = [
-  { id: "beastmarch-south", zone: "Beastmarch", x: 40, z: 140 },
-  { id: "reedrot-fen", zone: "Reedrot Fen", x: 10, z: 305 },
-] as const;
-
-export function plotById(id: string) {
-  return CITY_PLOTS.find((plot) => plot.id === id) ?? null;
 }
 
 export function guildAtPlot(plotId: string): GuildRecord | null {

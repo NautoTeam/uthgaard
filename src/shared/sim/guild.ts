@@ -1,6 +1,20 @@
 /** Pure guild rules. The server and the browser both use these. */
 
 export const CHARTER_GOLD = 80;
+export const CORNERSTONE_GOLD = 150;
+
+/** How close a leader must stand to plant. Matches the city-plot mark. */
+export const PLOT_NEAR = 3.2;
+
+/** Open ground outside a haven. Beastmarch is just south of Fenhollow's PvP line. */
+export const CITY_PLOTS = [
+  { id: "beastmarch-south", zone: "Beastmarch", x: 40, z: 140 },
+  { id: "reedrot-fen", zone: "Reedrot Fen", x: 10, z: 305 },
+] as const;
+
+export function plotById(id: string) {
+  return CITY_PLOTS.find((plot) => plot.id === id) ?? null;
+}
 
 export const GUILD_KINDS = ["Warband", "Syndicate", "Order"] as const;
 export type GuildKind = (typeof GUILD_KINDS)[number];

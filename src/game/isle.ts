@@ -71,12 +71,9 @@ import {
   CRESTS,
   GUILD_KEY,
   GUILD_KINDS,
-  guildAtPlot,
   guildOf,
   invalidateGuilds,
   memberRank,
-  plantCornerstone,
-  removeCornerstone,
   type CrestId,
   type GuildKind,
 } from "./guilds";
@@ -138,6 +135,8 @@ type Intent =
   | { op: "guildKick"; userName: string }
   | { op: "guildPromote"; userName: string }
   | { op: "guildDemote"; userName: string }
+  | { op: "plantCornerstone"; id: string; plotId: string }
+  | { op: "removeCornerstone"; id: string }
   | { op: "setLevel"; id: string; level: number }
   | { op: "setHp"; id: string; hp: number }
   | { op: "buy"; id: string; itemId: string }
@@ -1601,7 +1600,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       sheetBody.innerHTML =
         `<div class="sheet-who">${p.username} · ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}</div>` +
         `<div class="gold-line">Gold ${p.gold}</div>` +
-        `<div class="sheet-note">${escapeHtml(bindText(p.username))}</div>` +
+        `<div class="sheet-note">${escapeHtml(bindText())}</div>` +
         `<table class="sheet-attrs"><tbody>` +
         `<tr><th>STR</th><td>${a.str}</td><th>DEX</th><td>${a.dex}</td></tr>` +
         `<tr><th>CON</th><td>${a.con}</td><th>INT</th><td>${a.int}</td></tr>` +
@@ -1669,7 +1668,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     watchGuildSnap();
     paintPlotPrompt();
     watchBind();
-    const plotNow = CITY_PLOTS.map((plot) => `${plot.id}:${guildAtPlot(plot.id)?.tag ?? ""}`).join("|");
+    const plotNow = (view().plots ?? [])
+      .map((plot) => `${plot.plotId}:${plot.guildTag}`)
+      .sort()
+      .join("|");
     if (plotNow !== plotSig) {
       plotSig = plotNow;
       if (!mapOverlay.hidden) drawWorldMap();
@@ -1788,11 +1790,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     g.font = "11px Georgia";
     for (const plot of CITY_PLOTS) {
       const pt = to(plot.x, plot.z);
-      const owner = guildAtPlot(plot.id);
+      const owner = claimedPlot(plot.id);
       g.fillStyle = owner ? "#e2b15a" : "#9fd0ff";
       g.fillRect(pt.x - 4, pt.y - 4, 8, 8);
       g.fillStyle = "#f4fbff";
-      g.fillText(owner ? `City plot ([${owner.tag}])` : "City plot (free)", pt.x, pt.y - 8);
+      g.fillText(owner ? `City plot ([${owner.guildTag}])` : "City plot (free)", pt.x, pt.y - 8);
     }
     g.font = "12px Georgia";
     g.fillStyle = "rgba(214, 226, 214, 0.92)";
@@ -3310,22 +3312,25 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return race === "Marshwarden" ? "Fenhollow" : "Caldrenmoor";
   }
 
-  function bindText(username: string) {
-    const guild = guildOf(username);
-    if (guild?.cornerstone) return `Bound to [${guild.tag}] Cornerstone`;
-    const race = me()?.username === username ? me()?.race : profile.race;
+  function bindText() {
+    const guild = view().guild;
+    const stone = guild ? claimedPlotTag(guild.tag) : null;
+    if (guild && stone) return `Bound to [${guild.tag}] Cornerstone`;
+    const race = me()?.race ?? profile.race;
     return `Bound to ${homeBindName(race)}`;
   }
 
   function bindSpot() {
-    const guild = guildOf(myName());
-    const stone = guild?.cornerstone;
+    const guild = view().guild;
+    const stone = guild ? claimedPlotTag(guild.tag) : null;
     if (!guild || !stone) return undefined;
-    return { x: stone.x, z: stone.z, name: `[${guild.tag}] Cornerstone` };
+    const plot = CITY_PLOTS.find((row) => row.id === stone.plotId);
+    if (!plot) return undefined;
+    return { x: plot.x, z: plot.z, name: `[${guild.tag}] Cornerstone` };
   }
 
   function watchBind() {
-    const text = bindText(myName());
+    const text = bindText();
     if (bindLine) bindLine.textContent = text;
     if (text === seenBind) return;
     const first = seenBind === "";
@@ -3366,8 +3371,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return best;
   }
 
+  function claimedPlot(plotId: string) {
+    return view().plots?.find((row) => row.plotId === plotId) ?? null;
+  }
+
+  function claimedPlotTag(tag: string) {
+    return view().plots?.find((row) => row.guildTag === tag) ?? null;
+  }
+
   function drawCityPlot(plot: (typeof CITY_PLOTS)[number]) {
-    const owner = guildAtPlot(plot.id);
+    const owner = claimedPlot(plot.id);
     const p = worldToScreen(plot.x, plot.z);
     ctx.save();
     ctx.translate(p.x, p.y);
@@ -3399,7 +3412,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.fillRect(-78, -98, 156, 18);
       ctx.font = "12px Georgia";
       ctx.fillStyle = "#f4fbff";
-      ctx.fillText(`[${owner.tag}] Cornerstone`, 0, -85);
+      ctx.fillText(`[${owner.guildTag}] Cornerstone`, 0, -85);
     }
     ctx.restore();
   }
@@ -3413,9 +3426,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       return;
     }
     plotPrompt.hidden = false;
-    const owner = guildAtPlot(plot.id);
-    const mine = guildOf(p.username);
-    const leader = memberRank(p.username) === "Leader";
+    const owner = claimedPlot(plot.id);
+    const mine = view().guild;
+    const leader = mine?.rank === "Leader";
     if (!owner) {
       plotPromptText.textContent = `${plot.zone} city plot. Free.`;
       plotPromptBtn.hidden = false;
@@ -3424,8 +3437,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       plotPromptBtn.dataset.plot = plot.id;
       return;
     }
-    if (mine && owner.id === mine.id && leader) {
-      plotPromptText.textContent = `[${owner.tag}] Cornerstone.`;
+    if (mine && owner.guildTag === mine.tag && leader) {
+      plotPromptText.textContent = `[${owner.guildTag}] Cornerstone.`;
       plotPromptBtn.hidden = false;
       plotPromptBtn.textContent = "Remove Cornerstone";
       plotPromptBtn.dataset.act = "remove";
@@ -3434,65 +3447,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     }
     plotPromptBtn.hidden = true;
     plotPromptText.textContent =
-      mine && owner.id === mine.id
-        ? `[${owner.tag}] Cornerstone.`
-        : `City plot taken by [${owner.tag}].`;
+      mine && owner.guildTag === mine.tag
+        ? `[${owner.guildTag}] Cornerstone.`
+        : `City plot taken by [${owner.guildTag}].`;
   }
 
   function tryPlant(plotId: string) {
-    const p = localPlayer();
-    if (!p || p.hp <= 0) return;
-    const plot = CITY_PLOTS.find((row) => row.id === plotId);
-    if (!plot) {
-      note("There is no city plot there.");
-      return;
-    }
-    if (Math.hypot(plot.x - p.x, plot.z - p.z) > 3.2) {
-      note("Stand on the city plot.");
-      return;
-    }
-    const guild = guildOf(p.username);
-    if (!guild) {
-      note("You are not in a guild.");
-      return;
-    }
-    if (memberRank(p.username) !== "Leader") {
-      note("Only the Leader can plant a Cornerstone.");
-      return;
-    }
-    if (guild.cornerstone) {
-      note("Your guild already has a Cornerstone.");
-      return;
-    }
-    const taken = guildAtPlot(plot.id);
-    if (taken) {
-      note(`That plot is taken by [${taken.tag}].`);
-      return;
-    }
-    if (p.gold < CORNERSTONE_GOLD) {
-      note(`Not enough gold. A Cornerstone costs ${CORNERSTONE_GOLD} gold.`);
-      return;
-    }
-    p.gold -= CORNERSTONE_GOLD;
-    const result = plantCornerstone(p.username, plot.id);
-    if (!result.ok) {
-      p.gold += CORNERSTONE_GOLD;
-      note(result.reason);
-      return;
-    }
-    commitPurse();
-    note(`[${result.guild.tag}] plants a Cornerstone on the ${plot.zone} plot.`);
-    guildSig = "";
+    send({ op: "plantCornerstone", id: myId, plotId });
   }
 
   function tryRemove() {
-    const result = removeCornerstone(myName());
-    if (!result.ok) {
-      note(result.reason);
-      return;
-    }
-    note("The Cornerstone is gone. The plot is free. No gold is returned.");
-    guildSig = "";
+    send({ op: "removeCornerstone", id: myId });
   }
 
   function onPlotPrompt(e: Event) {
@@ -3927,12 +3892,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         dest = null;
         path = [];
         talkNpc = null;
-        const owner = guildAtPlot(plot.id);
-        const mine = guildOf(p.username);
-        if (owner && mine && owner.id === mine.id) {
-          if (memberRank(p.username) === "Leader") tryRemove();
+        const owner = claimedPlot(plot.id);
+        const mine = view().guild;
+        if (owner && mine && owner.guildTag === mine.tag) {
+          if (mine.rank === "Leader") tryRemove();
           else note("Only the Leader can remove the Cornerstone.");
-        } else if (owner) note(`City plot taken by [${owner.tag}].`);
+        } else if (owner) note(`City plot taken by [${owner.guildTag}].`);
         else tryPlant(plot.id);
       } else goTo(plot.x, plot.z, null);
       return;

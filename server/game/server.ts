@@ -8,7 +8,7 @@ import type { World } from "../../src/shared/sim/world";
 import { zoneAt } from "../../src/shared/sim/mask";
 import type { GameDb, StoredGuild } from "./db";
 import { applyIntent } from "./dispatch";
-import { createGuildBook, commitGuildAct, foundGuild } from "./guilds";
+import { createGuildBook, commitGuildAct, foundGuild, plantCornerstone, removeCornerstone } from "./guilds";
 import { joinInputFor, recordFromPlayer, validateCreate } from "./persist";
 import { seen } from "./replay";
 import { allowChat, CHAT_MAX } from "../../src/shared/sim/chat";
@@ -49,6 +49,8 @@ const KNOWN_OPS = new Set([
   "guildKick",
   "guildPromote",
   "guildDemote",
+  "plantCornerstone",
+  "removeCornerstone",
 ]);
 
 /** A well-formed intent envelope whose op is not in the protocol. Schema failures of real ops stay malformed. */
@@ -722,6 +724,17 @@ export function startServer(opts: {
         if (result.ok && parsed.data.intent.op === "guildAccept") void persist(conn, true);
         return;
       }
+      if (parsed.data.intent.op === "plantCornerstone" || parsed.data.intent.op === "removeCornerstone") {
+        const store = characters;
+        const write = store ? (guildId: string, plotId: string | null) => store.setPlot(guildId, plotId) : undefined;
+        const result =
+          parsed.data.intent.op === "plantCornerstone"
+            ? await plantCornerstone(authority.world, guilds, conn.playerId, parsed.data.intent.plotId, write)
+            : await removeCornerstone(authority.world, guilds, conn.playerId, write);
+        send(socket, { t: "ack", seq: parsed.data.seq, result });
+        if (result.ok && parsed.data.intent.op === "plantCornerstone") void persist(conn, true);
+        return;
+      }
       const result = applyIntent(authority.world, conn.playerId, parsed.data.intent, guilds);
       send(socket, { t: "ack", seq: parsed.data.seq, result });
       if (result.ok && (parsed.data.intent.op === "respawn" || parsed.data.intent.op === "buyCharter")) {
@@ -775,6 +788,7 @@ export function startServer(opts: {
             name: (id) => authority.world.players.get(id)?.username,
           }),
           pendingGuildInvite: guilds.pending(viewerId),
+          plots: guilds.plots(),
         },
       } satisfies ServerMsg);
       encoded.set(key, msg);

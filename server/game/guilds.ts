@@ -1,8 +1,8 @@
 import type { Intent } from "../../src/shared/net/protocol";
 import { nearestRegistrar } from "../../src/shared/sim/geo";
 import { GUILD_CHAT_KEEP } from "../../src/shared/sim/chat";
-import { CHARTER_GOLD, validateFoundGuild } from "../../src/shared/sim/guild";
-import type { ActionResult, GuildView, PendingGuildInvite } from "../../src/shared/sim/types";
+import { CHARTER_GOLD, CORNERSTONE_GOLD, plotById, PLOT_NEAR, validateFoundGuild } from "../../src/shared/sim/guild";
+import type { ActionResult, CityPlotClaim, GuildView, PendingGuildInvite } from "../../src/shared/sim/types";
 import type { World } from "../../src/shared/sim/world";
 import type { GuildDb, GuildWrite, MemberWrite, StoredGuild, StoredGuildChat } from "./db";
 
@@ -49,6 +49,8 @@ export interface GuildBook {
   stamp(given?: number): number;
   loadChat(rows: StoredGuildChat[]): void;
   pushChat(row: StoredGuildChat): void;
+  plots(): CityPlotClaim[];
+  assignPlot(guildId: string, plotId: string | null): void;
   plan(world: World, playerId: string, intent: Intent): GuildPlan;
   apply(changes: GuildChange[]): void;
 }
@@ -185,6 +187,22 @@ export function createGuildBook(): GuildBook {
       const list = lines.get(row.guildId) ?? [];
       list.push({ from: row.from, text: row.text, at: row.at });
       lines.set(row.guildId, list.slice(-GUILD_CHAT_KEEP));
+    },
+    plots() {
+      const seen = new Set<string>();
+      const out: CityPlotClaim[] = [];
+      for (const row of byUser.values()) {
+        if (!row.plotId || seen.has(row.id)) continue;
+        seen.add(row.id);
+        out.push({ plotId: row.plotId, guildTag: row.tag, crest: row.crest });
+      }
+      out.sort((a, b) => a.plotId.localeCompare(b.plotId));
+      return out;
+    },
+    assignPlot(guildId, plotId) {
+      for (const row of byUser.values()) {
+        if (row.id === guildId) row.plotId = plotId || undefined;
+      }
     },
     plan(world, playerId, intent) {
       const p = world.players.get(playerId);
@@ -421,6 +439,73 @@ export function buyCharter(world: World, playerId: string, book?: GuildBook): Ac
   p.gold -= CHARTER_GOLD;
   p.charter = true;
   return { ok: true, reason: "The Registrar seals your charter." };
+}
+
+type PlotWrite = (guildId: string, plotId: string | null) => Promise<"ok" | "taken" | "has">;
+
+function plotActor(world: World, book: GuildBook, playerId: string): { ok: false; reason: string } | { ok: true; guild: GuildView; player: NonNullable<ReturnType<World["players"]["get"]>> } {
+  const player = world.players.get(playerId);
+  if (!player || player.hp <= 0) return { ok: false, reason: "You cannot do that." };
+  const guild = book.view(playerId);
+  if (!guild) return { ok: false, reason: "You are not in a guild." };
+  return { ok: true, guild, player };
+}
+
+export async function plantCornerstone(
+  world: World,
+  book: GuildBook,
+  playerId: string,
+  plotId: string,
+  write?: PlotWrite,
+): Promise<ActionResult> {
+  const plot = plotById(plotId);
+  if (!plot) return { ok: false, reason: "There is no city plot there." };
+  const actor = plotActor(world, book, playerId);
+  if (!actor.ok) return actor;
+  if (actor.guild.rank !== "Leader") return { ok: false, reason: "Only the Leader can plant a Cornerstone." };
+  if (book.plots().some((row) => row.guildTag === actor.guild.tag)) {
+    return { ok: false, reason: "Your guild already has a Cornerstone." };
+  }
+  const taken = book.plots().find((row) => row.plotId === plot.id);
+  if (taken) return { ok: false, reason: `That plot is taken by [${taken.guildTag}].` };
+  if (Math.hypot(plot.x - actor.player.x, plot.z - actor.player.z) > PLOT_NEAR) {
+    return { ok: false, reason: "Stand on the city plot." };
+  }
+  if (actor.player.gold < CORNERSTONE_GOLD) {
+    return { ok: false, reason: `Not enough gold. A Cornerstone costs ${CORNERSTONE_GOLD} gold.` };
+  }
+  if (write) {
+    const wrote = await write(actor.guild.id, plot.id);
+    if (wrote === "has") return { ok: false, reason: "Your guild already has a Cornerstone." };
+    if (wrote !== "ok") {
+      const owner = book.plots().find((row) => row.plotId === plot.id);
+      return { ok: false, reason: owner ? `That plot is taken by [${owner.guildTag}].` : "That plot is taken." };
+    }
+  }
+  if (actor.player.gold < CORNERSTONE_GOLD) {
+    if (write) await write(actor.guild.id, null);
+    return { ok: false, reason: `Not enough gold. A Cornerstone costs ${CORNERSTONE_GOLD} gold.` };
+  }
+  book.assignPlot(actor.guild.id, plot.id);
+  actor.player.gold -= CORNERSTONE_GOLD;
+  return { ok: true, reason: `[${actor.guild.tag}] plants a Cornerstone on the ${plot.zone} plot.` };
+}
+
+export async function removeCornerstone(
+  world: World,
+  book: GuildBook,
+  playerId: string,
+  write?: PlotWrite,
+): Promise<ActionResult> {
+  const actor = plotActor(world, book, playerId);
+  if (!actor.ok) return actor;
+  if (actor.guild.rank !== "Leader") return { ok: false, reason: "Only the Leader can remove the Cornerstone." };
+  if (!book.plots().some((row) => row.guildTag === actor.guild.tag)) {
+    return { ok: false, reason: "Your guild has no Cornerstone." };
+  }
+  if (write) await write(actor.guild.id, null);
+  book.assignPlot(actor.guild.id, null);
+  return { ok: true, reason: "The Cornerstone is gone. The plot is free. No gold is returned." };
 }
 
 export function prepareFound(

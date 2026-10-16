@@ -82,6 +82,7 @@ export function toServerIntent(intent: {
   guildId?: string;
   userName?: string;
   channel?: string;
+  plotId?: string;
 }): Record<string, unknown> | null {
   switch (intent.op) {
     case "move":
@@ -168,6 +169,11 @@ export function toServerIntent(intent: {
     case "guildDemote":
       if (!intent.userName) return null;
       return { op: "guildDemote", userName: intent.userName };
+    case "plantCornerstone":
+      if (!intent.plotId) return null;
+      return { op: "plantCornerstone", plotId: intent.plotId };
+    case "removeCornerstone":
+      return { op: "removeCornerstone" };
     default:
       return null;
   }

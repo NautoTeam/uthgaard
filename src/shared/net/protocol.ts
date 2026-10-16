@@ -197,6 +197,19 @@ const guildDemote = z
   })
   .strict();
 
+const plantCornerstone = z
+  .object({
+    op: z.literal("plantCornerstone"),
+    plotId: z.string().min(1).max(40),
+  })
+  .strict();
+
+const removeCornerstone = z
+  .object({
+    op: z.literal("removeCornerstone"),
+  })
+  .strict();
+
 /** Client intents. No player id — the socket is the identity. Debug ops are absent. */
 export const IntentSchema = z.discriminatedUnion("op", [
   move,
@@ -226,6 +239,8 @@ export const IntentSchema = z.discriminatedUnion("op", [
   guildKick,
   guildPromote,
   guildDemote,
+  plantCornerstone,
+  removeCornerstone,
 ]);
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -401,6 +416,14 @@ const pendingGuildInviteView = z
   })
   .strict();
 
+const cityPlotView = z
+  .object({
+    plotId: z.string(),
+    guildTag: z.string().max(4),
+    crest: z.string(),
+  })
+  .strict();
+
 export const PublicStateSchema = z
   .object({
     players: z.array(playerState),
@@ -412,6 +435,7 @@ export const PublicStateSchema = z
     charter: z.boolean().optional(),
     guild: guildView.nullable().optional(),
     pendingGuildInvite: pendingGuildInviteView.nullable().optional(),
+    plots: z.array(cityPlotView).max(32).optional(),
   })
   .strict();
 

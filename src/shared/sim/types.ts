@@ -102,7 +102,12 @@ export interface PendingInvite {
   fromName: string;
 }
 
-/** The viewer's own guild. Absent from the shared world snapshot. */
+/** A claimed city plot. Sent to every player, not only the guild. */
+export interface CityPlotClaim {
+  plotId: string;
+  guildTag: string;
+  crest: string;
+}
 export interface GuildMemberView {
   name: string;
   rank: "Leader" | "Officer" | "Member";
@@ -147,6 +152,8 @@ export interface PublicState {
   charter?: boolean;
   guild?: GuildView | null;
   pendingGuildInvite?: PendingGuildInvite | null;
+  /** Claimed city plots. Present on every snap. */
+  plots?: CityPlotClaim[];
 }
 
 export interface ActionResult {
