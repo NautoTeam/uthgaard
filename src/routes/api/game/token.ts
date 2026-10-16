@@ -12,7 +12,11 @@ export const Route = createFileRoute("/api/game/token")({
         }
         const session = await auth.api.getSession({ headers: request.headers });
         const user = session?.user?.id
-          ? { id: session.user.id, name: session.user.name ?? "" }
+          ? {
+              id: session.user.id,
+              name: session.user.name ?? "",
+              emailVerified: session.user.emailVerified === true,
+            }
           : null;
         const secret = process.env.GAME_TOKEN_SECRET?.trim() || null;
         const result = await issueGameToken(user, secret);

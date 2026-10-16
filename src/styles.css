@@ -143,6 +143,23 @@ body {
   color: #e7b4a0;
 }
 
+.account-rule {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  color: #a89880;
+}
+
+#login .account-panel .account-switch {
+  margin-top: 6px;
+  background: transparent;
+  border-color: transparent;
+  color: #d7c28a;
+  font-size: 13px;
+  padding: 4px;
+}
+
 #login label {
   display: block;
   margin: 8px;

@@ -46,10 +46,11 @@ export async function verifyGameToken(
 
 /** What `POST /api/game/token` returns after the Better Auth session check. */
 export async function issueGameToken(
-  user: { id: string; name: string } | null,
+  user: { id: string; name: string; emailVerified?: boolean } | null,
   secret: string | null,
 ): Promise<{ status: number; body: { token: string } | { error: string } }> {
   if (!user?.id) return { status: 401, body: { error: "Unauthorized" } };
+  if (user.emailVerified === false) return { status: 403, body: { error: "Email not verified" } };
   if (!secret) return { status: 503, body: { error: "Game token secret is not set" } };
   return { status: 200, body: { token: await signGameToken(secret, user) } };
 }
