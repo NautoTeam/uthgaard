@@ -8,7 +8,6 @@ import {
   cityAt,
   nearestWayfarer,
   resolveMove,
-  tileFill,
   TREES,
   blocked,
   clearLine,
@@ -29,7 +28,6 @@ import {
   LATER_ISLANDS,
   LINKS,
   TERRAIN_PALETTE,
-  WORLD_CITIES,
   ZONES,
   gateHop,
   insideIsland,
@@ -62,6 +60,7 @@ import {
   screenToWorld as isoScreenToWorld,
   worldToScreen as isoWorldToScreen,
 } from "./iso";
+import { createGround } from "./ground";
 import { MAX_SPEED, createWorld, type JoinInput } from "../shared/sim/world";
 import { SERVER, toServerIntent } from "./net";
 import { connectRemote, interpolateXZ, snapAlpha, worldMayStart, type LinkGate, type RemoteHandle } from "./remote";
@@ -559,6 +558,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let myGroup: string | null = null;
   let pendingInvite: { fromId: string; fromName: string; group: string } | null = null;
   const cam = { x: 0, z: 0 };
+  const ground = createGround();
   {
     const spawned = localPlayer();
     if (spawned) {
@@ -955,28 +955,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function screenToWorld(sx: number, sy: number) {
     return isoScreenToWorld(sx, sy, cam.x, cam.z, viewW, viewH);
-  }
-
-  function tileColor(x: number, z: number) {
-    if (x * x + z * z <= 156 * 156) return tileFill(x, z);
-    const name = terrainAt(x, z);
-    if (name === "plaza") {
-      let best = WORLD_CITIES[0];
-      let bestD = 1e9;
-      for (const city of WORLD_CITIES) {
-        const d = Math.hypot(city.x - x, city.z - z);
-        if (d < bestD) {
-          best = city;
-          bestD = d;
-        }
-      }
-      return (x * 3 + z) % 5 === 0 ? best.stoneAlt : best.stone;
-    }
-    if (name === "road") return (x + z) & 1 ? "#7a6848" : "#6a563c";
-    if (name === "camp") return "#5a4032";
-    if (name === "lake") return (x + z) & 1 ? "#1d5c68" : "#184e58";
-    const pair = TERRAIN_PALETTE[name] ?? TERRAIN_PALETTE.deep;
-    return (x + z) & 1 ? pair[1] : pair[0];
   }
 
   function drawDiamond(x: number, z: number, fill: string) {
@@ -2325,13 +2303,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       minZ = Math.min(minZ, c.z);
       maxZ = Math.max(maxZ, c.z);
     }
-    const x0 = Math.max(BOUNDS.minX, Math.floor(minX) - 1);
-    const x1 = Math.min(BOUNDS.maxX, Math.ceil(maxX) + 1);
-    const z0 = Math.max(BOUNDS.minZ, Math.floor(minZ) - 1);
-    const z1 = Math.min(BOUNDS.maxZ, Math.ceil(maxZ) + 1);
-    for (let x = x0; x <= x1; x++) {
-      for (let z = z0; z <= z1; z++) drawDiamond(x, z, tileColor(x, z));
-    }
+    // Baked chunks. Picking still uses the diamond in iso.ts, not this image.
+    ground.draw(ctx, { camX: cam.x, camZ: cam.z, viewW, viewH, minX, maxX, minZ, maxZ });
     const state = view();
     for (const m of state.monsters) puffDamage(m.id, m.x, m.z, m.hp, "#ffe08a");
     for (const pl of state.players) puffDamage(pl.id, pl.x, pl.z, pl.hp, "#ff6b5a");
