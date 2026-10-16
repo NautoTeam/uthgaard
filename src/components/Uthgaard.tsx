@@ -216,6 +216,10 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
       setPassword("");
       setConfirm("");
       if (mode === "up") {
+        if (result.data?.user?.emailVerified === true) {
+          await authClient.getSession();
+          return;
+        }
         setPendingEmail(mail);
         setAuthMode("verify");
         return;

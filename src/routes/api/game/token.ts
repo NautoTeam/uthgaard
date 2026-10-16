@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { sessionEmailVerifiedForToken } from "@/lib/auth/email-password";
 import { auth, authConfigured } from "@/lib/auth/server";
 import { issueGameToken } from "@/shared/net/token";
 
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/api/game/token")({
           ? {
               id: session.user.id,
               name: session.user.name ?? "",
-              emailVerified: session.user.emailVerified === true,
+              emailVerified: sessionEmailVerifiedForToken(session.user.emailVerified === true),
             }
           : null;
         const secret = process.env.GAME_TOKEN_SECRET?.trim() || null;

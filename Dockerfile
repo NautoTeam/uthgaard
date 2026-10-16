@@ -7,7 +7,6 @@ COPY package.json package-lock.json* ./
 RUN npm ci --include=dev --ignore-scripts --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src/shared ./src/shared
-COPY src/server ./src/server
 COPY server ./server
 COPY migrations ./migrations
 EXPOSE 2567
