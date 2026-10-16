@@ -96,6 +96,9 @@ export interface IsleProfile {
   username: string;
   race: Race;
   baseClass: BaseClass;
+  slot: number;
+  /** True when this hello should create the hero in `slot`. */
+  create: boolean;
   /** Bounce name_taken / bad_create back to the creation screen. */
   onCreateError?: (reason: string) => void;
   /** 4401: the token is gone. Leave the world and show the sign-in screen. */
@@ -4986,7 +4989,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     remoteSession?.close();
     remoteSession = connectRemote({
       url: SERVER,
-      choice: { username: profile.username, race: profile.race, baseClass: profile.baseClass },
+      choice: {
+        username: profile.username,
+        race: profile.race,
+        baseClass: profile.baseClass,
+        slot: profile.slot,
+        create: profile.create,
+      },
       onSnap: (state, online) => {
         if (typeof online === "number" && online >= 0) playersOnline = online;
         takeSnap(state);

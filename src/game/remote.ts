@@ -1,5 +1,5 @@
 import type { PublicState } from "../shared/sim/types";
-import { gameHello, type HelloChoice } from "./net";
+import { SERVER, gameHello, type HelloChoice } from "./net";
 
 export const RENDER_DELAY_MS = 100;
 
@@ -164,6 +164,8 @@ function messageText(data: unknown): string | null {
 
 function joinFailure(reason: string): { why: "signed-out" | "unreachable" | "join"; detail: string } {
   if (reason === "name_taken") return { why: "join", detail: "That name is taken." };
+  if (reason === "slot_taken") return { why: "join", detail: "That character slot is taken." };
+  if (reason === "bad_slot") return { why: "join", detail: "Pick a character slot." };
   if (reason === "bad_create") return { why: "join", detail: "That hero cannot be created." };
   if (reason === "join_failed") return { why: "join", detail: "The hero could not be saved." };
   if (reason === "bad token") return { why: "signed-out", detail: "The game token was rejected." };
@@ -176,10 +178,66 @@ function defaultOpen(url: string): SocketLike {
   return new WebSocket(url) as unknown as SocketLike;
 }
 
+function gameHttp(wsUrl: string) {
+  return wsUrl.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:").replace(/\/$/, "");
+}
+
+export interface CharacterSlotView {
+  slot: number;
+  name: string;
+  race: string;
+  baseClass: string;
+  prestigeClass: string;
+  level: number;
+}
+
+async function authedGame(path: string, method: "GET" | "DELETE") {
+  if (!SERVER) return { ok: false as const, status: 0, reason: "The game server isn't configured." };
+  const tok = await defaultFetchToken();
+  if (!tok.ok || !tok.token) return { ok: false as const, status: tok.status, reason: tokenReason(tok) };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(`${gameHttp(SERVER)}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${tok.token}` },
+      signal: ctrl.signal,
+    });
+    let body: { slots?: Array<CharacterSlotView | null>; error?: string } = {};
+    try {
+      body = (await res.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    if (!res.ok) return { ok: false as const, status: res.status, reason: body.error || "The character list failed." };
+    return { ok: true as const, status: res.status, slots: body.slots };
+  } catch {
+    return { ok: false as const, status: 0, reason: "The game server can't be reached." };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Three frames. Empty slots are null. */
+export async function fetchCharacterSlots(): Promise<
+  { ok: true; slots: Array<CharacterSlotView | null> } | { ok: false; reason: string }
+> {
+  const result = await authedGame("/characters", "GET");
+  if (!result.ok) return { ok: false, reason: result.reason };
+  const slots = [0, 1, 2].map((slot) => result.slots?.find((row) => row && row.slot === slot) ?? null);
+  return { ok: true, slots };
+}
+
+export async function deleteCharacterSlot(slot: number): Promise<{ ok: boolean; reason?: string }> {
+  const result = await authedGame(`/characters?slot=${slot}`, "DELETE");
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true };
+}
+
 /**
  * One signed-in hero on the game server.
- * The first hello carries only the token. `need_create` retries with the
- * creation-screen choice. There is no local-save import.
+ * Play sends the slot. Create sends hello.create for that slot.
+ * There is no local-save import.
  */
 export function connectRemote(opts: {
   url: string;
@@ -288,6 +346,10 @@ export function connectRemote(opts: {
         if (msg.t !== "error") return;
         const reason = msg.reason ?? "";
         if (reason === "need_create") {
+          if (!opts.choice.create) {
+            failJoin("That slot is empty.");
+            return;
+          }
           if (createSent) {
             failJoin("The server did not accept that hero.");
             return;
@@ -304,7 +366,8 @@ export function connectRemote(opts: {
           sock.close(1000);
           return;
         }
-        sock.send(JSON.stringify(gameHello(token)));
+        if (opts.choice.create) sendCreate();
+        else sock.send(JSON.stringify(gameHello(token, { ...opts.choice, create: false })));
       };
       sock.onmessage = (ev) => {
         const data = ev.data;

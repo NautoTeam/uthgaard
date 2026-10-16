@@ -10,12 +10,28 @@ export interface LoadedCharacter {
   rev: number;
 }
 
+export interface CharacterSlot {
+  slot: number;
+  name: string;
+  race: string;
+  baseClass: string;
+  prestigeClass: string;
+  level: number;
+}
+
 export interface CharacterDb {
-  load(userId: string): Promise<LoadedCharacter | null>;
-  /** Inserts rev 1. `"name_taken"` on unique violation (23505). */
-  create(userId: string, name: string, save: CharacterRecord): Promise<number | "name_taken">;
+  load(userId: string, slot?: number): Promise<LoadedCharacter | null>;
+  list(userId: string): Promise<CharacterSlot[]>;
+  /** Inserts rev 1. `"name_taken"` / `"slot_taken"` / `"bad_slot"`. */
+  create(
+    userId: string,
+    name: string,
+    save: CharacterRecord,
+    slot?: number,
+  ): Promise<number | "name_taken" | "slot_taken" | "bad_slot">;
   /** Next rev, or null when `expectedRev` is stale. Does not overwrite. */
-  save(userId: string, save: CharacterRecord, expectedRev: number): Promise<number | null>;
+  save(userId: string, save: CharacterRecord, expectedRev: number, slot?: number): Promise<number | null>;
+  remove(userId: string, slot: number): Promise<void>;
 }
 
 export interface GraveDb {
@@ -30,17 +46,39 @@ type Query = (text: string, params?: unknown[]) => Promise<{ rows: Array<Record<
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "../../migrations/game");
 
-const CREATE_SQL = `insert into characters (user_id, name, save, rev)
-values ($1, $2, $3::jsonb, 1)`;
+const CREATE_SQL = `insert into characters (user_id, name, save, rev, slot)
+values ($1, $2, $3::jsonb, 1, $4)`;
 
 const SAVE_SQL = `update characters
 set save = $2::jsonb, name = $4, rev = rev + 1, updated_at = now()
-where user_id = $1 and rev = $3
+where user_id = $1 and rev = $3 and slot = $5
 returning rev`;
 
 function pgCode(err: unknown): string {
   if (err && typeof err === "object" && "code" in err) return String((err as { code: unknown }).code);
   return "";
+}
+
+function pgConstraint(err: unknown): string {
+  if (err && typeof err === "object" && "constraint" in err) return String((err as { constraint: unknown }).constraint);
+  return "";
+}
+
+function slotOf(slot: number | undefined): number | "bad_slot" {
+  const n = slot ?? 0;
+  if (!Number.isInteger(n) || n < 0 || n > 2) return "bad_slot";
+  return n;
+}
+
+function summary(slot: number, name: string, save: CharacterRecord): CharacterSlot {
+  return {
+    slot,
+    name: save.username || name,
+    race: save.race,
+    baseClass: save.baseClass,
+    prestigeClass: save.prestigeClass || "",
+    level: save.level,
+  };
 }
 
 function asSave(raw: unknown): CharacterRecord {
@@ -83,34 +121,56 @@ export async function applyGameMigrations(query: Query): Promise<void> {
 }
 
 export function memoryCharacters(): GameDb {
-  const rows = new Map<string, { save: CharacterRecord; rev: number; name: string }>();
+  const rows = new Map<string, { save: CharacterRecord; rev: number; name: string; slot: number; userId: string }>();
   const graves = new Map<string, GraveState>();
-  const nameTaken = (name: string, exceptUser?: string) => {
+  const keyOf = (userId: string, slot: number) => `${userId}\0${slot}`;
+  const nameTaken = (name: string, except?: { userId: string; slot: number }) => {
     const key = name.trim().toLowerCase();
-    for (const [userId, row] of rows) {
-      if (userId !== exceptUser && row.name.trim().toLowerCase() === key) return true;
+    for (const row of rows.values()) {
+      if (except && row.userId === except.userId && row.slot === except.slot) continue;
+      if (row.name.trim().toLowerCase() === key) return true;
     }
     return false;
   };
   return {
-    async load(userId) {
-      const row = rows.get(userId);
+    async load(userId, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return null;
+      const row = rows.get(keyOf(userId, n));
       return row ? { save: structuredClone(row.save), rev: row.rev } : null;
     },
-    async create(userId, name, save) {
-      if (rows.has(userId) || nameTaken(name)) return "name_taken";
-      rows.set(userId, { save: structuredClone(save), rev: 1, name });
+    async list(userId) {
+      return [...rows.values()]
+        .filter((row) => row.userId === userId)
+        .sort((a, b) => a.slot - b.slot)
+        .map((row) => summary(row.slot, row.name, row.save));
+    },
+    async create(userId, name, save, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return "bad_slot";
+      if (rows.has(keyOf(userId, n))) return "slot_taken";
+      const owned = [...rows.values()].filter((row) => row.userId === userId).length;
+      if (owned >= 3) return "slot_taken";
+      if (nameTaken(name)) return "name_taken";
+      rows.set(keyOf(userId, n), { save: structuredClone(save), rev: 1, name, slot: n, userId });
       return 1;
     },
-    async save(userId, save, expectedRev) {
-      const row = rows.get(userId);
+    async save(userId, save, expectedRev, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return null;
+      const row = rows.get(keyOf(userId, n));
       if (!row || row.rev !== expectedRev) return null;
       const name = save.username || row.name;
-      if (nameTaken(name, userId)) return null;
+      if (nameTaken(name, { userId, slot: n })) return null;
       row.rev += 1;
       row.save = structuredClone(save);
       row.name = name;
       return row.rev;
+    },
+    async remove(userId, slot) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return;
+      rows.delete(keyOf(userId, n));
     },
     async listGraves() {
       return [...graves.values()].map((g) => ({ ...g, items: { ...g.items } }));
@@ -126,30 +186,52 @@ export function memoryCharacters(): GameDb {
 
 export function characterStore(query: Query): GameDb {
   return {
-    async load(userId) {
-      const result = await query("select save, rev from characters where user_id = $1", [userId]);
+    async load(userId, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return null;
+      const result = await query("select save, rev from characters where user_id = $1 and slot = $2", [userId, n]);
       const row = result.rows[0];
       if (!row || row.save == null) return null;
       return { save: asSave(row.save), rev: Number(row.rev ?? 0) };
     },
-    async create(userId, name, save) {
+    async list(userId) {
+      const result = await query("select slot, name, save from characters where user_id = $1 order by slot", [userId]);
+      return result.rows.map((row) => summary(Number(row.slot), String(row.name ?? ""), asSave(row.save)));
+    },
+    async create(userId, name, save, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return "bad_slot";
+      const taken = await query("select 1 from characters where user_id = $1 and slot = $2", [userId, n]);
+      if (taken.rows.length) return "slot_taken";
+      const owned = await query("select count(*)::int as n from characters where user_id = $1", [userId]);
+      if (Number(owned.rows[0]?.n ?? 0) >= 3) return "slot_taken";
       try {
-        await query(CREATE_SQL, [userId, name, JSON.stringify(save)]);
+        await query(CREATE_SQL, [userId, name, JSON.stringify(save), n]);
         return 1;
       } catch (err) {
-        if (pgCode(err) === "23505") return "name_taken";
+        if (pgCode(err) === "23514") return "bad_slot";
+        if (pgCode(err) === "23505") {
+          return pgConstraint(err).includes("name") ? "name_taken" : "slot_taken";
+        }
         throw err;
       }
     },
-    async save(userId, save, expectedRev) {
+    async save(userId, save, expectedRev, slot = 0) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return null;
       try {
-        const result = await query(SAVE_SQL, [userId, JSON.stringify(save), expectedRev, save.username]);
+        const result = await query(SAVE_SQL, [userId, JSON.stringify(save), expectedRev, save.username, n]);
         const rev = result.rows[0]?.rev;
         return rev == null ? null : Number(rev);
       } catch (err) {
         if (pgCode(err) === "23505") return null;
         throw err;
       }
+    },
+    async remove(userId, slot) {
+      const n = slotOf(slot);
+      if (n === "bad_slot") return;
+      await query("delete from characters where user_id = $1 and slot = $2", [userId, n]);
     },
     async listGraves() {
       const result = await query("select data from graves");

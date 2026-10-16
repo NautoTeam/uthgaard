@@ -46,7 +46,7 @@ body {
   background: radial-gradient(ellipse at center, #1c2a22 0%, #0c1014 70%);
   padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: auto;
   touch-action: auto;
 }
 
@@ -56,8 +56,76 @@ body {
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-height: 68dvh;
+  max-height: none;
   overflow-y: auto;
+}
+
+.slot-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  width: min(760px, 96vw);
+  margin-top: 8px;
+}
+
+#login .slot-frame,
+#login button.slot-frame {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  background: #141812;
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+#login .slot-frame img {
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+#login .slot-frame b {
+  color: #fff6d8;
+  font-size: 16px;
+}
+
+#login .slot-frame span {
+  font-size: 13px;
+  color: #c8b88a;
+  line-height: 1.2;
+}
+
+#login .slot-frame button {
+  width: 100%;
+  margin: 0;
+  font-size: 15px;
+  padding: 8px;
+}
+
+#login .slot-delete {
+  background: #3a221c;
+}
+
+#login button.slot-frame.slot-empty {
+  font-size: 72px;
+  line-height: 1;
+  color: #e6c56a;
+  cursor: pointer;
+  padding: 0;
+}
+
+#login button.slot-frame.slot-empty.on {
+  border-color: #f0e2b0;
+  color: #fff6d8;
 }
 
 #login h1 {

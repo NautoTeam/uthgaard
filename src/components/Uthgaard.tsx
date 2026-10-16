@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
-import { deleteSave, listSaves, type CharacterSave } from "@/client/localSave";
 import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClass, type Race } from "@/game/types";
+import { deleteCharacterSlot, fetchCharacterSlots, type CharacterSlotView } from "@/game/remote";
 import { authClient, signOut } from "@/lib/auth/client";
 import { PASSWORD_RULE, VERIFY_RETURN_URL, passwordProblem } from "@/lib/auth/account-policy";
 
@@ -29,8 +29,19 @@ export function Uthgaard() {
   return <Isle profile={run} />;
 }
 
+function heroSprite(race: string) {
+  const key = race.toLowerCase();
+  if (key === "human") return "/sprites/anim/human-base-idle-0.png";
+  if (key === "minotaur") return "/sprites/anim/minotaur-base-idle-0.png";
+  if (key === "elf") return "/sprites/anim/elf-walk-0.png";
+  if (key === "marshwarden") return "/sprites/anim/marshwarden-walk-0.png";
+  return `/sprites/${key}.png`;
+}
+
 function createErrorText(reason: string) {
   if (reason === "name_taken") return "That name is taken.";
+  if (reason === "slot_taken") return "That character slot is taken.";
+  if (reason === "bad_slot") return "Pick a character slot.";
   if (reason === "bad_create") return "That hero cannot be created.";
   return reason;
 }
@@ -39,7 +50,10 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const [name, setName] = useState("Hero");
   const [race, setRace] = useState<Race>("Human");
   const [path, setPath] = useState<BaseClass>("Fighter");
-  const [saves, setSaves] = useState<CharacterSave[]>([]);
+  const [creating, setCreating] = useState<number | null>(null);
+  const [confirmSlot, setConfirmSlot] = useState<number | null>(null);
+  const [slots, setSlots] = useState<Array<CharacterSlotView | null>>([null, null, null]);
+  const [slotsNote, setSlotsNote] = useState("");
   const [block, setBlock] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,8 +71,21 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const showingVerify = !verified && Boolean(email || authMode === "verify");
 
   useEffect(() => {
-    setSaves(listSaves());
-  }, []);
+    if (!verified) return;
+    let gone = false;
+    setSlotsNote("");
+    void fetchCharacterSlots().then((result) => {
+      if (gone) return;
+      if (!result.ok) {
+        setSlotsNote(result.reason);
+        return;
+      }
+      setSlots(result.slots);
+    });
+    return () => {
+      gone = true;
+    };
+  }, [verified, error]);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -70,7 +97,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
     if (verified) setAuthMode("in");
   }, [verified]);
 
-  async function enter(next?: CharacterSave) {
+  async function enter(next: { username: string; race: Race; baseClass: BaseClass; slot: number; create: boolean }) {
     let signedIn = email;
     let emailVerified = verified;
     try {
@@ -92,11 +119,33 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
       setAuthError("");
       return;
     }
-    onEnter({
-      username: (next?.username ?? name).trim().slice(0, 16) || "Hero",
-      race: next?.race ?? race,
-      baseClass: next?.baseClass ?? path,
-    });
+    onEnter(next);
+  }
+
+  async function refreshSlots() {
+    const result = await fetchCharacterSlots();
+    if (!result.ok) {
+      setSlotsNote(result.reason);
+      return;
+    }
+    setSlotsNote("");
+    setSlots(result.slots);
+  }
+
+  async function removeSlot(slot: number) {
+    setBusy(true);
+    setSlotsNote("");
+    try {
+      const result = await deleteCharacterSlot(slot);
+      if (!result.ok) {
+        setSlotsNote(result.reason || "Could not delete that hero.");
+        return;
+      }
+      setConfirmSlot(null);
+      await refreshSlots();
+    } finally {
+      setBusy(false);
+    }
   }
 
   function showAuthError(error: { message?: string; code?: string } | null | undefined) {
@@ -225,12 +274,19 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
       id="login"
       onSubmit={(e) => {
         e.preventDefault();
+        if (creating == null) return;
         if (!classAllowed(race, path)) {
           setBlock(classDenied(race, path));
           return;
         }
         setBlock("");
-        void enter();
+        void enter({
+          username: name.trim().slice(0, 16) || "Hero",
+          race,
+          baseClass: path,
+          slot: creating,
+          create: true,
+        });
       }}
     >
       <div className="login-create">
@@ -352,85 +408,121 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
         )}
         {authError && <p className="account-reason">{authError}</p>}
       </div>
-      <label>
-        Name
-        <input id="username" value={name} maxLength={16} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label>
-        Race
-        <select
-          id="race"
-          value={race}
-          onChange={(e) => {
-            const next = e.target.value as Race;
-            setRace(next);
-            setBlock(classAllowed(next, path) ? "" : classDenied(next, path));
-          }}
-        >
-          {CREATABLE_RACES.map((r) => (
-            <option key={r}>{r}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Path
-        <select
-          id="baseClass"
-          value={path}
-          onChange={(e) => {
-            const next = e.target.value as BaseClass;
-            setPath(next);
-            setBlock(classAllowed(race, next) ? "" : classDenied(race, next));
-          }}
-        >
-          {BASE_CLASSES.map((c) => {
-            const reason = classDenied(race, c);
-            return (
-              <option key={c} value={c} disabled={!!reason}>
-                {reason ? `${c} — closed` : c}
-              </option>
-            );
-          })}
-        </select>
-      </label>
-      {(locked || block) && <p className="path-block">{block || classDenied(race, path)}</p>}
-      {error && (
-        <p className="path-block" id="createError">
-          {error}
-        </p>
+      {verified && (
+        <>
+          <div className="slot-row">
+            {slots.map((hero, slot) =>
+              hero ? (
+                <div className="slot-frame" key={slot}>
+                  <img src={heroSprite(hero.race)} alt="" />
+                  <b>{hero.name}</b>
+                  <span>
+                    {hero.race} {hero.prestigeClass || hero.baseClass}
+                  </span>
+                  <span>Lv {hero.level}</span>
+                  <button
+                    type="button"
+                    disabled={busy || isPending}
+                    onClick={() =>
+                      void enter({
+                        username: hero.name,
+                        race: hero.race as Race,
+                        baseClass: hero.baseClass as BaseClass,
+                        slot,
+                        create: false,
+                      })
+                    }
+                  >
+                    Play
+                  </button>
+                  {confirmSlot === slot ? (
+                    <button type="button" className="slot-delete" disabled={busy} onClick={() => void removeSlot(slot)}>
+                      Confirm delete
+                    </button>
+                  ) : (
+                    <button type="button" className="slot-delete" disabled={busy} onClick={() => setConfirmSlot(slot)}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <button
+                  key={slot}
+                  type="button"
+                  className={`slot-frame slot-empty${creating === slot ? " on" : ""}`}
+                  aria-label={`Create a hero in slot ${slot + 1}`}
+                  onClick={() => {
+                    setCreating(slot);
+                    setConfirmSlot(null);
+                    setBlock("");
+                  }}
+                >
+                  +
+                </button>
+              ),
+            )}
+          </div>
+          {slotsNote && <p className="path-block">{slotsNote}</p>}
+          {creating != null && (
+            <>
+              <label>
+                Name
+                <input id="username" value={name} maxLength={16} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <label>
+                Race
+                <select
+                  id="race"
+                  value={race}
+                  onChange={(e) => {
+                    const next = e.target.value as Race;
+                    setRace(next);
+                    setBlock(classAllowed(next, path) ? "" : classDenied(next, path));
+                  }}
+                >
+                  {CREATABLE_RACES.map((r) => (
+                    <option key={r}>{r}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Path
+                <select
+                  id="baseClass"
+                  value={path}
+                  onChange={(e) => {
+                    const next = e.target.value as BaseClass;
+                    setPath(next);
+                    setBlock(classAllowed(race, next) ? "" : classDenied(race, next));
+                  }}
+                >
+                  {BASE_CLASSES.map((c) => {
+                    const reason = classDenied(race, c);
+                    return (
+                      <option key={c} value={c} disabled={!!reason}>
+                        {reason ? `${c} — closed` : c}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              {(locked || block) && <p className="path-block">{block || classDenied(race, path)}</p>}
+              {error && (
+                <p className="path-block" id="createError">
+                  {error}
+                </p>
+              )}
+              <button id="joinBtn" type="submit" disabled={locked || isPending}>
+                Create hero
+              </button>
+              <button type="button" className="account-switch" onClick={() => setCreating(null)}>
+                Cancel
+              </button>
+            </>
+          )}
+        </>
       )}
-      <button id="joinBtn" type="submit" disabled={locked || !verified || isPending}>
-        Enter the Village
-      </button>
-      <p className="hint">
-        Click a tile to walk. W moves up the screen, S down, A left, and D right.
-        <span className="touch-only"> Drag the stick to walk.</span>
-      </p>
       </div>
-      {saves.length > 0 && (
-        <div className="saves">
-          {saves.map((s) => (
-            <div className="save-row" key={s.username}>
-              <button type="button" className="save-continue" disabled={!verified || isPending} onClick={() => enter(s)}>
-                Continue
-                <small>
-                  {s.username} · {s.race} {s.prestigeClass || s.baseClass} · Lv {s.level}
-                </small>
-              </button>
-              <button
-                type="button"
-                className="save-delete"
-                onClick={() => {
-                  deleteSave(s.username);
-                  setSaves(listSaves());
-                }}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
     </form>
   );
 }

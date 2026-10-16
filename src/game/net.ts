@@ -5,15 +5,20 @@ const metaEnv = (import.meta as { env?: { VITE_GAME_SERVER_URL?: string } }).env
 /** WebSocket URL of the authoritative game server. Empty means local play. */
 export const SERVER = String(metaEnv?.VITE_GAME_SERVER_URL ?? "").trim();
 
-/** The creation screen's choice. Sent only after `need_create`. */
+/** The creation screen's choice. Sent only after `need_create`, or immediately for a chosen slot. */
 export interface HelloChoice {
   username: string;
   race: Race;
   baseClass: BaseClass;
+  slot: number;
+  /** False plays an existing slot. Anything else creates in that slot. */
+  create?: boolean;
 }
 
 export function gameHello(token: string, choice?: HelloChoice) {
   if (!choice) return { t: "hello" as const, token };
+  const slot = choice.slot;
+  if (choice.create === false) return { t: "hello" as const, token, slot };
   return {
     t: "hello" as const,
     token,
@@ -21,6 +26,7 @@ export function gameHello(token: string, choice?: HelloChoice) {
       name: choice.username.trim().slice(0, 16),
       race: choice.race,
       baseClass: choice.baseClass,
+      slot,
     },
   };
 }

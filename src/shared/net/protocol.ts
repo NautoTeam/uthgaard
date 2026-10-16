@@ -133,6 +133,7 @@ const helloCreate = z
       .regex(/^[A-Za-z0-9][A-Za-z0-9' -]*$/),
     race: z.string(),
     baseClass: z.string(),
+    slot: z.number().int(),
   })
   .strict();
 
@@ -141,6 +142,7 @@ export const ClientMsg = z.discriminatedUnion("t", [
     .object({
       t: z.literal("hello"),
       token: z.string().min(20).max(2048),
+      slot: z.number().int().optional(),
       create: helloCreate.optional(),
     })
     .strict(),

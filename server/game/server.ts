@@ -122,6 +122,7 @@ type Conn = {
   dead: boolean;
   jti: string | null;
   rev: number;
+  slot: number;
   savedHash: string;
   alive: boolean;
   saveChain: Promise<void>;
@@ -193,7 +194,7 @@ export function startServer(opts: {
     const record = recordFromPlayer(player);
     const hash = JSON.stringify(record);
     if (!force && hash === conn.savedHash) return;
-    const next = await characters.save(conn.userId, record, conn.rev);
+    const next = await characters.save(conn.userId, record, conn.rev, conn.slot);
     if (next == null) {
       console.error(`stale save ${conn.userId}`);
       return;
@@ -268,6 +269,64 @@ export function startServer(opts: {
       res.end(body);
       return;
     }
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === "/characters" && (req.method === "GET" || req.method === "DELETE" || req.method === "OPTIONS")) {
+      const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (origin && originAllowed(origin, allowedOrigins, nodeEnv)) {
+        headers["access-control-allow-origin"] = origin;
+        headers["vary"] = "Origin";
+        headers["access-control-allow-headers"] = "authorization, content-type";
+        headers["access-control-allow-methods"] = "GET, DELETE, OPTIONS";
+      }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, headers);
+        res.end();
+        return;
+      }
+      void (async () => {
+        const fail = (status: number, error: string) => {
+          const body = JSON.stringify({ error });
+          res.writeHead(status, { ...headers, "content-length": Buffer.byteLength(body) });
+          res.end(body);
+        };
+        if (!tokenSecret || !characters) {
+          fail(503, "not ready");
+          return;
+        }
+        const header = req.headers.authorization ?? "";
+        const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+        const claims = token ? await verifyGameToken(tokenSecret, token) : null;
+        if (!claims) {
+          fail(401, "bad token");
+          return;
+        }
+        if (req.method === "DELETE") {
+          const slot = Number(url.searchParams.get("slot"));
+          if (!Number.isInteger(slot) || slot < 0 || slot > 2) {
+            fail(400, "bad_slot");
+            return;
+          }
+          await characters.remove(claims.userId, slot);
+          const body = JSON.stringify({ ok: true });
+          res.writeHead(200, { ...headers, "content-length": Buffer.byteLength(body) });
+          res.end(body);
+          return;
+        }
+        const rows = await characters.list(claims.userId);
+        const slots = [0, 1, 2].map((slot) => rows.find((row) => row.slot === slot) ?? null);
+        const body = JSON.stringify({ slots });
+        res.writeHead(200, { ...headers, "content-length": Buffer.byteLength(body) });
+        res.end(body);
+      })().catch((err) => {
+        warnSave(err);
+        if (!res.headersSent) {
+          res.writeHead(500, headers);
+          res.end();
+        }
+      });
+      return;
+    }
     res.writeHead(404);
     res.end();
   });
@@ -307,7 +366,7 @@ export function startServer(opts: {
     const db = characters;
     const record = recordFromPlayer(left);
     const run = conn.saveChain.then(async () => {
-      const next = await db.save(userId, record, conn.rev);
+      const next = await db.save(userId, record, conn.rev, conn.slot);
       if (next == null) {
         console.error(`stale save ${userId}`);
         return;
@@ -336,6 +395,7 @@ export function startServer(opts: {
       dead: false,
       jti: null,
       rev: 0,
+      slot: 0,
       savedHash: "",
       alive: true,
       saveChain: Promise.resolve(),
@@ -473,57 +533,94 @@ export function startServer(opts: {
             await dropConn(prev);
             prev.socket.close(4409, "replaced");
           }
-          const loaded = await characters.load(claims.userId);
+          if (hello.create && !Number.isInteger(hello.create.slot)) {
+            logNet("bad_slot", claims.userId);
+            send(socket, { t: "error", reason: "bad_slot" });
+            return;
+          }
+          if (hello.create && (hello.create.slot < 0 || hello.create.slot > 2)) {
+            logNet("bad_slot", claims.userId);
+            send(socket, { t: "error", reason: "bad_slot" });
+            return;
+          }
+          const choice = hello.create ? validateCreate(hello.create) : null;
+          if (hello.create && !choice) {
+            logNet("bad_create", claims.userId);
+            send(socket, { t: "error", reason: "bad_create" });
+            return;
+          }
+          const slot = choice ? choice.slot : hello.slot;
+          if (slot == null) {
+            logNet("need_create", claims.userId);
+            send(socket, { t: "error", reason: "need_create" });
+            armHello(CREATE_MS);
+            return;
+          }
+          if (!Number.isInteger(slot) || slot < 0 || slot > 2) {
+            logNet("bad_slot", claims.userId);
+            send(socket, { t: "error", reason: "bad_slot" });
+            return;
+          }
+          conn.slot = slot;
+          const loaded = choice ? null : await characters.load(claims.userId, slot);
           if (conn.replaced || conn.dead) return;
           let input = loaded ? joinInputFor(claims.userId, loaded.save, null) : null;
           let rev = loaded?.rev ?? 0;
+          let createdNow = false;
           if (!loaded) {
-            const choice = validateCreate(hello.create);
-            if (!hello.create) {
-              logNet("need_create", claims.userId); send(socket, { t: "error", reason: "need_create" });
+            if (!choice) {
+              logNet("need_create", claims.userId);
+              send(socket, { t: "error", reason: "need_create" });
               armHello(CREATE_MS);
               return;
             }
-            if (!choice) {
-              logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
+            const occupied = await characters.load(claims.userId, choice.slot);
+            if (occupied) {
+              logNet("slot_taken", claims.userId);
+              send(socket, { t: "error", reason: "slot_taken" });
               return;
             }
             input = joinInputFor(claims.userId, null, choice);
             if (!input) {
-              logNet("bad_create", claims.userId); send(socket, { t: "error", reason: "bad_create" });
+              logNet("bad_create", claims.userId);
+              send(socket, { t: "error", reason: "bad_create" });
               return;
             }
             const player = authority.world.join(input);
             const record = recordFromPlayer(player);
             let created: Awaited<ReturnType<NonNullable<typeof characters>["create"]>>;
             try {
-              created = await characters.create(claims.userId, record.username, record);
+              created = await characters.create(claims.userId, record.username, record, choice.slot);
             } catch (err) {
               authority.world.leave(player.id);
               warnSave(err);
-              logNet("join_failed", claims.userId); send(socket, { t: "error", reason: "join_failed" });
+              logNet("join_failed", claims.userId);
+              send(socket, { t: "error", reason: "join_failed" });
               return;
             }
-            if (created === "name_taken") {
+            if (typeof created !== "number") {
               authority.world.leave(player.id);
-              logNet("name_taken", claims.userId); send(socket, { t: "error", reason: "name_taken" });
+              logNet(created, claims.userId);
+              send(socket, { t: "error", reason: created });
               return;
             }
             rev = created;
+            createdNow = true;
             conn.savedHash = JSON.stringify(record);
           }
           if (!input) {
-            logNet("need_create", claims.userId); send(socket, { t: "error", reason: "need_create" });
+            logNet("need_create", claims.userId);
+            send(socket, { t: "error", reason: "need_create" });
             armHello(CREATE_MS);
             return;
           }
           if (conn.dead || conn.replaced) {
-            if (!loaded) authority.world.leave(claims.userId);
+            if (createdNow) authority.world.leave(claims.userId);
             return;
           }
-          const player = loaded ? authority.world.join(input) : authority.world.players.get(claims.userId);
+          const player = createdNow ? authority.world.players.get(claims.userId) : authority.world.join(input);
           if (!player) return;
-          if (loaded) {
+          if (!createdNow) {
             const record = recordFromPlayer(player);
             conn.savedHash = JSON.stringify(record);
           }

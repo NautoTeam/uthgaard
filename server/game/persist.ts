@@ -7,9 +7,12 @@ export interface CreateChoice {
   name: string;
   race: Race;
   baseClass: BaseClass;
+  slot: number;
 }
 
-export function validateCreate(input: { name: string; race: string; baseClass: string } | undefined): CreateChoice | null {
+export function validateCreate(
+  input: { name: string; race: string; baseClass: string; slot?: number } | undefined,
+): CreateChoice | null {
   if (!input) return null;
   const race = input.race as Race;
   const baseClass = input.baseClass as BaseClass;
@@ -18,7 +21,8 @@ export function validateCreate(input: { name: string; race: string; baseClass: s
   if (!classAllowed(race, baseClass)) return null;
   const name = input.name.trim();
   if (name.length < 2 || name.length > 16) return null;
-  return { name, race, baseClass };
+  if (!Number.isInteger(input.slot) || (input.slot ?? -1) < 0 || (input.slot ?? -1) > 2) return null;
+  return { name, race, baseClass, slot: input.slot as number };
 }
 
 export function recordFromPlayer(p: PlayerState): CharacterRecord {

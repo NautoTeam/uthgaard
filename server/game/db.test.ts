@@ -78,14 +78,57 @@ test("graves round-trip through the table", async () => {
   await pg.close();
 });
 
-test("migrations run twice and apply 0001 and 0002 once each", async () => {
+test("migrations run twice and apply 0001, 0002, and 0003 once each", async () => {
   const { pg, query } = await openDb();
   await applyGameMigrations(query);
   await applyGameMigrations(query);
   const rows = await pg.query<{ name: string }>("select name from _game_migrations order by name");
   assert.deepEqual(
     rows.rows.map((row) => row.name),
-    ["0001_characters.sql", "0002_name_rev.sql"],
+    ["0001_characters.sql", "0002_name_rev.sql", "0003_slots.sql"],
   );
+  await pg.close();
+});
+
+test("three slots are unique per user and a fourth is rejected", async () => {
+  const { pg, query } = await openDb();
+  await applyGameMigrations(query);
+  const store = characterStore(query);
+  assert.equal(await store.create("user-ada", "Ada", save, 1), 1);
+  assert.equal(await store.create("user-ada", "Ada", save, 1), "slot_taken");
+  assert.equal(await store.create("user-ada", "Ann", { ...save, username: "Ann" }, 0), 1);
+  assert.equal(await store.create("user-ada", "Cy", { ...save, username: "Cy" }, 2), 1);
+  assert.equal(await store.create("user-ada", "Dee", { ...save, username: "Dee" }, 0), "slot_taken");
+  assert.equal(await store.create("user-ada", "Dee", { ...save, username: "Dee" }, 4), "bad_slot");
+  const slots = await store.list("user-ada");
+  assert.deepEqual(
+    slots.map((row) => row.slot),
+    [0, 1, 2],
+  );
+  assert.equal((await store.load("user-ada", 1))?.save.username, "Ada");
+  await pg.close();
+});
+
+test("existing characters fill slots in creation order", async () => {
+  const { pg, query } = await openDb();
+  await query(
+    `create table characters (
+      user_id text not null,
+      save jsonb not null,
+      updated_at timestamptz not null default now(),
+      name text,
+      rev int not null default 0
+    )`,
+  );
+  await query(
+    `insert into characters (user_id, name, save, rev, updated_at) values
+      ('user-ada', 'Second', '{"version":1,"username":"Second","race":"Elf","baseClass":"Mage","prestigeClass":"","level":4,"xp":0,"gold":1}'::jsonb, 1, '2020-02-01'),
+      ('user-ada', 'First', '{"version":1,"username":"First","race":"Human","baseClass":"Fighter","prestigeClass":"","level":2,"xp":0,"gold":1}'::jsonb, 1, '2020-01-01')`,
+  );
+  await applyGameMigrations(query);
+  const store = characterStore(query);
+  assert.equal((await store.load("user-ada", 0))?.save.username, "First");
+  assert.equal((await store.load("user-ada", 1))?.save.username, "Second");
+  assert.equal(await store.load("user-ada", 2), null);
   await pg.close();
 });

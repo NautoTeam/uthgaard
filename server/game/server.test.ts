@@ -31,11 +31,11 @@ async function hello(
   ws: WebSocket,
   userId: string,
   name: string,
-  create?: { name?: string; race?: string; baseClass?: string } | false,
+  create?: { name?: string; race?: string; baseClass?: string; slot?: number } | false,
 ) {
   const token = await signGameToken(SECRET, { id: userId, name });
   if (create === false) {
-    ws.send(JSON.stringify({ t: "hello", token }));
+    ws.send(JSON.stringify({ t: "hello", token, slot: 0 }));
     return token;
   }
   ws.send(
@@ -46,6 +46,7 @@ async function hello(
         name: create?.name ?? name,
         race: create?.race ?? "Human",
         baseClass: create?.baseClass ?? "Fighter",
+        slot: create?.slot ?? 0,
       },
     }),
   );
@@ -171,13 +172,21 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
       token: "x".repeat(20),
       create: { name: "Ada", race: "Human", baseClass: "Fighter" },
     }).success,
+    false,
+  );
+  assert.equal(
+    ClientMsg.safeParse({
+      t: "hello",
+      token: "x".repeat(20),
+      create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 },
+    }).success,
     true,
   );
   assert.equal(
     ClientMsg.safeParse({
       t: "hello",
       token: "x".repeat(20),
-      create: { name: "A", race: "Human", baseClass: "Fighter" },
+      create: { name: "A", race: "Human", baseClass: "Fighter", slot: 0 },
     }).success,
     false,
   );
@@ -185,7 +194,7 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
     ClientMsg.safeParse({
       t: "hello",
       token: "x".repeat(20),
-      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+      create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 },
       import: { level: 40, gold: 9999, inventory: { "spider-silk": 2 }, x: 12 },
     }).success,
     false,
@@ -194,7 +203,7 @@ test("protocol rejects unknown ops, debug ops, and an extra id", () => {
     ClientMsg.safeParse({
       t: "hello",
       token: "x".repeat(20),
-      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+      create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 },
       import: { level: 40, gold: 9999, inventory: { "spider-silk": 2 } },
     }).success,
     false,
@@ -638,7 +647,7 @@ test("hello verifies the game token and reloads the saved character", async () =
   ws2.on("error", () => undefined);
   try {
     await opened(ws2);
-    await hello(ws2, "user-ada", "Someone Else");
+    await hello(ws2, "user-ada", "Someone Else", false);
     const back = await until(() => {
       const snap = [...msgs2].reverse().find((m) => m.t === "snap");
       return snap?.state?.players?.find((p) => p.username === "Ada");
@@ -655,7 +664,7 @@ test("hello verifies the game token and reloads the saved character", async () =
 
 test("need_create is answered with the creation-screen hello", () => {
   const token = "t".repeat(30);
-  const choice = { username: "Ada", race: "Human" as const, baseClass: "Fighter" as const };
+  const choice = { username: "Ada", race: "Human" as const, baseClass: "Fighter" as const, slot: 0 };
   assert.equal(helloAfterNeedCreate(token, "bad token", choice), null);
   assert.equal(helloAfterNeedCreate(token, "need_create", { ...choice, username: "A" }), null);
   const sent: unknown[] = [];
@@ -665,7 +674,7 @@ test("need_create is answered with the creation-screen hello", () => {
     {
       t: "hello",
       token,
-      create: { name: "Ada", race: "Human", baseClass: "Fighter" },
+      create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 },
     },
   ]);
 });
@@ -735,13 +744,13 @@ test("a token cannot load another user's row", async () => {
   try {
     const token = await signGameToken(SECRET, { id: "user-ada", name: "Ada" });
     assert.equal(ClientMsg.safeParse({ t: "hello", token, userId: "user-bea" }).success, false);
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Bea", race: "Human", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Bea", race: "Human", baseClass: "Fighter", slot: 0 } }));
     const taken = await until(() => msgs.find((m) => m.t === "error"));
     assert.equal(taken.reason, "name_taken");
     assert.equal(ws.readyState, WebSocket.OPEN);
     assert.equal(game.world.players.size, 0);
     assert.equal((await characters.load("user-bea"))?.save.gold, 777);
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 } }));
     const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
     assert.equal(welcome.playerId, "user-ada");
     const hero = game.world.players.get("user-ada");
@@ -771,7 +780,7 @@ test("the same token is rejected on a second socket", async () => {
     await until(() => first.msgs.find((m) => m.t === "welcome"));
     const started = Date.now();
     const closed = closeCode(second.ws, 500);
-    second.ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    second.ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 } }));
     assert.equal(await closed, 4401);
     assert.ok(Date.now() - started < 500);
     const reason = await until(() => second.msgs.find((m) => m.t === "error"));
@@ -846,15 +855,15 @@ test("create is required, validated, and stored at rev 1", async () => {
     assert.equal(ws.readyState, WebSocket.OPEN);
     assert.equal(game.world.players.size, 0);
 
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Dragon", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Dragon", baseClass: "Fighter", slot: 0 } }));
     assert.equal((await until(() => msgs.find((m) => m.reason === "bad_create"))).reason, "bad_create");
     assert.equal(ws.readyState, WebSocket.OPEN);
 
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Minotaur", baseClass: "Mage" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Minotaur", baseClass: "Mage", slot: 0 } }));
     await until(() => (msgs.filter((m) => m.reason === "bad_create").length >= 2 ? true : undefined));
     assert.equal(game.world.players.size, 0);
 
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 0 } }));
     const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
     assert.equal(welcome.playerId, "user-ada");
     const row = await characters.load("user-ada");
@@ -865,14 +874,14 @@ test("create is required, validated, and stored at rev 1", async () => {
     assert.equal(game.world.players.get("user-ada")?.str, attrsFor("Human", "Fighter").str);
 
     const horn = await signGameToken(SECRET, { id: "user-horn", name: "Horn" });
-    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "ada", race: "Minotaur", baseClass: "Fighter" } }));
+    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "ada", race: "Minotaur", baseClass: "Fighter", slot: 0 } }));
     const taken = await until(() => other.msgs.find((m) => m.t === "error"));
     assert.equal(taken.reason, "name_taken");
     assert.equal(other.ws.readyState, WebSocket.OPEN);
     assert.equal(await characters.load("user-horn"), null);
     assert.equal(game.world.players.has("user-horn"), false);
 
-    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "Horn", race: "Minotaur", baseClass: "Fighter" } }));
+    other.ws.send(JSON.stringify({ t: "hello", token: horn, create: { name: "Horn", race: "Minotaur", baseClass: "Fighter", slot: 0 } }));
     const hornWelcome = await until(() => other.msgs.find((m) => m.t === "welcome"));
     assert.equal(hornWelcome.playerId, "user-horn");
     assert.equal((await characters.load("user-horn"))?.rev, 1);
@@ -892,12 +901,12 @@ test("a digit in the name still joins, and a one-letter name is rejected", async
   const { ws, msgs } = await connect(port);
   try {
     const token = await signGameToken(SECRET, { id: "user-two", name: "Two" });
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Hero2", race: "Human", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "Hero2", race: "Human", baseClass: "Fighter", slot: 0 } }));
     const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
     assert.equal(welcome.playerId, "user-two");
     assert.equal(game.world.players.get("user-two")?.username, "Hero2");
 
-    ws.send(JSON.stringify({ t: "hello", token, create: { name: "A", race: "Human", baseClass: "Fighter" } }));
+    ws.send(JSON.stringify({ t: "hello", token, create: { name: "A", race: "Human", baseClass: "Fighter", slot: 0 } }));
     assert.equal((await until(() => msgs.find((m) => m.reason === "bad_create"))).reason, "bad_create");
     assert.equal(ws.readyState, WebSocket.OPEN);
     assert.equal(game.world.players.get("user-two")?.username, "Hero2");
@@ -1024,6 +1033,112 @@ test("a 30s tick saves dirty players and close saves everyone online", async () 
     ada.ws.close();
     bea.ws.close();
     await game.close();
+    await pg.close();
+  }
+});
+
+test("slots create, reject a taken or fourth hero, and persist across login", async () => {
+  const { pg, characters } = await pgliteDb();
+  const game = startServer({ ...gameOpts({ characters }), now: () => 70_000, rand: mulberry32(21) });
+  let again: ReturnType<typeof startServer> | null = null;
+  try {
+    const port = await game.ready;
+    const tokenFor = () => signGameToken(SECRET, { id: "user-ada", name: "Ada" });
+    const { ws, msgs } = await connect(port);
+    try {
+      ws.send(
+        JSON.stringify({
+          t: "hello",
+          token: await tokenFor(),
+          create: { name: "Ada", race: "Human", baseClass: "Fighter", slot: 1 },
+        }),
+      );
+      const welcome = await until(() => msgs.find((m) => m.t === "welcome"));
+      assert.equal(welcome.playerId, "user-ada");
+      assert.equal((await characters.load("user-ada", 1))?.save.username, "Ada");
+      assert.equal(await characters.load("user-ada", 0), null);
+    } finally {
+      ws.close();
+    }
+
+    const taken = await connect(port);
+    try {
+      taken.ws.send(
+        JSON.stringify({
+          t: "hello",
+          token: await tokenFor(),
+          create: { name: "Bea", race: "Elf", baseClass: "Mage", slot: 1 },
+        }),
+      );
+      assert.equal((await until(() => taken.msgs.find((m) => m.t === "error"))).reason, "slot_taken");
+      assert.equal((await characters.load("user-ada", 1))?.save.username, "Ada");
+    } finally {
+      taken.ws.close();
+    }
+
+    for (const slot of [0, 2]) {
+      const sock = await connect(port);
+      try {
+        sock.ws.send(
+          JSON.stringify({
+            t: "hello",
+            token: await tokenFor(),
+            create: { name: slot === 0 ? "Ann" : "Cy", race: "Human", baseClass: "Rogue", slot },
+          }),
+        );
+        await until(() => sock.msgs.find((m) => m.t === "welcome"));
+      } finally {
+        sock.ws.close();
+      }
+    }
+
+    const fourth = await connect(port);
+    const fourthToken = await tokenFor();
+    try {
+      fourth.ws.send(
+        JSON.stringify({
+          t: "hello",
+          token: fourthToken,
+          create: { name: "Dee", race: "Human", baseClass: "Healer", slot: 0 },
+        }),
+      );
+      assert.equal((await until(() => fourth.msgs.find((m) => m.t === "error"))).reason, "slot_taken");
+      fourth.ws.send(
+        JSON.stringify({
+          t: "hello",
+          token: fourthToken,
+          create: { name: "Dee", race: "Human", baseClass: "Healer", slot: 3 },
+        }),
+      );
+      assert.equal(await until(() => (fourth.msgs.some((m) => m.reason === "bad_slot") ? true : undefined)), true);
+    } finally {
+      fourth.ws.close();
+    }
+
+    await game.close();
+    again = startServer({ ...gameOpts({ characters }), now: () => 80_000, rand: mulberry32(22) });
+    const port2 = await again.ready;
+    const back = await connect(port2);
+    const login = await tokenFor();
+    try {
+      const list = await fetch(`http://127.0.0.1:${port2}/characters`, {
+        headers: { authorization: `Bearer ${login}` },
+      });
+      const body = (await list.json()) as { slots: Array<{ slot: number; name: string } | null> };
+      assert.deepEqual(
+        body.slots.map((row) => row?.name ?? null),
+        ["Ann", "Ada", "Cy"],
+      );
+      back.ws.send(JSON.stringify({ t: "hello", token: login, slot: 1 }));
+      await until(() => back.msgs.find((m) => m.t === "welcome"));
+      assert.equal(again.world.players.get("user-ada")?.username, "Ada");
+      assert.equal((await characters.load("user-ada", 1))?.save.baseClass, "Fighter");
+    } finally {
+      back.ws.close();
+    }
+  } finally {
+    await game.close();
+    if (again) await again.close();
     await pg.close();
   }
 });
