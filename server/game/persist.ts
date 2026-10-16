@@ -71,8 +71,7 @@ export function joinInputFor(
       level: save.level,
       xp: save.xp,
       gold: save.gold,
-      x: save.x,
-      z: save.z,
+      // Login always uses the campfire. A saved tile on the spider road must not come back.
       hp: save.hp,
       inventory: save.inventory,
       equipment: save.equipment,

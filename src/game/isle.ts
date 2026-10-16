@@ -64,6 +64,7 @@ import { createGround } from "./ground";
 import { MAX_SPEED, createWorld, type JoinInput } from "../shared/sim/world";
 import { SERVER, toServerIntent } from "./net";
 import { connectRemote, interpolateXZ, snapAlpha, worldMayStart, type LinkGate, type RemoteHandle } from "./remote";
+import { reconcileHero } from "./reconcile";
 import {
   CHARTER_GOLD,
   CITY_PLOTS,
@@ -313,6 +314,10 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const bindLine = root.querySelector<HTMLElement>("#bindLine");
   const guildToastText = root.querySelector<HTMLElement>("#guildToastText");
   const targetFrame = root.querySelector<HTMLElement>("#targetFrame");
+  const partyPanel = root.querySelector<HTMLElement>("#party")!;
+  const partyBody = root.querySelector<HTMLElement>("#partyBody")!;
+  const plotsPanel = root.querySelector<HTMLElement>("#plots")!;
+  const plotsBody = root.querySelector<HTMLElement>("#plotsBody")!;
 
   let blockPanelClicks = false;
   function armPanelBlock() {
@@ -341,7 +346,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       el.hidden = true;
       return;
     }
-    for (const other of [sheet, bag, shop, trainPanel, travelPanel, mapOverlay, guildPanel]) {
+    for (const other of [sheet, bag, shop, trainPanel, travelPanel, mapOverlay, guildPanel, partyPanel, plotsPanel]) {
       if (other !== el) drop(other);
     }
     el.hidden = false;
@@ -355,7 +360,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         return true;
       }
     }
-    const leftover = [travelPanel, sheet, bag, shop, trainPanel, mapOverlay, guildPanel].find(
+    const leftover = [travelPanel, sheet, bag, shop, trainPanel, mapOverlay, guildPanel, partyPanel, plotsPanel].find(
       (el) => !el.hidden,
     );
     if (!leftover) return false;
@@ -754,43 +759,22 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       local.x = clear.x;
       local.z = clear.z;
       faceHold = performance.now() + 200;
-    } else if (!placed || gap > 8) {
-      local.x = mine.x;
-      local.z = mine.z;
-      local.rotation = mine.rotation;
-      faceHold = performance.now() + 200;
-    } else if (gap > 0.08) {
-      const errX = mine.x - local.x;
-      const errZ = mine.z - local.z;
-      const speed = Math.hypot(wishX, wishZ);
-      let fixX = 0;
-      let fixZ = 0;
-      if (speed > 0.2) {
-        const ux = wishX / speed;
-        const uz = wishZ / speed;
-        const along = errX * ux + errZ * uz;
-        const sideX = errX - along * ux;
-        const sideZ = errZ - along * uz;
-        const ahead = -Math.min(0, along);
-        const budget = speed * 0.6 + 0.45;
-        if (ahead > budget) {
-          const excess = ahead - budget;
-          fixX -= ux * excess * 0.5;
-          fixZ -= uz * excess * 0.5;
-        } else if (along > 0.2) {
-          fixX += ux * along * 0.45;
-          fixZ += uz * along * 0.45;
-        }
-        fixX += sideX * 0.5;
-        fixZ += sideZ * 0.5;
-      } else if (!(onCampfire(mine.x, mine.z) && !onCampfire(local.x, local.z))) {
-        fixX = errX * 0.35;
-        fixZ = errZ * 0.35;
-      }
-      if (fixX || fixZ) {
-        faceHold = performance.now() + 120;
-        local.x += fixX;
-        local.z += fixZ;
+    } else {
+      const next = reconcileHero({
+        localX: local.x,
+        localZ: local.z,
+        serverX: mine.x,
+        serverZ: mine.z,
+        wishX,
+        wishZ,
+        moving: placed && (walkHeld() || dest != null),
+        placed,
+      });
+      if (next.x !== local.x || next.z !== local.z) {
+        local.x = next.x;
+        local.z = next.z;
+        local.rotation = gap > 16 || !placed ? mine.rotation : local.rotation;
+        faceHold = performance.now() + (gap > 16 || !placed ? 200 : 120);
       }
     }
     placed = true;
@@ -1583,7 +1567,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     statsEl.innerHTML =
       `<b>${p.username}</b> ${p.race} ${p.prestigeClass || p.baseClass} · Lv ${p.level}` +
       `<div class="zone-line">${zoneLabel}</div>` +
-      `<div class="online-line">Players online: ${playersOnline}</div>` +
+      `<div class="online-line"><span class="link-pill${linked ? " on" : ""}">${linked ? "Online" : "Offline"}</span> Players online: ${playersOnline}</div>` +
       `<div class="gold-line">Gold ${p.gold}</div>` +
       `<div class="bar hp"><i style="width:${hpPct}%"></i><span>HP ${Math.round(hp)}/${maxHp}</span></div>` +
       `<div class="bar mp"><i style="width:${mpPct}%"></i><span>MP ${Math.round(mana)}/${maxMana}</span></div>` +
@@ -1692,6 +1676,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       lastPvp = pvpSig;
     }
     paintGroup();
+    paintParty();
+    paintPlots();
   }
 
   let mapCache: HTMLCanvasElement | null = null;
@@ -2132,12 +2118,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     let vx = 0;
     let vz = 0;
     if (ix || iz) {
-      dest = null;
-      path = [];
-      talkNpc = null;
-      lootGrave = null;
-      chaseId = null;
-      repaths = 0;
+      haltTravel();
       const v = walkVelocity(ix, iz);
       vx = v.x;
       vz = v.z;
@@ -2659,16 +2640,17 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function inviteNamed(name: string) {
-    const pl = findPlayer(name);
-    if (!pl) {
-      note("No one nearby by that name.");
+    const trimmed = name.trim();
+    if (!trimmed) {
+      note("Type a name to invite.");
       return;
     }
-    if (inMyParty(pl.id)) {
+    const pl = findPlayer(trimmed);
+    if (pl && inMyParty(pl.id)) {
       note(`${pl.username} is already in the group.`);
       return;
     }
-    send({ op: "partyInvite", toName: pl.username });
+    send({ op: "partyInvite", toName: pl?.username ?? trimmed });
   }
 
   function acceptInvite() {
@@ -2686,6 +2668,159 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function leaveGroup() {
     if (!view().party) return;
     send({ op: "partyLeave" });
+  }
+
+  let partyDraft = "";
+  let partySig = "";
+  let plotsSig = "";
+
+  function targetedPlayer() {
+    if (selected?.kind !== "player") return null;
+    return view().players.find((row) => row.id === selected?.id && row.hp > 0) ?? null;
+  }
+
+  function paintParty() {
+    if (!partyPanel || partyPanel.hidden) return;
+    const roster = groupRoster();
+    const target = targetedPlayer();
+    const invite = view().pendingInvite;
+    const sig = [
+      roster.map((row) => `${row.id}:${row.hp}:${row.maxHp}:${row.level}`).join(","),
+      target?.id ?? "",
+      invite?.fromId ?? "",
+      view().party?.id ?? "",
+    ].join("|");
+    if (sig === partySig) return;
+    partySig = sig;
+    const field = partyBody.querySelector<HTMLInputElement>("#partyName");
+    if (field) partyDraft = field.value;
+    const members =
+      roster.length > 0
+        ? roster
+            .map((row) => {
+              const pct = Math.max(0, Math.min(100, (row.hp / row.maxHp) * 100));
+              const lead = view().party?.leader === row.id ? " · leader" : "";
+              return `<div class="group-row"><b>${escapeHtml(row.name)}</b> · Lv ${row.level}${lead}<div class="bar hp"><i style="width:${pct}%"></i><span>HP ${Math.round(row.hp)}/${Math.round(row.maxHp)}</span></div></div>`;
+            })
+            .join("")
+        : `<p class="sheet-note">You are not in a party.</p>`;
+    const targetBtn = target
+      ? `<button type="button" data-act="invite-target">Invite ${escapeHtml(target.username)}</button>`
+      : "";
+    const leave = view().party ? `<button type="button" data-act="leave">Leave</button>` : "";
+    const pending = invite
+      ? `<p class="sheet-note">${escapeHtml(invite.fromName)} invites you.</p><button type="button" data-act="accept">Accept</button><button type="button" data-act="decline">Decline</button>`
+      : "";
+    partyBody.innerHTML =
+      pending +
+      members +
+      `<label class="party-invite">Invite by name<input id="partyName" maxlength="16" value="${escapeHtml(partyDraft)}" /></label>` +
+      `<button type="button" data-act="invite-name">Invite</button>` +
+      targetBtn +
+      leave;
+  }
+
+  function paintPlots() {
+    if (!plotsPanel || plotsPanel.hidden) return;
+    const mine = view().guild;
+    const here = me();
+    const under = here && here.hp > 0 ? plotUnder(here.x, here.z)?.id ?? "" : "";
+    const sig = `${(view().plots ?? []).map((row) => `${row.plotId}:${row.guildTag}`).join(",")}|${mine?.tag ?? ""}|${mine?.rank ?? ""}|${under}|${here?.gold ?? 0}`;
+    if (sig === plotsSig) return;
+    plotsSig = sig;
+    const rows = CITY_PLOTS.map((plot) => {
+      const owner = claimedPlot(plot.id);
+      const standing = under === plot.id ? " · you are here" : "";
+      let action = "";
+      if (!owner) action = `<button type="button" data-act="claim" data-plot="${plot.id}">Claim</button>`;
+      else if (mine && owner.guildTag === mine.tag && mine.rank === "Leader")
+        action = `<button type="button" data-act="remove">Remove</button>`;
+      const who = owner ? `[${escapeHtml(owner.guildTag)}] Cornerstone` : "Free";
+      return `<div class="plot-row"><b>${escapeHtml(plot.zone)}</b><span>${who}${standing}</span>${action}</div>`;
+    }).join("");
+    plotsBody.innerHTML =
+      `<p class="sheet-note">A Cornerstone costs ${CORNERSTONE_GOLD} gold. Only the guild Leader can claim one, and only while standing on the plot. Removing it returns no gold.</p>` +
+      rows;
+  }
+
+  function onPartyClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !partyBody.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    const field = partyBody.querySelector<HTMLInputElement>("#partyName");
+    if (field) partyDraft = field.value;
+    const act = btn.dataset.act;
+    if (act === "invite-name") inviteNamed(partyDraft);
+    else if (act === "invite-target") {
+      const target = targetedPlayer();
+      if (target) inviteNamed(target.username);
+    } else if (act === "leave") leaveGroup();
+    else if (act === "accept") acceptInvite();
+    else if (act === "decline") declineInvite();
+    partySig = "";
+  }
+
+  function onPlotsClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !plotsBody.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    const act = btn.dataset.act;
+    if (act === "claim" && btn.dataset.plot) tryPlant(btn.dataset.plot);
+    else if (act === "remove") tryRemove();
+    plotsSig = "";
+  }
+
+  function onPartyButton(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    if (!partyPanel.hidden) setOpen(partyPanel, false);
+    else {
+      partySig = "";
+      setOpen(partyPanel, true);
+      paintParty();
+    }
+  }
+
+  function capturePartyDraft(e: Event) {
+    const field = e.target;
+    if (field instanceof HTMLInputElement && field.id === "partyName") partyDraft = field.value;
+  }
+
+  function onPartyClose(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    setOpen(partyPanel, false);
+  }
+
+  function onPlotsButton(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    if (!plotsPanel.hidden) setOpen(plotsPanel, false);
+    else {
+      plotsSig = "";
+      setOpen(plotsPanel, true);
+      paintPlots();
+    }
+  }
+
+  function onPlotsClose(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    pendingMove = null;
+    consumeClick = true;
+    setOpen(plotsPanel, false);
   }
 
   function addPvp(line: string) {
@@ -3503,6 +3638,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return map[e.key.toLowerCase()] ?? null;
   }
 
+  function haltTravel() {
+    dest = null;
+    path = [];
+    pendingMove = null;
+    chaseId = null;
+    talkNpc = null;
+    lootGrave = null;
+    repaths = 0;
+    stuckFor = 0;
+  }
+
+  const WALK_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+
+  function walkHeld() {
+    return WALK_KEYS.some((code) => keys.has(code)) || stickActive;
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     touchInput();
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -3566,6 +3718,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (move) {
       e.preventDefault();
       keys.add(move);
+      if (WALK_KEYS.includes(move)) {
+        haltTravel();
+        consumeClick = true;
+        wishX = 0;
+        wishZ = 0;
+        lastSpeed = 0;
+      }
       if (move === "Space" && !e.repeat && selected?.kind === "player") tryEngagePlayer(true);
       return;
     }
@@ -3575,9 +3734,29 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const move = moveCode(e);
     if (move) keys.delete(move);
     keys.delete(e.code);
+    if (move && WALK_KEYS.includes(move) && !walkHeld()) {
+      wishX = 0;
+      wishZ = 0;
+      lastSpeed = 0;
+      haltTravel();
+      pushMove(true);
+    }
   }
   function onBlur() {
-    if (!window.__controlsTest) keys.clear();
+    if (window.__controlsTest) return;
+    const walking = walkHeld();
+    keys.clear();
+    stickActive = false;
+    stickVec.x = 0;
+    stickVec.z = 0;
+    knob.style.left = "35px";
+    knob.style.top = "35px";
+    if (!walking) return;
+    wishX = 0;
+    wishZ = 0;
+    lastSpeed = 0;
+    haltTravel();
+    pushMove(true);
   }
 
   type LastClick = {
@@ -3699,6 +3878,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function goTo(x: number, z: number, talk: string | null, keepChase = false, quiet = false) {
+    if (walkHeld()) return;
     const p = localPlayer();
     dest = { x, z };
     talkNpc = talk;
@@ -3909,7 +4089,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
 
   function onWorldUp(e: PointerEvent) {
     const onCanvas = e.target === canvas;
-    if (consumeClick || !onCanvas) {
+    if (consumeClick || !onCanvas || walkHeld()) {
       consumeClick = false;
       pendingMove = null;
       return;
@@ -4424,14 +4604,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     stickVec.z = dy / max;
   }
   function resetStick() {
+    const was = stickActive;
     stickActive = false;
     stickVec.x = 0;
     stickVec.z = 0;
     knob.style.left = "35px";
     knob.style.top = "35px";
+    if (!was || walkHeld()) return;
+    wishX = 0;
+    wishZ = 0;
+    lastSpeed = 0;
+    haltTravel();
+    pushMove(true);
   }
   function onStickDown(e: PointerEvent) {
     touchInput();
+    haltTravel();
+    consumeClick = true;
     stick.setPointerCapture(e.pointerId);
     stickActive = true;
     setStick(e.clientX, e.clientY);
@@ -4483,6 +4672,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   root.querySelector("#debugSpawnBtn")?.addEventListener("pointerup", onSpawnMob);
   root.querySelector("#guildBtn")?.addEventListener("pointerup", onGuildButton);
   root.querySelector("#guildClose")?.addEventListener("pointerup", onGuildClose);
+  root.querySelector("#partyBtn")?.addEventListener("pointerup", onPartyButton);
+  root.querySelector("#partyClose")?.addEventListener("pointerup", onPartyClose);
+  partyBody.addEventListener("pointerup", onPartyClick);
+  partyBody.addEventListener("input", capturePartyDraft);
+  root.querySelector("#plotsBtn")?.addEventListener("pointerup", onPlotsButton);
+  root.querySelector("#plotsClose")?.addEventListener("pointerup", onPlotsClose);
+  plotsBody.addEventListener("pointerup", onPlotsClick);
   root.querySelector("#guildAccept")?.addEventListener("pointerup", acceptGuild);
   root.querySelector("#guildDecline")?.addEventListener("pointerup", declineGuild);
   guildBody.addEventListener("pointerup", onGuildClick);
@@ -4627,11 +4823,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     floats: () => floaters.map((f) => f.text),
   };
 
+  let linked = false;
   const netStatus = root.querySelector<HTMLElement>("#netStatus");
   const linkGate = root.querySelector<HTMLElement>("#linkGate");
   const linkGateText = root.querySelector<HTMLElement>("#linkGateText");
   const linkRetry = root.querySelector<HTMLButtonElement>("#linkGateRetry");
   function setNetStatus(line: string | null) {
+    linked = line === "Online";
     if (!netStatus) return;
     if (!line) {
       netStatus.hidden = true;
@@ -4643,6 +4841,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function showLink(gate: LinkGate) {
+    linked = gate === "online";
     if (gate === "sign-in") {
       profile.onSignOut?.();
       return;
@@ -4753,6 +4952,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     root.querySelector("#debugSpawnBtn")?.removeEventListener("pointerup", onSpawnMob);
     root.querySelector("#guildBtn")?.removeEventListener("pointerup", onGuildButton);
     root.querySelector("#guildClose")?.removeEventListener("pointerup", onGuildClose);
+    root.querySelector("#partyBtn")?.removeEventListener("pointerup", onPartyButton);
+    root.querySelector("#partyClose")?.removeEventListener("pointerup", onPartyClose);
+    partyBody.removeEventListener("pointerup", onPartyClick);
+    partyBody.removeEventListener("input", capturePartyDraft);
+    root.querySelector("#plotsBtn")?.removeEventListener("pointerup", onPlotsButton);
+    root.querySelector("#plotsClose")?.removeEventListener("pointerup", onPlotsClose);
+    plotsBody.removeEventListener("pointerup", onPlotsClick);
     root.querySelector("#guildAccept")?.removeEventListener("pointerup", acceptGuild);
     root.querySelector("#guildDecline")?.removeEventListener("pointerup", declineGuild);
     guildBody.removeEventListener("pointerup", onGuildClick);

@@ -86,11 +86,25 @@ body {
   box-sizing: border-box;
 }
 
-#login .slot-frame img {
+#login .slot-frame img,
+.slot-portrait {
   width: 112px;
   height: 112px;
   object-fit: contain;
   image-rendering: pixelated;
+  background: radial-gradient(circle at 50% 62%, #31402a 0%, #10140e 72%);
+  border: 1px solid #3d4634;
+}
+
+.slot-loading {
+  min-height: 240px;
+  width: min(760px, 96vw);
+  display: grid;
+  place-items: center;
+  margin-top: 8px;
+  color: #d7c28a;
+  letter-spacing: 1px;
+  text-align: center;
 }
 
 #login .slot-frame b {
@@ -475,7 +489,9 @@ body {
 #bag,
 #shop,
 #train,
-#guild {
+#guild,
+#party,
+#plots {
   position: absolute;
   inset: 0;
   display: grid;
@@ -495,7 +511,9 @@ body {
 #bag[hidden],
 #shop[hidden],
 #train[hidden],
-#guild[hidden] {
+#guild[hidden],
+#party[hidden],
+#plots[hidden] {
   display: none !important;
 }
 
@@ -503,7 +521,9 @@ body {
 #bagPanel,
 #shopPanel,
 #trainPanel,
-#guildPanel {
+#guildPanel,
+#partyPanel,
+#plotsPanel {
   width: min(360px, 92vw);
   max-height: 80dvh;
   overflow-y: auto;
@@ -518,7 +538,9 @@ body {
 #bagTitle,
 #shopTitle,
 #trainTitle,
-#guildTitle {
+#guildTitle,
+#partyTitle,
+#plotsTitle {
   font-family: Cinzel, Georgia, serif;
   letter-spacing: 2px;
   margin-bottom: 8px;
@@ -902,6 +924,8 @@ body {
 #shopClose,
 #trainClose,
 #guildClose,
+#partyClose,
+#plotsClose,
 #trainPromote,
 #debugLevelBtn,
 #debugPlusBtn,
@@ -911,12 +935,17 @@ body {
 #shopBag button,
 #trainList button,
 #guildBody button,
+#partyBody button,
+#plotsBody button,
 .bag-row button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
   background: #243024;
   color: #efe6c8;
   border: 1px solid #6a5a38;
+  font-family: Georgia, serif;
+  font-size: 16px;
+  white-space: nowrap;
 }
 
 #shopStock button,
@@ -1072,10 +1101,130 @@ body {
 }
 
 .online-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   color: #c6d38a;
   font-size: 12px;
   letter-spacing: 0.4px;
   margin: -2px 0 4px;
+}
+
+.link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 6px;
+  border-radius: 999px;
+  border: 1px solid #6a4a3a;
+  background: #2a1814;
+  color: #e7b4a0;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.link-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a05040;
+}
+
+.link-pill.on {
+  border-color: #3f6a3a;
+  background: #1a2e18;
+  color: #d7f0c4;
+}
+
+.link-pill.on::before {
+  background: #7dce6a;
+  box-shadow: 0 0 6px #7dce6a;
+}
+
+.party-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 8px;
+  color: #d7c28a;
+  font-size: 14px;
+}
+
+#partyBody input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 8px;
+  background: #0e120e;
+  color: #efe6c8;
+  border: 1px solid #6a5a38;
+}
+
+.plot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid #3d4634;
+}
+
+.plot-row b {
+  flex: 1 1 100%;
+}
+
+.plot-row span {
+  flex: 1 1 auto;
+  color: #c8b88a;
+}
+
+#signOutDialog {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 8, 8, 0.62);
+  pointer-events: auto;
+}
+
+.signout-card {
+  width: min(320px, 92vw);
+  box-sizing: border-box;
+  padding: 18px 16px 16px;
+  background: #141812;
+  border: 1px solid #8a7344;
+  color: #f0e2b0;
+}
+
+#signOutDialog p {
+  margin: 0 0 14px;
+  text-align: center;
+  font-family: Cinzel, Georgia, serif;
+  letter-spacing: 1px;
+}
+
+.signout-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#signOutDialog button {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: #243024;
+  color: #efe6c8;
+  border: 1px solid #6a5a38;
+  font-family: Georgia, serif;
+  font-size: 16px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 #travelButtons button[disabled] {

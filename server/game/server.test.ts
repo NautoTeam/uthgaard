@@ -7,7 +7,7 @@ import { backoffMs, interpolateXZ, reconnectPlan, snapAlpha } from "../../src/ga
 import { signGameToken } from "../../src/shared/net/token";
 import { ClientMsg, IntentSchema, ServerMsg } from "../../src/shared/net/protocol";
 import type { CharacterRecord } from "../../src/shared/persist/store";
-import { blocked, TREES } from "../../src/shared/sim/geo";
+import { blocked, inSpawnGuard, onRoad, TREES } from "../../src/shared/sim/geo";
 import { attrsFor } from "../../src/shared/sim/types";
 import { createWorld } from "../../src/shared/sim/world";
 import { applyGameMigrations, characterStore, memoryCharacters, type GameDb } from "./db";
@@ -647,10 +647,13 @@ test("hello verifies the game token and reloads the saved character", async () =
       const snap = [...msgs2].reverse().find((m) => m.t === "snap");
       return snap?.state?.players?.find((p) => p.username === "Ada");
     });
-    assert.ok(Math.abs(back.x - movedX) < 0.05);
+    assert.equal(back.username, "Ada");
+    assert.ok(inSpawnGuard(back.x, back.z));
+    assert.equal(onRoad(back.x, back.z, 2.4), false);
     const row = await characters.load("user-ada");
     assert.equal(row?.save.username, "Ada");
     assert.notEqual(row?.save.username, "Someone Else");
+    assert.ok(Math.hypot(back.x - (row?.save.x ?? back.x), back.z - (row?.save.z ?? back.z)) > 0.05);
   } finally {
     ws2.close();
     await again.close();

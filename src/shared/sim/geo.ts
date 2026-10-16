@@ -534,6 +534,88 @@ export function arrivalAt(
   return offCampfire(base.x, base.z);
 }
 
+/** Mobs will not aggro a hero standing this close to a starter campfire. */
+export const SPAWN_GUARD = 6.5;
+
+const starterCache = new Map<string, { x: number; z: number }>();
+
+function awayFromCamps(x: number, z: number, min = 16) {
+  for (const camp of CAMPS) {
+    if (Math.hypot(camp.cx - x, camp.cz - z) < min) return false;
+  }
+  return true;
+}
+
+/** Walkable, off the roads, and clear of spider and snake camps. */
+function spawnTile(x: number, z: number) {
+  return !blocked(x, z) && !onCampfire(x, z) && !underHall(x, z) && !onRoad(x, z, 3) && awayFromCamps(x, z);
+}
+
+/** A walkable tile beside the village campfire, off the roads that leave town. */
+export function starterStand(cityId: string): { x: number; z: number } {
+  const cached = starterCache.get(cityId);
+  if (cached) return cached;
+  const city = CITIES.find((row) => row.id === cityId);
+  const cx = city?.x ?? 0;
+  const cz = city?.z ?? 0;
+  const fires = FIRES.map(([x, z]) => ({ x, z, d: Math.hypot(x - cx, z - cz) }))
+    .filter((fire) => fire.d <= 14)
+    .sort((a, b) => Number(onRoad(a.x, a.z, 1.5)) - Number(onRoad(b.x, b.z, 1.5)) || a.d - b.d);
+  const anchors = fires.length ? fires : [{ x: cx + 2.4, z: cz - 2.4, d: 3 }];
+  let best: { x: number; z: number } | null = null;
+  for (const fire of anchors) {
+    for (let r = 1.15; r <= 6.2 && !best; r += 0.22) {
+      for (let a = 0; a < 24; a++) {
+        const ang = (a / 24) * Math.PI * 2 + 0.35;
+        const x = fire.x + Math.cos(ang) * r;
+        const z = fire.z + Math.sin(ang) * r;
+        if (!spawnTile(x, z)) continue;
+        best = { x, z };
+        break;
+      }
+    }
+    if (best) break;
+  }
+  if (!best) {
+    const fallback = offCampfire(anchors[0].x + 2.2, anchors[0].z + 0.5);
+    best = fallback;
+  }
+  starterCache.set(cityId, best);
+  return best;
+}
+
+/** Scatter around a starter stand. Stays off the road and inside the guard. */
+export function spawnNear(
+  x: number,
+  z: number,
+  occupied: Array<{ x: number; z: number }> = [],
+  salt = 0,
+): { x: number; z: number } {
+  const spots: Array<{ x: number; z: number }> = [];
+  const ok = (nx: number, nz: number) => spawnTile(nx, nz) && Math.hypot(nx - x, nz - z) <= SPAWN_GUARD - 0.4;
+  if (ok(x, z)) spots.push({ x, z });
+  for (let r = 0.8; r <= 2.6; r += 0.4) {
+    for (let a = 0; a < 12; a++) {
+      const ang = (a / 12) * Math.PI * 2 + (Math.abs(salt) % 7) * 0.04;
+      const nx = x + Math.cos(ang) * r;
+      const nz = z + Math.sin(ang) * r;
+      if (ok(nx, nz)) spots.push({ x: nx, z: nz });
+    }
+  }
+  const free = spots.filter((spot) => !occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 0.9));
+  const pool = free.length ? free : spots;
+  if (!pool.length) return spawnTile(x, z) ? { x, z } : offCampfire(x, z);
+  return pool[Math.abs(salt) % pool.length];
+}
+
+export function inSpawnGuard(x: number, z: number) {
+  for (const id of ["uthgaard", "fenhollow"]) {
+    const stand = starterStand(id);
+    if (Math.hypot(stand.x - x, stand.z - z) <= SPAWN_GUARD) return true;
+  }
+  return false;
+}
+
 export function clearLine(x0: number, z0: number, x1: number, z1: number) {
   const dist = Math.hypot(x1 - x0, z1 - z0);
   const steps = Math.max(1, Math.ceil(dist / 0.4));

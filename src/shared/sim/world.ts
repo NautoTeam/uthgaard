@@ -1,4 +1,4 @@
-import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap } from "./geo";
+import { CITIES, NPCS, arrivalAt, arrivalSalt, blocked, cityAt, inSpawnGuard, nearestOpen, nearestTrainer, nearestVendor, nearestWayfarer, resolveMove, screenGap, spawnNear, starterStand } from "./geo";
 import { HAVEN_ZONE_RADIUS, havenCity } from "./mask";
 import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, trainedDamage, hitChance, trainPointsFor, skillById, poolsFor, defaultHotbar, conXp, conFor, mobByType, mobHp, mobLabel, powerById, attrsFor, DEATH_SHROUD_MS } from "../content/catalog";
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
@@ -25,11 +25,11 @@ function starterWeapon(base: string, prestige: string) {
 
 function hearthOf(race: Race): { x: number; z: number; name: string } {
   if (race === "Marshwarden") {
-    const city = cityAt("fenhollow");
-    if (city) return { x: city.x, z: city.z, name: "Fenhollow" };
+    const stand = starterStand("fenhollow");
+    return { x: stand.x, z: stand.z, name: "Fenhollow" };
   }
-  const city = cityAt("uthgaard");
-  return { x: city?.x ?? 0, z: city?.z ?? 0, name: "the Village of Caldrenmoor" };
+  const stand = starterStand("uthgaard");
+  return { x: stand.x, z: stand.z, name: "the Village of Caldrenmoor" };
 }
 
 export interface JoinInput {
@@ -455,12 +455,12 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     const occupied = [...players.values()]
       .filter((p) => p.hp > 0)
       .map((p) => ({ x: p.x, z: p.z }));
-    let spot =
-      typeof input.x === "number" && typeof input.z === "number"
-        ? nearestOpen(input.x, input.z)
-        : arrivalAt(home.x, home.z, occupied, arrivalSalt(input.id));
-    if (occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 0.85)) {
-      spot = arrivalAt(home.x, home.z, occupied, arrivalSalt(input.id));
+    const savedX = input.x;
+    const savedZ = input.z;
+    const saved = typeof savedX === "number" && typeof savedZ === "number";
+    let spot = saved ? nearestOpen(savedX, savedZ) : spawnNear(home.x, home.z, occupied, arrivalSalt(input.id));
+    if (!saved && occupied.some((o) => Math.hypot(o.x - spot.x, o.z - spot.z) < 0.85)) {
+      spot = spawnNear(home.x, home.z, occupied, arrivalSalt(input.id) + 3);
     }
     const player: PlayerState = {
       id: input.id,
@@ -1058,7 +1058,10 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       ...[...players.values()].filter((o) => o.id !== p.id && o.hp > 0).map((o) => ({ x: o.x, z: o.z })),
       ...extra,
     ];
-    const spot = arrivalAt(home.x, home.z, occupied, arrivalSalt(p.id));
+    const spot =
+      place && Number.isFinite(place.x) && Number.isFinite(place.z)
+        ? arrivalAt(home.x, home.z, occupied, arrivalSalt(p.id))
+        : spawnNear(home.x, home.z, occupied, arrivalSalt(p.id));
     p.x = spot.x;
     p.z = spot.z;
     p.hp = p.maxHp;
@@ -1206,6 +1209,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         let preyD = def.aggro;
         for (const p of players.values()) {
           if (p.hp <= 0) continue;
+          if (inSpawnGuard(p.x, p.z) || inSpawnGuard(m.x, m.z)) continue;
           if (p.stealthUntil > now && m.targetId !== p.id) continue;
           if (!conFor(m.level, p.level).aggro) continue;
           const d = Math.hypot(p.x - m.x, p.z - m.z);
@@ -1221,7 +1225,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       }
       if (m.targetId) {
         const t = players.get(m.targetId);
-        if (!t || t.hp <= 0 || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro) {
+        if (!t || t.hp <= 0 || homeD > (def.campLeash || 15) || !conFor(m.level, t.level).aggro || inSpawnGuard(t.x, t.z) || inSpawnGuard(m.x, m.z)) {
           m.targetId = null;
         } else {
           if (sameTile(m.x, m.z, t.x, t.z)) stepOffTile(m, t.x, t.z);

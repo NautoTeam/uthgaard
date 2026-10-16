@@ -52,7 +52,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const [path, setPath] = useState<BaseClass>("Fighter");
   const [creating, setCreating] = useState<number | null>(null);
   const [confirmSlot, setConfirmSlot] = useState<number | null>(null);
-  const [slots, setSlots] = useState<Array<CharacterSlotView | null>>([null, null, null]);
+  const [slots, setSlots] = useState<Array<CharacterSlotView | null> | null>(null);
   const [slotsNote, setSlotsNote] = useState("");
   const [block, setBlock] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
@@ -71,13 +71,18 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   const showingVerify = !verified && Boolean(email || authMode === "verify");
 
   useEffect(() => {
-    if (!verified) return;
+    if (!verified) {
+      setSlots(null);
+      return;
+    }
     let gone = false;
+    setSlots(null);
     setSlotsNote("");
     void fetchCharacterSlots().then((result) => {
       if (gone) return;
       if (!result.ok) {
         setSlotsNote(result.reason);
+        setSlots([null, null, null]);
         return;
       }
       setSlots(result.slots);
@@ -412,13 +417,24 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
         )}
         {authError && <p className="account-reason">{authError}</p>}
       </div>
-      {verified && (
+      {verified && slots == null && <p className="slot-loading">{slotsNote || "Loading heroes…"}</p>}
+      {verified && slots && (
         <>
           <div className="slot-row">
             {slots.map((hero, slot) =>
               hero ? (
                 <div className="slot-frame" key={slot}>
-                  <img src={heroSprite(hero.race)} alt="" />
+                  <img
+                    className="slot-portrait"
+                    src={heroSprite(hero.race)}
+                    alt={`${hero.name} portrait`}
+                    onError={(event) => {
+                      const img = event.currentTarget;
+                      if (img.dataset.fallback === "1") return;
+                      img.dataset.fallback = "1";
+                      img.src = `/sprites/${hero.race.toLowerCase()}.png`;
+                    }}
+                  />
                   <b>{hero.name}</b>
                   <span>
                     {hero.race} {hero.prestigeClass || hero.baseClass}
@@ -532,6 +548,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
 }
 
 function Isle({ profile }: { profile: IsleProfile }) {
+  const [confirmOut, setConfirmOut] = useState(false);
   useEffect(() => {
     const root = document.getElementById("game");
     if (!root) return;
@@ -648,10 +665,16 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <button id="guildBtn" type="button">
           Guild
         </button>
+        <button id="partyBtn" type="button">
+          Party
+        </button>
+        <button id="plotsBtn" type="button">
+          Plots
+        </button>
         <button id="chatToggle" type="button">
           Chat
         </button>
-        <button id="signOutBtn" type="button" onClick={() => void signOutGame()}>
+        <button id="signOutBtn" type="button" onClick={() => setConfirmOut(true)}>
           Sign out
         </button>
       </div>
@@ -703,6 +726,24 @@ function Isle({ profile }: { profile: IsleProfile }) {
           <div id="guildTitle">Guild</div>
           <div id="guildBody" />
           <button id="guildClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="party" hidden>
+        <div id="partyPanel">
+          <div id="partyTitle">Party</div>
+          <div id="partyBody" />
+          <button id="partyClose" type="button">
+            Close
+          </button>
+        </div>
+      </div>
+      <div id="plots" hidden>
+        <div id="plotsPanel">
+          <div id="plotsTitle">City plots</div>
+          <div id="plotsBody" />
+          <button id="plotsClose" type="button">
             Close
           </button>
         </div>
@@ -766,6 +807,21 @@ function Isle({ profile }: { profile: IsleProfile }) {
         <div id="guildMessages" hidden />
         <input id="chatInput" placeholder="Say something…" enterKeyHint="send" />
       </div>
+      {confirmOut && (
+        <div id="signOutDialog" role="dialog" aria-modal="true" aria-labelledby="signOutTitle">
+          <div className="signout-card">
+            <p id="signOutTitle">Leave Caldrenmoor?</p>
+            <div className="signout-actions">
+              <button type="button" onClick={() => void signOutGame()}>
+                Sign out
+              </button>
+              <button type="button" onClick={() => setConfirmOut(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
