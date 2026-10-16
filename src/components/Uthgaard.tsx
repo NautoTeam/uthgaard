@@ -34,7 +34,7 @@ function heroSprite(race: string) {
   if (key === "human") return "/sprites/anim/human-base-idle-0.png";
   if (key === "minotaur") return "/sprites/anim/minotaur-base-idle-0.png";
   if (key === "elf") return "/sprites/anim/elf-base-idle-0.png";
-  if (key === "marshwarden") return "/sprites/anim/marshwarden-walk-0.png";
+  if (key === "marshwarden") return "/sprites/anim/marshwarden-base-idle-0.png";
   return `/sprites/${key}.png`;
 }
 

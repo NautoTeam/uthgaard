@@ -402,8 +402,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   const HUMAN_ANIMS = ["idle", "walk", "atk1h", "atk2h", "block", "cast1h"] as const;
   type HumanAnim = (typeof HUMAN_ANIMS)[number];
-  type RigRace = "human" | "elf" | "minotaur";
-  const RIG_RACES: RigRace[] = ["human", "elf", "minotaur"];
+  type RigRace = "human" | "elf" | "minotaur" | "marshwarden";
+  const RIG_RACES: RigRace[] = ["human", "elf", "minotaur", "marshwarden"];
   function freshDur(): Record<HumanAnim, number[]> {
     return {
       idle: [300, 300, 300, 300],
@@ -418,6 +418,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     human: freshDur(),
     elf: freshDur(),
     minotaur: freshDur(),
+    marshwarden: freshDur(),
   };
   function rigMs(race: RigRace, anim: HumanAnim) {
     return rigDur[race][anim].reduce((sum, ms) => sum + ms, 0);
@@ -436,11 +437,20 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const HUMAN_CELL = 112 * 1.16;
   const ELF_CELL = HUMAN_CELL * 1.1;
   const MINOTAUR_CELL = HUMAN_CELL * 1.26;
+  /** Crouched body, scaled so his height matches the standing human. */
+  const MARSHWARDEN_CELL = 199;
+  /**
+   * Source frame the anchors were authored in. Hips (torsoX) and feet (feetY)
+   * are the point that sits on the tile. 180-frame races share a 6px pad
+   * under the feet; the marshwarden pad is the same in a 256 frame.
+   */
+  const RIG_METRICS: Record<RigRace, { frame: number; torsoX: number; feetY: number }> = {
+    human: { frame: 180, torsoX: 90, feetY: 174 },
+    elf: { frame: 180, torsoX: 90, feetY: 174 },
+    minotaur: { frame: 180, torsoX: 90, feetY: 174 },
+    marshwarden: { frame: 256, torsoX: 128, feetY: 250 },
+  };
   const FACE_FILE = ["S", "W", "E", "N"];
-  for (const race of ["marshwarden"]) {
-    for (let i = 0; i < 16; i++) loadFrame(`${race}-walk-${i}`, "7");
-    for (let i = 0; i < 4; i++) loadFrame(`${race}-atk-${i}`, "6");
-  }
   for (const race of ["human", "elf"] as const) {
     for (const part of ["base", "chest-cloth"]) {
       for (const anim of HUMAN_ANIMS) {
@@ -450,6 +460,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   for (const anim of HUMAN_ANIMS) {
     for (let i = 0; i < 16; i++) loadFrame(`minotaur-base-${anim}-${i}`, "1");
+  }
+  for (const anim of HUMAN_ANIMS) {
+    for (let i = 0; i < 16; i++) loadFrame(`marshwarden-base-${anim}-${i}`, "1");
   }
   const fx: Record<string, HTMLImageElement> = {};
   for (const name of ["fireball", "impact"]) {
@@ -1235,6 +1248,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     human: emptyAnchors(),
     elf: emptyAnchors(),
     minotaur: emptyAnchors(),
+    marshwarden: emptyAnchors(),
   };
 
   function loadWeaponRig() {
@@ -1280,8 +1294,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
   loadWeaponRig();
 
-  function anchorAt(list: HandAnchor[], frame: number): HandAnchor {
-    return list[frame] ?? list[0] ?? { x: 90, y: 110, angle: -90, behind: false, scale: 0.72 };
+  function anchorAt(list: HandAnchor[], frame: number, race: RigRace): HandAnchor {
+    const metrics = RIG_METRICS[race];
+    return (
+      list[frame] ??
+      list[0] ?? { x: metrics.torsoX, y: metrics.feetY - 60, angle: -90, behind: false, scale: 0.72 }
+    );
   }
 
   function clothKey(race: RigRace, anim: HumanAnim, frame: number) {
@@ -1383,14 +1401,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     facingFile: string,
   ) {
     const hands = rigAnchors[race][anim];
-    const main = anchorAt(hands.main, frame);
-    const off = anchorAt(hands.off, frame);
+    const main = anchorAt(hands.main, frame, race);
+    const off = anchorAt(hands.off, frame, race);
     const weapon = heldWeapon(equipment?.weapon ?? "");
     const shield = anim === "atk2h" ? null : heldShield(equipment?.offhand ?? "", facingFile);
+    const metrics = RIG_METRICS[race];
     const foot = worldToScreen(x, z);
-    const originX = foot.x - cell / 2;
-    const originY = foot.y - cell + 16 - lift;
-    const drawScale = cell / 180;
+    const drawScale = cell / metrics.frame;
+    // (torsoX, feetY) is the hip/sole in source pixels. The 16px bias puts
+    // the frame bottom where the 180px rigs already stand, and the pad under
+    // the feet (frame - feetY) is 6px on every race, so soles share a line.
+    const footDrop = (metrics.frame - metrics.feetY) * drawScale;
+    const originX = foot.x - metrics.torsoX * drawScale;
+    const originY = foot.y - metrics.feetY * drawScale + (16 - footDrop) - lift;
     const props: Array<{ file: string; anchor: HandAnchor; pivotX: number; pivotY: number; baseAngle: number }> = [];
     if (weapon) props.push({ file: weapon.file, anchor: main, pivotX: weapon.pivotX, pivotY: weapon.pivotY, baseAngle: weapon.baseAngle });
     if (shield) props.push({ file: shield.file, anchor: off, pivotX: shield.pivotX, pivotY: shield.pivotY, baseAngle: shield.baseAngle });
@@ -1399,9 +1422,9 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
     }
     const baseKey = `${race}-base-${anim}-${frame}`;
-    if (!drawFrame(baseKey, x, z, cell, lift, filter)) return false;
+    if (!drawRigFrame(baseKey, originX, originY, cell, filter)) return false;
     const chest = clothKey(race, anim, frame);
-    if (chest) drawFrame(chest, x, z, cell, lift, filter);
+    if (chest) drawRigFrame(chest, originX, originY, cell, filter);
     for (const prop of props) {
       if (prop.anchor.behind) continue;
       drawHeld(prop.file, prop.anchor, prop.pivotX, prop.pivotY, prop.baseAngle, originX, originY, drawScale, "none");
@@ -1409,9 +1432,28 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     return true;
   }
 
+  function drawRigFrame(key: string, originX: number, originY: number, cell: number, filter: string) {
+    const img = frames[key];
+    if (!img) return false;
+    const dh = cell * (img.height / img.width);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.filter = filter;
+    ctx.drawImage(img, originX, originY, cell, dh);
+    ctx.restore();
+    return true;
+  }
+
   function asRig(race: string): RigRace | null {
-    if (race === "human" || race === "elf" || race === "minotaur") return race;
+    if (race === "human" || race === "elf" || race === "minotaur" || race === "marshwarden") return race;
     return null;
+  }
+
+  function rigCell(race: RigRace) {
+    if (race === "elf") return ELF_CELL;
+    if (race === "minotaur") return MINOTAUR_CELL;
+    if (race === "marshwarden") return MARSHWARDEN_CELL;
+    return HUMAN_CELL;
   }
 
   function drawHero(
@@ -1436,7 +1478,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     const kind = classKind(cls);
     const filter = classFilter[kind];
     const rig = asRig(drawn);
-    const cell = rig === "minotaur" ? MINOTAUR_CELL : rig === "elf" ? ELF_CELL : rig === "human" ? HUMAN_CELL : 112;
+    const cell = rig ? rigCell(rig) : 112;
     const lift = moving ? Math.abs(Math.sin(actor.phase * Math.PI)) * 5 : Math.sin(now / 420) * 1.2;
     const casting = now < actor.castUntil;
     const attacking = now < actor.attackUntil && !casting;
@@ -2906,8 +2948,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     p.cooldowns.attack = cd;
     const actor = actors.get(myId);
     if (actor) {
-      const swing = (p.race === "Human" || p.race === "Minotaur") && twoHanded(p.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
-      const rig = p.race === "Minotaur" ? "minotaur" : p.race === "Human" ? "human" : null;
+      const rig = asRig((p.race || "").toLowerCase());
+      const swing = rig && twoHanded(p.equipment?.weapon ?? "") ? "atk2h" : "atk1h";
       actor.attackUntil = performance.now() + (rig ? rigMs(rig, swing) : SWING_MS);
     }
     if (Math.random() * 100 >= hitChance(p)) {
@@ -3120,6 +3162,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function nameLift(race: string) {
     if (race === "minotaur") return 188;
     if (race === "elf") return 160;
+    if (race === "marshwarden") return 158;
     if (race === "human") return 145;
     return 136;
   }
