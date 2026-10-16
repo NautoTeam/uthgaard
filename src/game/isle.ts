@@ -69,11 +69,7 @@ import {
   CITY_PLOTS,
   CORNERSTONE_GOLD,
   CRESTS,
-  GUILD_KEY,
   GUILD_KINDS,
-  guildOf,
-  invalidateGuilds,
-  memberRank,
   type CrestId,
   type GuildKind,
 } from "./guilds";
@@ -508,8 +504,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let remoteSession: RemoteHandle | null = null;
   let intentSeq = 0;
   const sentIntents = new Map<number, Intent>();
-  // Tabs do not share a world. An older tab used to win the BroadcastChannel
-  // host role and paste a stale hero over a fresh click, death, or respawn.
+  // Tabs do not share a world. A second tab must not paste a stale hero over a fresh click, death, or respawn.
   let lastInput = 0;
 
   const keys = new Set<string>();
@@ -3253,11 +3248,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     guildSig = "";
   }
 
-  function onGuildStorage(e: StorageEvent) {
-    if (e.key && e.key !== GUILD_KEY) return;
-    invalidateGuilds();
-  }
-
   function onGuildClick(e: Event) {
     if (blockPanelClicks) return;
     const btn = (e.target as HTMLElement).closest("button");
@@ -4529,9 +4519,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   window.addEventListener("resize", resize);
   root.addEventListener("contextmenu", onContextMenu);
 
-  seenGuild = guildOf(profile.username)?.id ?? "";
-  seenRank = memberRank(profile.username) ?? "";
-  window.addEventListener("storage", onGuildStorage);
+  forgetRetiredSaves();
 
   const stepTimer = window.setInterval(() => {
     watchPurse();
@@ -4755,7 +4743,6 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     cancelAnimationFrame(raf);
     window.clearInterval(stepTimer);
     onLeave();
-    window.removeEventListener("storage", onGuildStorage);
     hotbarButtons.forEach((btn) => btn.removeEventListener("pointerup", onHotbar));
     promoteBtn.removeEventListener("pointerup", onPromote);
     root.querySelector("#trainPromote")?.removeEventListener("pointerup", onPromote);
@@ -4817,6 +4804,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   };
   isleSlot().dispose = dispose;
   return dispose;
+}
+
+/** Drop browser copies of heroes, graves, and guilds. The server owns them now. */
+const RETIRED_KEYS = [
+  "uthgaard-characters-v1",
+  "uthgaard-graves-v1",
+  "uthgaard-guilds-v1",
+  "uthgaard-guild-chat-v1",
+];
+
+function forgetRetiredSaves() {
+  try {
+    if (typeof localStorage === "undefined") return;
+    for (const key of RETIRED_KEYS) localStorage.removeItem(key);
+  } catch {
+    /* private mode */
+  }
 }
 
 function escapeHtml(s: string) {

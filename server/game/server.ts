@@ -145,6 +145,8 @@ type Conn = {
   saveChain: Promise<void>;
   tokens: number;
   bucketAt: number;
+  /** Close with 4401 at this clock time if the socket has not joined. */
+  helloBy: number;
   drops: number[];
   bads: number[];
   chatAt: number[];
@@ -179,7 +181,7 @@ export function startServer(opts: {
   let lastSaveAt = now();
   let gravesReady = false;
   const knownGraves = new Set<string>();
-  const helloTimers = new Set<ReturnType<typeof setTimeout>>();
+  const openConns = new Set<Conn>();
   const byUser = new Map<string, Conn>();
   const userLock = new Map<string, Promise<void>>();
   const pending = new Set<Promise<void>>();
@@ -419,26 +421,19 @@ export function startServer(opts: {
       alive: true,
       saveChain: Promise.resolve(),
       tokens: INTENT_BURST,
-      bucketAt: Date.now(),
+      bucketAt: now(),
       drops: [],
       bads: [],
       chatAt: [],
+      helloBy: now() + HELLO_MS,
     };
-    let helloTimer: ReturnType<typeof setTimeout>;
+    openConns.add(conn);
     function armHello(ms: number) {
-      clearTimeout(helloTimer);
-      helloTimers.delete(helloTimer);
-      helloTimer = setTimeout(() => {
-        helloTimers.delete(helloTimer);
-        if (!conn.playerId && socket.readyState === WebSocket.OPEN) socket.close(4401, "hello required");
-      }, ms);
-      helloTimers.add(helloTimer);
+      conn.helloBy = now() + ms;
     }
-    armHello(HELLO_MS);
 
     const forget = async () => {
-      clearTimeout(helloTimer);
-      helloTimers.delete(helloTimer);
+      openConns.delete(conn);
       if (conn.replaced) return;
       await dropConn(conn);
     };
@@ -457,14 +452,13 @@ export function startServer(opts: {
       logNet("reject", conn.userId, `reason=${reason}`);
       conn.dead = true;
       send(socket, { t: "error", reason });
-      clearTimeout(helloTimer);
-      helloTimers.delete(helloTimer);
+      conn.helloBy = Number.POSITIVE_INFINITY;
       socket.close(4401, reason);
     }
 
     function noteBad() {
       dropped++;
-      const t = Date.now();
+      const t = now();
       conn.bads.push(t);
       conn.bads = conn.bads.filter((ts) => t - ts <= ABUSE_WINDOW_MS);
       if (conn.bads.length >= 20 && !conn.dead) {
@@ -474,7 +468,7 @@ export function startServer(opts: {
     }
 
     function noteDrop() {
-      const t = Date.now();
+      const t = now();
       conn.drops.push(t);
       conn.drops = conn.drops.filter((ts) => t - ts <= ABUSE_WINDOW_MS);
       if (conn.drops.length > 100 && !conn.dead) {
@@ -484,7 +478,7 @@ export function startServer(opts: {
     }
 
     function allowIntent() {
-      const t = Date.now();
+      const t = now();
       const elapsed = Math.max(0, (t - conn.bucketAt) / 1000);
       conn.tokens = Math.min(INTENT_BURST, conn.tokens + elapsed * INTENT_RATE);
       conn.bucketAt = t;
@@ -645,8 +639,7 @@ export function startServer(opts: {
             const record = recordFromPlayer(player);
             conn.savedHash = JSON.stringify(record);
           }
-          clearTimeout(helloTimer);
-          helloTimers.delete(helloTimer);
+          conn.helloBy = Number.POSITIVE_INFINITY;
           conn.userId = claims.userId;
           conn.playerId = player.id;
           conn.rev = rev;
@@ -675,7 +668,7 @@ export function startServer(opts: {
           send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are not in a guild." } });
           return;
         }
-        const gate = allowChat(conn.chatAt, Date.now());
+        const gate = allowChat(conn.chatAt, now());
         conn.chatAt = gate.stamps;
         if (!gate.ok) {
           send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are talking too fast." } });
@@ -687,7 +680,7 @@ export function startServer(opts: {
             send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: false, reason: "You are not in a guild." } });
             return;
           }
-          const line = { guildId, from: player.username.slice(0, 16), text, at: Date.now() };
+          const line = { guildId, from: player.username.slice(0, 16), text, at: now() };
           if (characters) await characters.addGuildChat(line);
           guilds.pushChat(line);
           send(socket, { t: "ack", seq: parsed.data.seq, result: { ok: true } });
@@ -750,6 +743,13 @@ export function startServer(opts: {
     for (const conn of byUser.values()) syncLife(conn);
     syncGraves();
     const at = now();
+    for (const conn of openConns) {
+      if (conn.playerId || conn.dead || conn.replaced) continue;
+      if (at >= conn.helloBy && conn.socket.readyState === WebSocket.OPEN) {
+        conn.dead = true;
+        conn.socket.close(4401, "hello required");
+      }
+    }
     if (characters && at - lastSaveAt >= SAVE_MS) {
       lastSaveAt = at;
       for (const conn of byUser.values()) void persist(conn, false);
@@ -848,8 +848,6 @@ export function startServer(opts: {
       if (closed) return;
       closed = true;
       clearInterval(timer);
-      for (const helloTimer of helloTimers) clearTimeout(helloTimer);
-      helloTimers.clear();
       const conns = [...byUser.values()];
       await Promise.all(conns.map((conn) => persist(conn, true))).catch((err) => warnSave(err));
       for (const conn of conns) conn.replaced = true;

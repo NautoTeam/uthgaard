@@ -334,22 +334,18 @@ test("two worlds with the same seed and clock fight the same way", () => {
   assert.deepEqual(fight(7), fight(7));
 });
 
-test("a socket without hello is closed within 5s", { timeout: 12_000 }, async () => {
-  const game = startServer({ port: 0, now: () => 1_000, rand: mulberry32(3) });
+test("a socket without hello is closed when the hello deadline passes", async () => {
+  let clock = 1_000;
+  const game = startServer({ port: 0, now: () => clock, rand: mulberry32(3) });
   const port = await game.ready;
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   ws.on("error", () => undefined);
   try {
     await opened(ws);
-    const code = await new Promise<number>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("socket stayed open")), 8000);
-      ws.once("close", (closeCode) => {
-        clearTimeout(timer);
-        resolve(closeCode);
-      });
-    });
-    assert.equal(code, 4401);
+    clock += 5_000;
+    assert.equal(await closeCode(ws, 2000), 4401);
   } finally {
+    ws.close();
     await game.close();
   }
 });
@@ -375,7 +371,7 @@ test("garbage and oversize frames do not kill /healthz", async () => {
         /* oversize frames close the socket */
       }
     }
-    await new Promise((r) => setTimeout(r, 200));
+    await until(() => (game.dropped >= 1 ? true : undefined));
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as { ok: boolean; players: number; tick: number };
@@ -403,8 +399,7 @@ test("a socket that has not joined receives no snaps", async () => {
   try {
     await Promise.all([opened(ada), opened(lurker)]);
     await hello(ada, "user-ada", "Ada");
-    await until(() => adaMsgs.find((m) => m.t === "snap"));
-    await new Promise((r) => setTimeout(r, 400));
+    await until(() => adaMsgs.filter((m) => m.t === "snap").length >= 3 ? true : undefined);
     assert.equal(lurkMsgs.some((m) => m.t === "snap"), false);
     await hello(lurker, "user-lurk", "Lurk");
     await until(() => lurkMsgs.find((m) => m.t === "welcome"));
@@ -1022,7 +1017,8 @@ test("a 30s tick saves dirty players and close saves everyone online", async () 
     });
     assert.equal(saved.rev, 3);
     assert.equal((await characters.load("user-bea"))?.rev, 2);
-    await new Promise((r) => setTimeout(r, 120));
+    const seenTick = game.tick;
+    await until(() => (game.tick >= seenTick + 2 ? true : undefined));
     assert.equal((await characters.load("user-bea"))?.rev, 2);
     await game.close();
     assert.equal((await characters.load("user-ada"))?.rev, 4);
@@ -1200,11 +1196,13 @@ test("more than 30 intents a second are dropped and a flood closes 4429", async 
         }),
       );
     }
+    const acksReady = until(() => {
+      const n = msgs.filter((m) => m.t === "ack").length;
+      return n >= 60 ? n : undefined;
+    });
     assert.equal(await closed, 4429);
-    const acks = msgs.filter((m) => m.t === "ack").length;
-    assert.ok(acks < 200, `expected throttling, got ${acks} acks`);
-    assert.ok(acks <= 80, `burst should stay near 60, got ${acks}`);
-    assert.ok(acks >= 1);
+    const acks = await acksReady;
+    assert.equal(acks, 60);
   } finally {
     ws.close();
     await game.close();
@@ -1217,7 +1215,7 @@ test("twenty malformed frames close 4400", async () => {
   const { ws } = await connect(port);
   try {
     for (let i = 0; i < 19; i++) ws.send("{");
-    await new Promise((r) => setTimeout(r, 80));
+    await until(() => (game.dropped >= 19 ? true : undefined));
     assert.equal(ws.readyState, WebSocket.OPEN);
     const closed = closeCode(ws, 2000);
     ws.send("{");
