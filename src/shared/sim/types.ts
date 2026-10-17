@@ -1,5 +1,6 @@
 import type { BaseClass, Prestige, Race } from "../content/catalog";
 import { BOUNDS } from "../content/world";
+import type { SpellFxEvent } from "./spellfx";
 
 export type { BaseClass, CampDef, Prestige, Race } from "../content/catalog";
 export { BASE_CLASSES, CAMPS, CREATABLE_RACES, PRESTIGE_OF, RACES, attrsFor, classAllowed, classDenied, DEBUG_SET_LEVEL } from "../content/catalog";
@@ -154,6 +155,8 @@ export interface PublicState {
   pendingGuildInvite?: PendingGuildInvite | null;
   /** Claimed city plots. Present on every snap. */
   plots?: CityPlotClaim[];
+  /** Recent spell visuals. Present only while one is still playing. */
+  fx?: SpellFxEvent[];
 }
 
 export interface ActionResult {

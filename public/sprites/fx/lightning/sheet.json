@@ -1,0 +1,198 @@
+{
+ "frames": {
+  "lightning-1.png": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-2.png": {
+   "frame": {
+    "x": 256,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-3.png": {
+   "frame": {
+    "x": 512,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-4.png": {
+   "frame": {
+    "x": 768,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-5.png": {
+   "frame": {
+    "x": 0,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-6.png": {
+   "frame": {
+    "x": 256,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-7.png": {
+   "frame": {
+    "x": 512,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  },
+  "lightning-8.png": {
+   "frame": {
+    "x": 768,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 67
+  }
+ },
+ "animations": {
+  "lightning": [
+   "lightning-1.png",
+   "lightning-2.png",
+   "lightning-3.png",
+   "lightning-4.png",
+   "lightning-5.png",
+   "lightning-6.png",
+   "lightning-7.png",
+   "lightning-8.png"
+  ]
+ },
+ "meta": {
+  "app": "caldrenmoor-procedural",
+  "image": "sheet.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 1024,
+   "h": 512
+  },
+  "scale": "1",
+  "fps": 15,
+  "loop": false,
+  "anchor": "ground-center (128,205)",
+  "blend": "additive (also fine as normal alpha)"
+ }
+}

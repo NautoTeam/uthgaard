@@ -1,0 +1,374 @@
+{
+ "frames": {
+  "poison-cloud-1.png": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-2.png": {
+   "frame": {
+    "x": 256,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-3.png": {
+   "frame": {
+    "x": 512,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-4.png": {
+   "frame": {
+    "x": 768,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-5.png": {
+   "frame": {
+    "x": 0,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-6.png": {
+   "frame": {
+    "x": 256,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-7.png": {
+   "frame": {
+    "x": 512,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-8.png": {
+   "frame": {
+    "x": 768,
+    "y": 256,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-9.png": {
+   "frame": {
+    "x": 0,
+    "y": 512,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-10.png": {
+   "frame": {
+    "x": 256,
+    "y": 512,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-11.png": {
+   "frame": {
+    "x": 512,
+    "y": 512,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-12.png": {
+   "frame": {
+    "x": 768,
+    "y": 512,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-13.png": {
+   "frame": {
+    "x": 0,
+    "y": 768,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-14.png": {
+   "frame": {
+    "x": 256,
+    "y": 768,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-15.png": {
+   "frame": {
+    "x": 512,
+    "y": 768,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  },
+  "poison-cloud-16.png": {
+   "frame": {
+    "x": 768,
+    "y": 768,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 100
+  }
+ },
+ "animations": {
+  "poison-cloud": [
+   "poison-cloud-1.png",
+   "poison-cloud-2.png",
+   "poison-cloud-3.png",
+   "poison-cloud-4.png",
+   "poison-cloud-5.png",
+   "poison-cloud-6.png",
+   "poison-cloud-7.png",
+   "poison-cloud-8.png",
+   "poison-cloud-9.png",
+   "poison-cloud-10.png",
+   "poison-cloud-11.png",
+   "poison-cloud-12.png",
+   "poison-cloud-13.png",
+   "poison-cloud-14.png",
+   "poison-cloud-15.png",
+   "poison-cloud-16.png"
+  ]
+ },
+ "meta": {
+  "app": "caldrenmoor-procedural",
+  "image": "sheet.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 1024,
+   "h": 1024
+  },
+  "scale": "1",
+  "fps": 10,
+  "loop": true,
+  "anchor": "ground-center (128,195)",
+  "blend": "additive (also fine as normal alpha)"
+ }
+}

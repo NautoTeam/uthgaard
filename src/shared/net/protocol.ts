@@ -424,6 +424,23 @@ const cityPlotView = z
   })
   .strict();
 
+const spellFxEvent = z
+  .object({
+    id: z.number().int().nonnegative(),
+    kind: z.enum(["heal", "shield", "holy-smite", "frost", "lightning", "poison"]),
+    casterId: z.string(),
+    targetId: z.string(),
+    x: finite,
+    z: finite,
+    x1: finite,
+    z1: finite,
+    at: finite,
+    linger: finite,
+    race: z.string(),
+    cast: z.boolean(),
+  })
+  .strict();
+
 export const PublicStateSchema = z
   .object({
     players: z.array(playerState),
@@ -436,6 +453,7 @@ export const PublicStateSchema = z
     guild: guildView.nullable().optional(),
     pendingGuildInvite: pendingGuildInviteView.nullable().optional(),
     plots: z.array(cityPlotView).max(32).optional(),
+    fx: z.array(spellFxEvent).max(32).optional(),
   })
   .strict();
 

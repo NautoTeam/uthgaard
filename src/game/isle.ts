@@ -66,6 +66,15 @@ import { SERVER, toServerIntent } from "./net";
 import { connectRemote, interpolateXZ, snapAlpha, worldMayStart, type LinkGate, type RemoteHandle } from "./remote";
 import { reconcileHero } from "./reconcile";
 import {
+  groundFxScale,
+  parseSpellSheet,
+  spellFrame,
+  spellSheetName,
+  spellVisual,
+  type SpellFxEvent,
+  type SpellSheet,
+} from "../shared/sim/spellfx";
+import {
   CHARTER_GOLD,
   CITY_PLOTS,
   CORNERSTONE_GOLD,
@@ -473,6 +482,221 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     img.src = `/sprites/anim/${name}.png?v=1`;
   }
   const bolts: Array<{ x0: number; z0: number; x1: number; z1: number; born: number }> = [];
+  const spellSheets = new Map<string, SpellSheet>();
+  const spellImages: Record<string, HTMLImageElement> = {};
+  const FROST_TRAVEL_MS = 420;
+  const GROUND_PX = 176;
+  const BOLT_PX = 112;
+  for (const name of ["heal", "holy-smite", "frost-bolt", "frost-impact", "lightning", "poison-cloud", "shield"]) {
+    const img = new Image();
+    img.onload = () => {
+      spellImages[name] = img;
+    };
+    img.src = `/sprites/fx/${name}/sheet.png`;
+    void fetch(`/sprites/fx/${name}/sheet.json`)
+      .then((res) => res.json())
+      .then((raw) => {
+        const sheet = parseSpellSheet(raw);
+        if (sheet) spellSheets.set(name, sheet);
+      })
+      .catch(() => undefined);
+  }
+  type LiveSpell = {
+    name: string;
+    born: number;
+    until: number;
+    x: number;
+    z: number;
+    x0: number;
+    z0: number;
+    x1: number;
+    z1: number;
+    follow: boolean;
+    targetId: string;
+    race: string;
+    travel: boolean;
+    impact: string;
+  };
+  const liveSpells: LiveSpell[] = [];
+  const spellQueue: Array<SpellFxEvent & { releaseAt: number }> = [];
+  const seenSpells = new Set<number>();
+
+  function spellAnchor(id: string, x: number, z: number, race: string) {
+    const state = view();
+    const pl = state.players.find((row) => row.id === id);
+    if (pl) return { x: pl.x, z: pl.z, race: pl.race || race };
+    const mob = state.monsters.find((row) => row.id === id);
+    if (mob) return { x: mob.x, z: mob.z, race };
+    return { x, z, race };
+  }
+
+  function castReleaseWait(casterId: string, casting: boolean) {
+    const pl = view().players.find((row) => row.id === casterId);
+    const rig = asRig((pl?.race || "human").toLowerCase());
+    const durs = rig ? rigDur[rig].cast1h : [260, 200, 440];
+    const full = durs.reduce((sum, ms) => sum + ms, 0);
+    const release = durs[0] + (durs[1] ?? 0);
+    const now = performance.now();
+    let actor = actors.get(casterId);
+    if (!actor) {
+      actor = {
+        x: pl?.x ?? 0,
+        z: pl?.z ?? 0,
+        facing: 0,
+        attackUntil: 0,
+        castUntil: 0,
+        blockAt: 0,
+        blockUntil: 0,
+        wasBlocking: false,
+        walkMs: 0,
+        moving: false,
+        phase: 0,
+        stamp: 0,
+      };
+      actors.set(casterId, actor);
+    }
+    if (!casting) {
+      if (actor.attackUntil <= now) {
+        actor.attackUntil = now + (rig ? rigMs(rig, "atk1h") : SWING_MS);
+      }
+      return 0;
+    }
+    if (casterId === myId && actor.castUntil > 0 && actor.castUntil <= now + 40) return 0;
+    if (actor.castUntil > now + 40) {
+      const elapsed = full - (actor.castUntil - now);
+      return Math.max(0, release - elapsed);
+    }
+    actor.castUntil = now + full;
+    actor.attackUntil = now;
+    return release;
+  }
+
+  function liveFrame(sheet: SpellSheet, live: LiveSpell, elapsed: number) {
+    if (live.travel) return spellFrame(sheet.frames.length, sheet.fps, true, elapsed);
+    if (live.until > live.born) {
+      if (elapsed >= live.until) return null;
+      return spellFrame(sheet.frames.length, sheet.fps, true, elapsed);
+    }
+    if (sheet.loop) {
+      const cycle = (sheet.frames.length * 1000) / sheet.fps;
+      if (elapsed >= cycle) return null;
+      return spellFrame(sheet.frames.length, sheet.fps, true, elapsed);
+    }
+    return spellFrame(sheet.frames.length, sheet.fps, false, elapsed);
+  }
+
+  function syncSpells(now: number) {
+    const incoming = view().fx ?? [];
+    const ids = new Set(incoming.map((ev) => ev.id));
+    for (const id of seenSpells) if (!ids.has(id)) seenSpells.delete(id);
+    for (const ev of incoming) {
+      if (seenSpells.has(ev.id)) continue;
+      seenSpells.add(ev.id);
+      spellQueue.push({ ...ev, releaseAt: now + castReleaseWait(ev.casterId, ev.cast) });
+    }
+    for (let i = spellQueue.length - 1; i >= 0; i--) {
+      const ev = spellQueue[i];
+      if (now < ev.releaseAt) continue;
+      spellQueue.splice(i, 1);
+      const sheets = spellSheetName(ev.kind);
+      const from = spellAnchor(ev.casterId, ev.x, ev.z, "");
+      const to = spellAnchor(ev.targetId, ev.x1, ev.z1, ev.race);
+      const planted = ev.kind === "poison";
+      liveSpells.push({
+        name: sheets.main,
+        born: now,
+        until: ev.linger > 0 ? now + ev.linger : 0,
+        x: planted ? to.x : to.x,
+        z: planted ? to.z : to.z,
+        x0: from.x,
+        z0: from.z,
+        x1: to.x,
+        z1: to.z,
+        follow: ev.kind !== "poison" && ev.kind !== "frost",
+        targetId: ev.targetId,
+        race: to.race || ev.race,
+        travel: ev.kind === "frost",
+        impact: sheets.impact ?? "",
+      });
+    }
+    for (let i = liveSpells.length - 1; i >= 0; i--) {
+      const live = liveSpells[i];
+      const elapsed = now - live.born;
+      const sheet = spellSheets.get(live.name);
+      if (live.travel && elapsed >= FROST_TRAVEL_MS) {
+        const impact = live.impact;
+        liveSpells.splice(i, 1);
+        if (impact) {
+          liveSpells.push({
+            ...live,
+            name: impact,
+            born: now,
+            until: 0,
+            travel: false,
+            follow: false,
+            impact: "",
+            x: live.x1,
+            z: live.z1,
+          });
+        }
+        continue;
+      }
+      if (!sheet) {
+        if (elapsed > 8000) liveSpells.splice(i, 1);
+        continue;
+      }
+      if (live.follow) {
+        const at = spellAnchor(live.targetId, live.x, live.z, live.race);
+        live.x = at.x;
+        live.z = at.z;
+        if (at.race) live.race = at.race;
+      } else if (live.travel) {
+        const t = Math.min(1, elapsed / FROST_TRAVEL_MS);
+        live.x = live.x0 + (live.x1 - live.x0) * t;
+        live.z = live.z0 + (live.z1 - live.z0) * t;
+      }
+      if (liveFrame(sheet, live, elapsed) == null) liveSpells.splice(i, 1);
+    }
+  }
+
+  function paintSpell(live: LiveSpell, now: number) {
+    const sheet = spellSheets.get(live.name);
+    const img = spellImages[live.name];
+    if (!sheet || !img || !img.complete) return;
+    const elapsed = now - live.born;
+    const frame = liveFrame(sheet, live, elapsed);
+    if (frame == null) return;
+    const rect = sheet.frames[frame];
+    if (!rect) return;
+    const foot = worldToScreen(live.x, live.z);
+    const scaleMul = sheet.ground ? groundFxScale(live.race) : 1;
+    const size = (live.travel ? BOLT_PX : sheet.ground ? GROUND_PX : 168) * scaleMul;
+    const unit = size / 256;
+    let rotation = 0;
+    if (sheet.rotate) {
+      const start = worldToScreen(live.x0, live.z0);
+      const end = worldToScreen(live.x1, live.z1);
+      rotation = Math.atan2(end.y - start.y, end.x - start.x);
+    }
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalCompositeOperation = sheet.additive ? "lighter" : "source-over";
+    ctx.translate(foot.x, foot.y);
+    if (rotation) ctx.rotate(rotation);
+    ctx.drawImage(
+      img,
+      rect.x,
+      rect.y,
+      rect.w,
+      rect.h,
+      -sheet.anchorX * unit,
+      -sheet.anchorY * unit,
+      rect.w * unit,
+      rect.h * unit,
+    );
+    ctx.restore();
+  }
+
   let pinnedId: string | null = null;
   let selected: { kind: "mob" | "player" | "npc"; id: string } | null = null;
   const actors = new Map<
@@ -2375,6 +2599,13 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
           draw: () => drawFx("impact", frame, 2, 2, b.x1, b.z1, 96, 16),
         });
       }
+    }
+    syncSpells(nowDraw);
+    for (const live of liveSpells) {
+      drawables.push({
+        key: depthOf(live.x, live.z) + 0.45,
+        draw: () => paintSpell(live, nowDraw),
+      });
     }
     const heroes = state.players.filter((pl) => pl.hp > 0);
     for (const pl of heroes) {
@@ -4315,6 +4546,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     if (
       power &&
       power.mana > 0 &&
+      !spellVisual(skill) &&
       power.kind !== "heal" &&
       power.kind !== "buff" &&
       targetId &&

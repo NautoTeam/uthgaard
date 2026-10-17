@@ -4,6 +4,7 @@ import { DROPS, VENDOR_STOCK, dropChance, itemById, gearTotals, equipDenied, tra
 import { DEFAULT_ATTUNED, gateHop } from "../content/world";
 import { CHAT_MAX } from "./chat";
 import type { GraveState, PartyView, PendingInvite } from "./types";
+import { CAST_RELEASE_MS, POISON_LINGER_MS, spellVisual, type SpellFxEvent } from "./spellfx";
 import {
   CAMPS,
   PRESTIGE_OF,
@@ -115,6 +116,8 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   const monsters = new Map<string, MonsterState>();
   const graves = new Map<string, GraveState>();
   const logs: string[] = [];
+  const spellFx: SpellFxEvent[] = [];
+  let fxSeq = 1;
   let mid = 1;
   let partySeq = 1;
   const parties = new Map<string, { id: string; leader: string; members: string[] }>();
@@ -396,7 +399,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
   }
 
   function snapshot(): PublicState {
-    return {
+    const state: PublicState = {
       players: [...players.values()].map((p) => {
         const copy = { ...p };
         delete copy.charter;
@@ -414,6 +417,9 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       logs: logs.slice(),
       graves: [...graves.values()].map((g) => ({ ...g, items: { ...g.items } })),
     };
+    const fx = visibleSpellFx(now());
+    if (fx.length) state.fx = fx;
+    return state;
   }
 
   function restore(state: PublicState) {
@@ -735,6 +741,44 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     return classes.includes(p.baseClass) || classes.includes(p.prestigeClass);
   }
 
+  function visibleSpellFx(at: number) {
+    return spellFx.filter((ev) => {
+      const release = ev.at + CAST_RELEASE_MS;
+      const tail = ev.kind === "frost" ? 420 + 900 : ev.linger > 0 ? ev.linger : 1200;
+      return at <= release + tail + 400;
+    });
+  }
+
+  function noteSpell(
+    p: PlayerState,
+    powerId: string,
+    target: { id: string; x: number; z: number; race?: string },
+  ) {
+    const kind = spellVisual(powerId);
+    const power = powerById(powerId);
+    if (!kind || !power) return;
+    const at = now();
+    let linger = 0;
+    if (kind === "shield") linger = Math.max(0, Math.round(p.guardUntil - at - CAST_RELEASE_MS));
+    else if (kind === "poison") linger = POISON_LINGER_MS;
+    spellFx.push({
+      id: fxSeq++,
+      kind,
+      casterId: p.id,
+      targetId: target.id,
+      x: p.x,
+      z: p.z,
+      x1: target.x,
+      z1: target.z,
+      at,
+      linger,
+      race: target.race || "",
+      cast: power.mana > 0,
+    });
+    const floor = at - 15000;
+    while (spellFx.length > 32 || (spellFx[0] && spellFx[0].at < floor)) spellFx.shift();
+  }
+
   function strike(p: PlayerState, m: MonsterState, powerId: string, now: number): ActionResult {
     const power = powerById(powerId);
     if (!power || (power.kind !== "damage" && power.kind !== "snare")) return { ok: false, reason: "That path cannot use this." };
@@ -771,6 +815,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
     m.targetId = p.id;
     p.stealthUntil = 0;
     if (power.kind === "snare") m.snareUntil = now + 4000;
+    noteSpell(p, powerId, { id: m.id, x: m.x, z: m.z });
     if (m.hp <= 0) {
       const gold = powerId === "fireball" ? 2 : 1 + Math.floor(m.level / (powerId === "stab" ? 3 : 2));
       const verb =
@@ -846,8 +891,10 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       ally.hp += gain;
       if (shrouded) {
         ally.shroudUntil = 0;
+        noteSpell(p, name, { id: ally.id, x: ally.x, z: ally.z, race: ally.race });
         return { ok: true, reason: `Rekindle lifts Grave Chill from ${ally.username}.` };
       }
+      noteSpell(p, name, { id: ally.id, x: ally.x, z: ally.z, race: ally.race });
       return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
     }
     if (power.kind === "heal") {
@@ -855,6 +902,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
       payPower(p, name, at);
       const gain = Math.min(p.maxHp - p.hp, power.heal + p.level * power.healPerLevel);
       p.hp += gain;
+      noteSpell(p, name, { id: p.id, x: p.x, z: p.z, race: p.race });
       return { ok: true, reason: `${power.label} heals for ${Math.round(gain)}.` };
     }
     if (power.kind === "buff" || power.kind === "stealth") {
@@ -865,6 +913,7 @@ export function createWorld(opts: { now?: () => number; rand?: () => number } = 
         p.guardUntil = at + 8000;
         if (power.heal > 0) p.hp = Math.min(p.maxHp, p.hp + power.heal + p.level * power.healPerLevel);
       }
+      noteSpell(p, name, { id: p.id, x: p.x, z: p.z, race: p.race });
       if (power.kind === "stealth") return { ok: true, reason: "You slip into stealth." };
       return { ok: true, reason: `${power.label} raised.` };
     }

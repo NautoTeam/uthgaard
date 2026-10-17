@@ -1,0 +1,110 @@
+{
+ "frames": {
+  "frost-bolt-1.png": {
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 200
+  },
+  "frost-bolt-2.png": {
+   "frame": {
+    "x": 256,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 200
+  },
+  "frost-bolt-3.png": {
+   "frame": {
+    "x": 512,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 200
+  },
+  "frost-bolt-4.png": {
+   "frame": {
+    "x": 768,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+   },
+   "sourceSize": {
+    "w": 256,
+    "h": 256
+   },
+   "duration": 200
+  }
+ },
+ "animations": {
+  "frost-bolt": [
+   "frost-bolt-1.png",
+   "frost-bolt-2.png",
+   "frost-bolt-3.png",
+   "frost-bolt-4.png"
+  ]
+ },
+ "meta": {
+  "app": "caldrenmoor-procedural",
+  "image": "sheet.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 1024,
+   "h": 256
+  },
+  "scale": "1",
+  "fps": 5,
+  "loop": true,
+  "anchor": "centered (128,128); faces EAST (+x), rotate to travel angle",
+  "blend": "additive (also fine as normal alpha)"
+ }
+}
