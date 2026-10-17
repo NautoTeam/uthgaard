@@ -83,6 +83,7 @@ import {
   type CrestId,
   type GuildKind,
 } from "./guilds";
+import { cameraZoom, isPhone, orientationLockFailed } from "./mobile";
 
 export interface IsleProfile {
   username: string;
@@ -277,6 +278,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   const promoteBtn = root.querySelector<HTMLButtonElement>("#promoteBtn")!;
   const mapOverlay = root.querySelector<HTMLElement>("#mapOverlay")!;
   const mapCanvas = root.querySelector<HTMLCanvasElement>("#mapCanvas")!;
+  const minimapCanvas = root.querySelector<HTMLCanvasElement>("#minimapCanvas");
+  const minimapBtn = root.querySelector<HTMLButtonElement>("#minimap");
+  const menuBtn = root.querySelector<HTMLButtonElement>("#menuBtn");
+  const menuList = root.querySelector<HTMLElement>("#menuList");
+  const rotateOverlay = root.querySelector<HTMLElement>("#rotateOverlay");
   const chat = root.querySelector<HTMLElement>("#chat")!;
   const stick = root.querySelector<HTMLElement>("#stick")!;
   const knob = root.querySelector<HTMLElement>("#knob")!;
@@ -762,6 +768,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let chatTab: "say" | "pvp" | "guild" = "say";
   let viewW = 1;
   let viewH = 1;
+  let viewZoom = 1;
   type GroupPeer = {
     id: string;
     name: string;
@@ -1116,6 +1123,23 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   let drawOx = 0;
   let drawOy = 0;
 
+  function sceneW() {
+    return viewW / viewZoom;
+  }
+
+  function sceneH() {
+    return viewH / viewZoom;
+  }
+
+  function syncHandheld() {
+    const phone = isPhone();
+    root.classList.toggle("phone", phone);
+    viewZoom = cameraZoom(viewW, viewH);
+    if (!rotateOverlay) return;
+    const portrait = window.innerHeight > window.innerWidth + 20;
+    rotateOverlay.hidden = !(phone && portrait && orientationLockFailed());
+  }
+
   function applyDrawTransform() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const wantW = Math.max(1, Math.floor(viewW * dpr));
@@ -1124,11 +1148,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       canvas.width = wantW;
       canvas.height = wantH;
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr * viewZoom, 0, 0, dpr * viewZoom, 0, 0);
     ctx.imageSmoothingEnabled = false;
     const t = typeof ctx.getTransform === "function" ? ctx.getTransform() : null;
-    drawScaleX = t?.a || dpr;
-    drawScaleY = t?.d || dpr;
+    drawScaleX = t?.a || dpr * viewZoom;
+    drawScaleY = t?.d || dpr * viewZoom;
     drawOx = t?.e || 0;
     drawOy = t?.f || 0;
   }
@@ -1136,11 +1160,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   function resize() {
     viewW = canvas.clientWidth || window.innerWidth;
     viewH = canvas.clientHeight || window.innerHeight;
+    syncHandheld();
     applyDrawTransform();
   }
 
   function worldToScreen(x: number, z: number) {
-    return isoWorldToScreen(x, z, cam.x, cam.z, viewW, viewH);
+    return isoWorldToScreen(x, z, cam.x, cam.z, sceneW(), sceneH());
   }
 
   function depthOf(x: number, z: number) {
@@ -1148,7 +1173,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function screenToWorld(sx: number, sy: number) {
-    return isoScreenToWorld(sx, sy, cam.x, cam.z, viewW, viewH);
+    return isoScreenToWorld(sx, sy, cam.x, cam.z, sceneW(), sceneH());
   }
 
   function drawDiamond(x: number, z: number, fill: string) {
@@ -1996,6 +2021,112 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     g.restore();
   }
 
+  const MINI_SPAN = 72;
+
+  function drawMinimap() {
+    if (!minimapCanvas) return;
+    const g = minimapCanvas.getContext("2d");
+    if (!g) return;
+    const css = minimapCanvas.clientWidth || 160;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const size = Math.max(1, Math.round(css * dpr));
+    if (minimapCanvas.width !== size || minimapCanvas.height !== size) {
+      minimapCanvas.width = size;
+      minimapCanvas.height = size;
+    }
+    const hero = me();
+    const deep = TERRAIN_PALETTE.deep?.[0] ?? "#10241f";
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = deep;
+    g.fillRect(0, 0, size, size);
+    if (!hero) return;
+    const base = ensureMapCache();
+    const spanX = BOUNDS.maxX - BOUNDS.minX;
+    const spanZ = BOUNDS.maxZ - BOUNDS.minZ;
+    const scaleX = base.width / spanX;
+    const scaleZ = base.height / spanZ;
+    const srcW = MINI_SPAN * scaleX;
+    const srcH = MINI_SPAN * scaleZ;
+    const heroPx = ((hero.x - BOUNDS.minX) / spanX) * base.width;
+    const heroPy = ((hero.z - BOUNDS.minZ) / spanZ) * base.height;
+    const srcX = heroPx - srcW / 2;
+    const srcY = heroPy - srcH / 2;
+    const ix0 = Math.max(0, srcX);
+    const iy0 = Math.max(0, srcY);
+    const ix1 = Math.min(base.width, srcX + srcW);
+    const iy1 = Math.min(base.height, srcY + srcH);
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, size, size);
+    g.clip();
+    if (ix1 > ix0 && iy1 > iy0) {
+      const dx = ((ix0 - srcX) / srcW) * size;
+      const dy = ((iy0 - srcY) / srcH) * size;
+      const dw = ((ix1 - ix0) / srcW) * size;
+      const dh = ((iy1 - iy0) / srcH) * size;
+      g.imageSmoothingEnabled = false;
+      g.drawImage(base, ix0, iy0, ix1 - ix0, iy1 - iy0, dx, dy, dw, dh);
+    }
+    const to = (x: number, z: number) => ({
+      x: size / 2 + ((x - hero.x) / MINI_SPAN) * size,
+      y: size / 2 + ((z - hero.z) / MINI_SPAN) * size,
+    });
+    const onMap = (p: { x: number; y: number }) => p.x >= -8 && p.y >= -8 && p.x <= size + 8 && p.y <= size + 8;
+    g.strokeStyle = "#8a7344";
+    g.lineWidth = Math.max(1, dpr);
+    g.beginPath();
+    for (const [ax, az, bx, bz] of ROADS) {
+      const a = to(ax, az);
+      const b = to(bx, bz);
+      if (!onMap(a) && !onMap(b)) continue;
+      g.moveTo(a.x, a.y);
+      g.lineTo(b.x, b.y);
+    }
+    g.stroke();
+    const dot = (x: number, y: number, r: number, fill: string) => {
+      if (!onMap({ x, y })) return;
+      g.fillStyle = fill;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    };
+    const rTown = 3.2 * dpr;
+    const rNpc = 2.2 * dpr;
+    const rMob = 2 * dpr;
+    const rPlayer = 2.4 * dpr;
+    for (const city of CITIES) {
+      const pt = to(city.x, city.z);
+      dot(pt.x, pt.y, rTown, city.stone || "#e0b050");
+    }
+    for (const npc of NPCS) {
+      const pt = to(npc.x, npc.z);
+      dot(pt.x, pt.y, rNpc, "#7ecbff");
+    }
+    for (const mob of view().monsters) {
+      if (mob.hp <= 0) continue;
+      const pt = to(mob.x, mob.z);
+      dot(pt.x, pt.y, rMob, "#e05040");
+    }
+    for (const pl of view().players) {
+      if (pl.hp <= 0 || pl.id === myId) continue;
+      const pt = to(pl.x, pl.z);
+      dot(pt.x, pt.y, rPlayer, inMyParty(pl.id) ? "#3dffa0" : "#d8d8d8");
+    }
+    const face = hero.rotation ?? 0;
+    const fx = Math.sin(face);
+    const fz = Math.cos(face);
+    const nose = 7 * dpr;
+    const wing = 3.4 * dpr;
+    g.fillStyle = "#f2d36b";
+    g.beginPath();
+    g.moveTo(size / 2 + fx * nose, size / 2 + fz * nose);
+    g.lineTo(size / 2 - fz * wing - fx * wing, size / 2 + fx * wing - fz * wing);
+    g.lineTo(size / 2 + fz * wing - fx * wing, size / 2 - fx * wing - fz * wing);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+
   function nearestId(range: number) {
     const p = me();
     if (!p) return null;
@@ -2424,14 +2555,15 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       cam.x += (tx - cam.x) * Math.min(1, 0.45);
       cam.z += (tz - cam.z) * Math.min(1, 0.45);
     }
+    syncHandheld();
     applyDrawTransform();
     ctx.fillStyle = "#10241f";
-    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.fillRect(0, 0, sceneW(), sceneH());
     const corners = [
       screenToWorld(-40, -40),
-      screenToWorld(viewW + 40, -40),
-      screenToWorld(-40, viewH + 40),
-      screenToWorld(viewW + 40, viewH + 40),
+      screenToWorld(sceneW() + 40, -40),
+      screenToWorld(-40, sceneH() + 40),
+      screenToWorld(sceneW() + 40, sceneH() + 40),
     ];
     let minX = BOUNDS.maxX;
     let maxX = BOUNDS.minX;
@@ -2444,7 +2576,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       maxZ = Math.max(maxZ, c.z);
     }
     // Baked chunks. Picking still uses the diamond in iso.ts, not this image.
-    ground.draw(ctx, { camX: cam.x, camZ: cam.z, viewW, viewH, minX, maxX, minZ, maxZ });
+    ground.draw(ctx, { camX: cam.x, camZ: cam.z, viewW: sceneW(), viewH: sceneH(), minX, maxX, minZ, maxZ });
     const state = view();
     for (const m of state.monsters) puffDamage(m.id, m.x, m.z, m.hp, "#ffe08a");
     for (const pl of state.players) puffDamage(pl.id, pl.x, pl.z, pl.hp, "#ff6b5a");
@@ -2699,20 +2831,16 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       ctx.fillText(f.text, pt.x, y);
     }
     ctx.restore();
-    const g = ctx.createRadialGradient(
-      viewW / 2,
-      viewH / 2,
-      viewH * 0.3,
-      viewW / 2,
-      viewH / 2,
-      viewH * 0.72,
-    );
+    const sw = sceneW();
+    const sh = sceneH();
+    const g = ctx.createRadialGradient(sw / 2, sh / 2, sh * 0.3, sw / 2, sh / 2, sh * 0.72);
     g.addColorStop(0, "rgba(0,0,0,0)");
     g.addColorStop(1, "rgba(6,10,8,.55)");
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.fillRect(0, 0, sw, sh);
     hud();
     if (!mapOverlay.hidden) drawWorldMap();
+    drawMinimap();
   }
 
   let dirty = false;
@@ -3835,6 +3963,11 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     touchInput();
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (e.key === "Escape") {
+      if (menuOpen) {
+        setMenu(false);
+        e.preventDefault();
+        return;
+      }
       if (typing) {
         (e.target as HTMLElement).blur();
         canvas.focus({ preventScroll: true });
@@ -3925,8 +4058,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     stickActive = false;
     stickVec.x = 0;
     stickVec.z = 0;
-    knob.style.left = "35px";
-    knob.style.top = "35px";
+    parkKnob();
     if (!walking) return;
     wishX = 0;
     wishZ = 0;
@@ -3984,8 +4116,8 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
       offsetX: e.offsetX,
       offsetY: e.offsetY,
       rect: canvas.getBoundingClientRect(),
-      viewW,
-      viewH,
+      viewW: sceneW(),
+      viewH: sceneH(),
       clientW: cssW,
       clientH: cssH,
       camX: cam.x,
@@ -4026,7 +4158,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   }
 
   function pickTile(sx: number, sy: number, roughX: number, roughZ: number) {
-    const hit = tileAtScreen(sx, sy, cam.x, cam.z, viewW, viewH, roughX, roughZ);
+    const hit = tileAtScreen(sx, sy, cam.x, cam.z, sceneW(), sceneH(), roughX, roughZ);
     if (!hit) return null;
     if (!blocked(hit.x, hit.z)) return hit;
     let best: { x: number; z: number } | null = null;
@@ -4785,14 +4917,19 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     stickActive = false;
     stickVec.x = 0;
     stickVec.z = 0;
-    knob.style.left = "35px";
-    knob.style.top = "35px";
+    parkKnob();
     if (!was || walkHeld()) return;
     wishX = 0;
     wishZ = 0;
     lastSpeed = 0;
     haltTravel();
     pushMove(true);
+  }
+  function parkKnob() {
+    const size = stick.clientWidth || 110;
+    const at = `${(size - 40) / 2}px`;
+    knob.style.left = at;
+    knob.style.top = at;
   }
   function onStickDown(e: PointerEvent) {
     touchInput();
@@ -4862,6 +4999,45 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   guildBody.addEventListener("input", captureDraft);
   mapBtn.addEventListener("pointerup", onMap);
   mapClose.addEventListener("pointerup", onMapClose);
+  let menuOpen = false;
+  const skillsEl = root.querySelector<HTMLElement>("#skills");
+  function setMenu(open: boolean) {
+    menuOpen = open;
+    if (menuList) menuList.hidden = !open;
+    menuBtn?.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  function onMenuButton(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu(!menuOpen);
+  }
+  function onMenuOutside(e: Event) {
+    if (!menuOpen || !skillsEl) return;
+    const target = e.target;
+    if (target instanceof Node && skillsEl.contains(target)) return;
+    setMenu(false);
+  }
+  function onMenuFocusOut(e: FocusEvent) {
+    if (!menuOpen || !skillsEl) return;
+    const next = e.relatedTarget;
+    if (!(next instanceof Node) || skillsEl.contains(next)) return;
+    setMenu(false);
+  }
+  function onMenuPick(e: Event) {
+    const target = e.target;
+    if (!(target instanceof Element) || !target.closest("button")) return;
+    queueMicrotask(() => setMenu(false));
+  }
+  function onMinimap(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    onMap(e);
+  }
+  menuBtn?.addEventListener("pointerup", onMenuButton);
+  menuList?.addEventListener("click", onMenuPick);
+  skillsEl?.addEventListener("focusout", onMenuFocusOut);
+  window.addEventListener("pointerdown", onMenuOutside, true);
+  minimapBtn?.addEventListener("pointerup", onMinimap);
   talkBtn.addEventListener("pointerup", onTalk);
   travelButtons.addEventListener("pointerup", onTravelClick);
   travelPanel.addEventListener("pointerdown", onTravelPointerDown, true);
@@ -4890,6 +5066,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
   });
   window.addEventListener("blur", onBlur);
   window.addEventListener("resize", resize);
+  screen.orientation?.addEventListener?.("change", resize);
   root.addEventListener("contextmenu", onContextMenu);
 
   forgetRetiredSaves();
@@ -5155,6 +5332,12 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
     clickDebugToggle?.removeEventListener("change", paintClickDebug);
     mapBtn.removeEventListener("pointerup", onMap);
     mapClose.removeEventListener("pointerup", onMapClose);
+    menuBtn?.removeEventListener("pointerup", onMenuButton);
+    menuList?.removeEventListener("click", onMenuPick);
+    skillsEl?.removeEventListener("focusout", onMenuFocusOut);
+    window.removeEventListener("pointerdown", onMenuOutside, true);
+    minimapBtn?.removeEventListener("pointerup", onMinimap);
+    screen.orientation?.removeEventListener?.("change", resize);
     sheetBtn.removeEventListener("pointerup", onSheet);
     sheetClose.removeEventListener("pointerup", onSheetClose);
     bagBtn.removeEventListener("pointerup", onBagToggle);

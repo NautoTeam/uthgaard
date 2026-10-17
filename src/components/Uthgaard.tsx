@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { mountIsle, type IsleProfile } from "@/client/isle";
 import { BASE_CLASSES, CREATABLE_RACES, classAllowed, classDenied, type BaseClass, type Race } from "@/game/types";
 import { deleteCharacterSlot, fetchCharacterSlots, type CharacterSlotView } from "@/game/remote";
+import { armHandheldPlay } from "@/game/mobile";
 import { authClient, signOut } from "@/lib/auth/client";
 import { PASSWORD_RULE, VERIFY_RETURN_URL, passwordProblem } from "@/lib/auth/account-policy";
 
@@ -103,6 +104,7 @@ function Gate({ onEnter, error }: { onEnter: (profile: IsleProfile) => void; err
   }, [verified]);
 
   async function enter(next: { username: string; race: Race; baseClass: BaseClass; slot: number; create: boolean }) {
+    armHandheldPlay();
     let signedIn = email;
     let emailVerified = verified;
     try {
@@ -574,6 +576,12 @@ function Isle({ profile }: { profile: IsleProfile }) {
         </div>
       </div>
       <canvas id="view" tabIndex={0} />
+      <button id="minimap" type="button" aria-label="Open map">
+        <canvas id="minimapCanvas" width={160} height={160} />
+      </button>
+      <div id="rotateOverlay" hidden>
+        <p>Rotate your phone</p>
+      </div>
       <div id="clickDebug" hidden></div>
       <div id="debugHud" hidden>
         <label>
@@ -650,32 +658,37 @@ function Isle({ profile }: { profile: IsleProfile }) {
         ))}
       </div>
       <div id="skills">
-        <button id="sheetBtn" type="button">
-          Sheet
-        </button>
-        <button id="bagBtn" type="button">
-          Inventory
-        </button>
-        <button id="promoteBtn" type="button" hidden>
-          Promote
-        </button>
-        <button id="mapBtn" type="button">
-          Map
-        </button>
-        <button id="guildBtn" type="button">
-          Guild
-        </button>
-        <button id="partyBtn" type="button">
-          Party
-        </button>
-        <button id="plotsBtn" type="button">
-          Plots
-        </button>
-        <button id="chatToggle" type="button">
-          Chat
-        </button>
-        <button id="signOutBtn" type="button" onClick={() => setConfirmOut(true)}>
-          Sign out
+        <div id="menuList" hidden>
+          <button id="sheetBtn" type="button">
+            Sheet
+          </button>
+          <button id="bagBtn" type="button">
+            Inventory
+          </button>
+          <button id="promoteBtn" type="button" hidden>
+            Promote
+          </button>
+          <button id="mapBtn" type="button">
+            Map
+          </button>
+          <button id="guildBtn" type="button">
+            Guild
+          </button>
+          <button id="partyBtn" type="button">
+            Party
+          </button>
+          <button id="plotsBtn" type="button">
+            Plots
+          </button>
+          <button id="chatToggle" type="button">
+            Chat
+          </button>
+          <button id="signOutBtn" type="button" onClick={() => setConfirmOut(true)}>
+            Sign out
+          </button>
+        </div>
+        <button id="menuBtn" type="button" aria-expanded="false" aria-controls="menuList">
+          Menu
         </button>
       </div>
       <div id="mapOverlay" hidden>
