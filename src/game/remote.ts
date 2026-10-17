@@ -256,9 +256,13 @@ export function connectRemote(opts: {
   const openSocket = opts.openSocket ?? defaultOpen;
   let stopped = false;
   let socket: SocketLike | null = null;
-  let welcomed = false;
+  let choice = opts.choice;
+  let everWelcomed = false;
+  let attempt = 0;
+  let tokenFailures = 0;
 
   async function openOnce(): Promise<number> {
+    let welcomed = false;
     const tok = await fetchToken();
     if (stopped) return 1000;
     if (!tok.ok || !tok.token) {
@@ -307,7 +311,7 @@ export function connectRemote(opts: {
       const sendCreate = () => {
         if (stopped || createSent || sock.readyState !== 1) return;
         createSent = true;
-        sock.send(JSON.stringify(gameHello(token, opts.choice)));
+        sock.send(JSON.stringify(gameHello(token, choice)));
         clearTimeout(createTimer);
         createTimer = setTimeout(() => failJoin("The hero did not join."), 8000);
       };
@@ -329,6 +333,10 @@ export function connectRemote(opts: {
         }
         if (msg.t === "welcome" && msg.playerId) {
           welcomed = true;
+          everWelcomed = true;
+          attempt = 0;
+          tokenFailures = 0;
+          choice = { ...choice, create: false };
           clearTimeout(createTimer);
           opts.onStatus?.("Online");
           opts.onLink?.("online");
@@ -346,7 +354,7 @@ export function connectRemote(opts: {
         if (msg.t !== "error") return;
         const reason = msg.reason ?? "";
         if (reason === "need_create") {
-          if (!opts.choice.create) {
+          if (!choice.create) {
             failJoin("That slot is empty.");
             return;
           }
@@ -366,8 +374,8 @@ export function connectRemote(opts: {
           sock.close(1000);
           return;
         }
-        if (opts.choice.create) sendCreate();
-        else sock.send(JSON.stringify(gameHello(token, { ...opts.choice, create: false })));
+        if (choice.create) sendCreate();
+        else sock.send(JSON.stringify(gameHello(token, { ...choice, create: false })));
       };
       sock.onmessage = (ev) => {
         const data = ev.data;
@@ -385,11 +393,22 @@ export function connectRemote(opts: {
 
   async function loop() {
     opts.onLink?.("connecting");
-    if (stopped) return;
-    const code = await openOnce();
-    if (stopped) return;
-    stopped = true;
-    opts.onLink?.(gateAfterClose(code));
+    for (;;) {
+      if (stopped) return;
+      const code = await openOnce();
+      if (stopped) return;
+      const plan = everWelcomed ? reconnectPlan(code, tokenFailures) : { reconnect: false, notice: null };
+      if (code === 4401) tokenFailures += 1;
+      if (!plan.reconnect || attempt >= 5) {
+        stopped = true;
+        opts.onLink?.(gateAfterClose(code));
+        return;
+      }
+      opts.onStatus?.(plan.notice);
+      opts.onLink?.("connecting");
+      const wait = backoffMs(attempt++);
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
   }
 
   void loop();

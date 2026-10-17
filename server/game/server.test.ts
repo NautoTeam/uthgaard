@@ -1335,5 +1335,35 @@ test("log tags hide the user id", () => {
   assert.equal(userTag(null), "-");
 });
 
+test("create retry for the same hero resumes it; another name on that slot does not kick the live session", async () => {
+  const characters = memoryCharacters();
+  const game = startServer({ ...gameOpts({ characters }), rand: mulberry32(91) });
+  const port = await game.ready;
+  const first = await connect(port);
+  const other = await connect(port);
+  const again = await connect(port);
+  try {
+    await hello(first.ws, "user-mira", "Mira", { name: "Mira", race: "Elf", baseClass: "Mage", slot: 0 });
+    await until(() => first.msgs.find((m) => m.t === "welcome"));
+    assert.equal((await characters.load("user-mira", 0))?.save.username, "Mira");
+
+    await hello(other.ws, "user-mira", "Mira", { name: "Nope", race: "Human", baseClass: "Fighter", slot: 0 });
+    assert.equal((await until(() => other.msgs.find((m) => m.t === "error"))).reason, "slot_taken");
+    assert.equal(first.ws.readyState, WebSocket.OPEN);
+
+    const kicked = closeCode(first.ws, 2500);
+    await hello(again.ws, "user-mira", "Mira", { name: "mira", race: "Elf", baseClass: "Mage", slot: 0 });
+    assert.equal((await until(() => again.msgs.find((m) => m.t === "welcome"))).playerId, "user-mira");
+    assert.equal(await kicked, 4409);
+    assert.equal(again.msgs.some((m) => m.t === "error"), false);
+    assert.equal((await characters.list("user-mira")).filter(Boolean).length, 1);
+  } finally {
+    first.ws.close();
+    other.ws.close();
+    again.ws.close();
+    await game.close();
+  }
+});
+
 
 

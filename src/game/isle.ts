@@ -5057,6 +5057,7 @@ export function mountIsle(root: HTMLElement, profile: IsleProfile) {
         takeSnap(state);
       },
       onWelcome: (playerId) => {
+        profile.create = false;
         claimServerId(playerId);
         const latest = snaps[snaps.length - 1]?.state.players?.find((p) => p.id === playerId);
         if (latest) adoptServerHero(latest);

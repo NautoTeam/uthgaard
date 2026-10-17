@@ -438,12 +438,14 @@ export function startServer(opts: {
       await dropConn(conn);
     };
 
-    socket.on("error", () => {
+    socket.on("error", (err) => {
       dropped++;
+      logNet("socket_error", conn.userId, `msg=${String(err?.message ?? "").slice(0, 80).replace(/\s+/g, "_")}`);
     });
 
-    socket.on("close", (code) => {
-      if (conn.userId) logNet("close", conn.userId, `code=${code}`);
+    socket.on("close", (code, reason) => {
+      const why = reason?.length ? ` reason=${reason.toString().slice(0, 40).replace(/\s+/g, "_")}` : "";
+      logNet("close", conn.userId, `code=${code}${why}${conn.playerId ? "" : " joined=0"}`);
       conn.dead = true;
       track(forget());
     });
@@ -540,6 +542,23 @@ export function startServer(opts: {
         conn.jti = claims.jti;
         await withUser(claims.userId, async () => {
           if (conn.playerId || conn.replaced || conn.dead || !characters) return;
+          // A create retry for a slot that already holds this same hero (client Retry after a drop)
+          // resumes it. Any other occupied slot is refused before the live session is kicked.
+          let resumed = false;
+          const want = hello.create;
+          if (want && Number.isInteger(want.slot) && want.slot >= 0 && want.slot <= 2) {
+            const occupied = await characters.load(claims.userId, want.slot);
+            if (conn.playerId || conn.replaced || conn.dead) return;
+            if (occupied) {
+              if (occupied.save.username.trim().toLowerCase() !== want.name.trim().toLowerCase()) {
+                logNet("slot_taken", claims.userId, `slot=${want.slot}`);
+                send(socket, { t: "error", reason: "slot_taken" });
+                return;
+              }
+              resumed = true;
+              logNet("create_resume", claims.userId, `slot=${want.slot}`);
+            }
+          }
           const prev = byUser.get(claims.userId);
           if (prev && prev !== conn) {
             logNet("replaced", claims.userId);
@@ -557,13 +576,13 @@ export function startServer(opts: {
             send(socket, { t: "error", reason: "bad_slot" });
             return;
           }
-          const choice = hello.create ? validateCreate(hello.create) : null;
-          if (hello.create && !choice) {
+          const choice = hello.create && !resumed ? validateCreate(hello.create) : null;
+          if (hello.create && !resumed && !choice) {
             logNet("bad_create", claims.userId);
             send(socket, { t: "error", reason: "bad_create" });
             return;
           }
-          const slot = choice ? choice.slot : hello.slot;
+          const slot = choice ? choice.slot : resumed && want ? want.slot : hello.slot;
           if (slot == null) {
             logNet("need_create", claims.userId);
             send(socket, { t: "error", reason: "need_create" });
